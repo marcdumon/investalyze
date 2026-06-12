@@ -1,0 +1,9 @@
+line-length = 160
+
+[format]
+# quote-style = "preserve"
+quote-style = "single"
+
+
+# Markdown formatting
+preview = true
