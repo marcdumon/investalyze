@@ -1,0 +1,16 @@
+# investalyze.ingest configuration.
+# Every key is optional — built-in defaults apply when omitted or when this file
+# is absent. Secrets (e.g. the SimFin API key) come from the environment, NOT here.
+
+data_root = "data"                 # dir holding provider trees + the DuckDB
+db        = "investalyze.duckdb"    # DB filename under data_root
+
+[stooq]
+bulk_zip    = "d_world_txt.zip"     # world bulk history (d_us is equities -> Yahoo)
+update_file = "data_d.txt"          # flat daily update file
+
+# Added as these providers are built:
+# [yahoo]
+#   batch_size = 75
+# [simfin]
+#   refresh_days = 1                # api_key via env, NOT here
