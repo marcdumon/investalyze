@@ -4,6 +4,7 @@ Owns its whole flow: fetch -> transform -> save (through storage.write). Data di
 are scaffolded separately by orchestrator.create_data_dirs (run once up front).
 Split into more files inside this folder if it grows.
 """
+import logging
 import zipfile
 from pathlib import Path
 
@@ -11,6 +12,8 @@ import duckdb
 import pandas as pd
 
 from investalyze.ingest import storage
+
+log = logging.getLogger('investalyze.ingest.stooq')
 
 _TABLE = 'market_data'
 _KEY = ['Ticker', 'Date']
@@ -56,10 +59,13 @@ def _extract_bulk(raw: Path, zip_name: str = _BULK_ZIP) -> None:
     """
     zip_path = raw / zip_name
     if not zip_path.exists():
+        log.debug(f'no bulk zip at {zip_path} — using existing tree')
         return
     tree = raw / 'data'
     if tree.exists() and tree.stat().st_mtime >= zip_path.stat().st_mtime:
+        log.debug(f'extracted tree newer than {zip_name} — skipping unzip')
         return
+    log.info(f'extracting {zip_name}')
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(raw)
 
@@ -75,11 +81,15 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict | None =
     settings = settings or {}
     raw = data_root / 'stooq' / 'raw'
     if update:
+        log.info('update from flat file')
         df = _read_update_file(raw / settings.get('update_file', _UPDATE_FILE))
     else:
+        log.info('full load from bulk tree')
         _extract_bulk(raw, settings.get('bulk_zip', _BULK_ZIP))
         df = _read_tree(raw / 'data')
-    return storage.write(con, _TABLE, df, key=_KEY)
+    rows = storage.write(con, _TABLE, df, key=_KEY)
+    log.info(f'done — {rows} rows in {_TABLE}')
+    return rows
 
 
 _CANONICAL_COLS = ['Ticker', 'Date', 'O', 'H', 'L', 'C', 'AssetClass']
@@ -95,6 +105,7 @@ def _read_update_file(path: Path) -> pd.DataFrame:
     raw = pd.read_csv(path)
     asset_class = raw['<TICKER>'].map(_asset_class_from_ticker)
     keep = asset_class.notna()
+    log.info(f'{int(keep.sum())}/{len(raw)} update rows in scope')
     if not keep.any():
         return pd.DataFrame(columns=_CANONICAL_COLS)
     return _transform(raw[keep], asset_class[keep]).reset_index(drop=True)
@@ -114,11 +125,16 @@ def _read_tree(root: Path) -> pd.DataFrame:
         asset_class = _asset_class_from_category(category_dir.name)
         if asset_class is None:
             continue
-        for ticker_file in sorted(category_dir.rglob('*.txt')):
-            if ticker_file.stat().st_size == 0:   # zero-byte files exist in the real tree
-                continue
+        # zero-byte files exist in the real tree — skip them
+        ticker_files = [f for f in sorted(category_dir.rglob('*.txt')) if f.stat().st_size > 0]
+        before = len(frames)
+        for ticker_file in ticker_files:
             frames.append(_transform(pd.read_csv(ticker_file), asset_class))
+            log.debug(f'{ticker_file.name} read')
+        rows = sum(len(f) for f in frames[before:])
+        log.info(f'{asset_class} ({category_dir.parent.name}) — {len(ticker_files)} files, {rows} rows')
     if not frames:
+        log.warning(f'no in-scope ticker files under {root}')
         return pd.DataFrame(columns=_CANONICAL_COLS)
     return pd.concat(frames, ignore_index=True)
 
