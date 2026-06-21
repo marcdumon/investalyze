@@ -16,8 +16,12 @@ db        = "investalyze.duckdb"    # DB filename under data_root
 bulk_zip    = "d_world_txt.zip"     # world bulk history (d_us is equities -> Yahoo)
 update_file = "data_d.txt"          # flat daily update file
 
+[yahoo]
+ticker_file  = "ticker.csv"     # universe under yahoo/raw/
+batch_size   = 75               # tickers per yfinance download call
+sleep        = 1.0              # seconds between batches (rate-limit politeness)
+ac_tolerance = 0.001            # relative tolerance for the AC sanity check
+
 # Added as these providers are built:
-# [yahoo]
-#   batch_size = 75
 # [simfin]
 #   refresh_days = 1                # api_key via env, NOT here

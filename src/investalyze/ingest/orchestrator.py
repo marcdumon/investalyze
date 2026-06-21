@@ -12,11 +12,13 @@ import duckdb
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
 from investalyze.ingest.providers.stooq import provider as stooq
+from investalyze.ingest.providers.yahoo import provider as yahoo
 
 # name -> the provider's run(con, data_root, settings, *, update) -> rows loaded
 ProviderRun = Callable[..., int]
 PROVIDERS: dict[str, ProviderRun] = {
     'stooq': stooq.run,
+    'yahoo': yahoo.run,
 }
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
 

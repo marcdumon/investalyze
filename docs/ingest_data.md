@@ -27,16 +27,22 @@ others. More providers expected later.
 
 ## 2. Provider detail
 
-### 2.1 Yahoo — stock prices ✅
-- **Acquire:** `yfinance`. Prices via batched `yf.download(...)` (old batch size 75, rate-limited
-  sleeps); dividends/splits via `yf.Ticker(sym).actions`.
-- **Fields:** `Open, High, Low, Close, Volume`; actions → `dividend`, `split` events.
-- **Adjustment** 🔶: old code used `auto_adjust=True` (stored adjusted prices, raw lost).
-  Decision pending — store **raw** OHLCV + apply adjustments downstream, or store adjusted?
+### 2.1 Yahoo — stock prices ✅ (built)
+- **Acquire:** `yfinance`, batched `yf.download(auto_adjust=False, actions=True, group_by='ticker')`.
+  `batch_size`/`sleep` come from `[yahoo]` in `ingest.toml`. Dividends/splits come from the same
+  download (`Dividends`, `Stock Splits` columns) — no separate `yf.Ticker.actions` call.
+- **Fields:** `Open, High, Low, Close, Volume` → stored as `O, H, L, C, V`; `Dividends`/`Stock Splits`
+  → `dividends`/`splits` event tables.
+- **Adjustment** ✅: store **raw** OHLCV + our own derived adjusted close (`AC`), back-adjusted from
+  raw close + events (not Yahoo's, not `auto_adjust`). Validated against Yahoo's `Adj Close` at
+  `ac_tolerance` (0.1%) during ingest. A new dividend/split rewrites the ticker's whole `AC` history,
+  recomputed cheaply from stored raw + events (no re-download).
+- **Update:** incremental — one batched call per batch from the earliest stored date across it
+  (full history if any ticker is new); overlap re-fetches a few rows, idempotent via merge upsert.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
-- **Known issues** ❓: delisted tickers (e.g. SimFin lists `ARRY_delisted`) — Yahoo gives no prices
-  for delisted names. Need a per-ticker success/failure record to stop re-querying dead tickers.
+- **State** ✅: delisted / empty tickers recorded in `state/empty.csv` and skipped on later runs;
+  AC sanity-check offenders written to `state/ac_discrepancies.csv` (non-fatal).
 
 ### 2.2 SimFin — fundamentals ✅
 - **Acquire:** bulk ZIPs from SimFin REST API (auth → presigned S3 redirect), refreshed by file age
@@ -130,8 +136,12 @@ data/
 
   | Table | Source | Role | Columns |
   |-------|--------|------|---------|
-  | stock prices 🔶 | Yahoo | **main** — prediction target, joins fundamentals | Ticker, Date, O/H/L/C, **V**, … (TBD) |
+  | `prices` ✅ | Yahoo | **main** — prediction target, joins fundamentals | Ticker, Date, O, H, L, C, V, AC |
   | **`market_data`** ✅ | Stooq | **secondary / features** — bonds, indices, currencies | `Ticker, Date, O, H, L, C, AssetClass` |
+
+  `dividends(Ticker, Date, Dividend)` and `splits(Ticker, Date, Ratio)` carry the events. `AC` is
+  our adjusted close, computed from raw close + events (not Yahoo's, not stored adjusted) and
+  validated against Yahoo's `Adj Close` at 0.1% during ingest.
 
   - **Short column names** ✅: `O/H/L/C` (not Open/High/Low/Close).
   - `market_data` has **no volume** (always 0 for these instruments).
@@ -147,9 +157,9 @@ data/
 
 | # | Decision | Status |
 |---|----------|--------|
-| 1 | Store raw vs adjusted Yahoo prices | 🔶 |
+| 1 | Store raw vs adjusted Yahoo prices | ✅ raw OHLCV + our derived `AC` (see §2.1) |
 | 2 | Stooq scope: keep `world/{bonds,currencies,indices,stooq stocks indices}`; drop us stocks/etfs, money market, crypto | 🔶 |
 | 3 | Point-in-time fundamentals table design | 🔶 |
 | 4 | Universe / canonical-ticker model under clean asset split | 🔶 |
 | 5 | `market_data` keys: how yield vs price bonds are distinguished beyond ticker (a Quote flag?) | ❓ |
-| 6 | Per-ticker fetch success/failure tracking | 🔶 |
+| 6 | Per-ticker fetch success/failure tracking | ✅ Yahoo `state/empty.csv` (Stooq/SimFin TBD) |
