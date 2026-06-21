@@ -1,9 +1,13 @@
 """CLI entry: `python -m investalyze.ingest`. Parse args, run the orchestrator."""
 import argparse
+import logging
 from dataclasses import replace
 from pathlib import Path
 
 from investalyze.ingest import config, orchestrator
+from investalyze.ingest.logging import configure_logging
+
+log = logging.getLogger('investalyze.ingest')
 
 
 def main() -> None:
@@ -28,15 +32,16 @@ def main() -> None:
     cfg = config.load(args.config)
     if args.data_root is not None:
         cfg = replace(cfg, data_root=args.data_root)
+    configure_logging(cfg.log_level)
 
     if args.command == 'setup':
         orchestrator.create_data_dirs(cfg)
-        print(f'data dirs ready under {cfg.data_root}')
+        log.info(f'data dirs ready under {cfg.data_root}')
         return
 
     summary = orchestrator.run(cfg, args.providers, update=args.update)
     for name, rows in summary.items():
-        print(f'{name}: {rows} rows')
+        log.info(f'{name}: {rows} rows')
 
 
 if __name__ == '__main__':

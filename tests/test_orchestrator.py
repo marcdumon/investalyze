@@ -14,7 +14,7 @@ def _stooq_tree(data_root: Path, ticker: str) -> None:
 
 
 def _config(data_root: Path) -> Config:
-    return Config(data_root=data_root, db='investalyze.duckdb', providers={})
+    return Config(data_root=data_root, db='investalyze.duckdb', log_level='INFO', providers={})
 
 
 def test_run_executes_stooq_and_writes_db(tmp_path: Path):

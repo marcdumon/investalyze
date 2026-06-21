@@ -5,6 +5,7 @@ compute adjusted close -> sanity-check vs Yahoo -> save through storage.write. T
 network fetch is the only side effect. Split into more files in this folder if it grows.
 """
 
+import logging
 import time
 from pathlib import Path
 
@@ -13,6 +14,8 @@ import pandas as pd
 import yfinance as yf
 
 from investalyze.ingest import storage
+
+log = logging.getLogger('investalyze.ingest.yahoo')
 
 _PRICES, _DIVS, _SPLITS = 'prices', 'dividends', 'splits'
 _KEY = ['Ticker', 'Date']
@@ -164,6 +167,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         else:
             start = None
         frames = _fetch(batch, start=start)
+        empty_before = len(newly_empty)
         for sym in batch:
             frame = frames.get(sym, pd.DataFrame())
             _save_ticker(con, sym, frame, ac_tolerance=settings['ac_tolerance'], newly_empty=newly_empty, flagged=flagged)
@@ -173,9 +177,14 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             pd.DataFrame({'ticker': sorted(empty | set(newly_empty))}).to_csv(empty_file, index=False)
         if flagged:
             pd.DataFrame(flagged).to_csv(state_dir / 'ac_discrepancies.csv', index=False)
+        batch_empty = newly_empty[empty_before:]
+        log.info(f'batch {i + 1}/{len(batches)} saved {len(batch) - len(batch_empty)} empty {len(batch_empty)} (n={len(todo)})')
+        if batch_empty:
+            log.warning(f'no data for {", ".join(batch_empty)} — marked empty')
         if settings['sleep'] and i < len(batches) - 1:
             time.sleep(settings['sleep'])
 
+    log.info(f'done — {len(todo) - len(newly_empty)} saved, {len(newly_empty)} empty, {len(flagged)} AC-flagged')
     tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
     row = con.execute(f'SELECT COUNT(*) FROM {_PRICES}').fetchone() if _PRICES in tables else None
     return int(row[0]) if row is not None else 0
@@ -185,6 +194,7 @@ def _save_ticker(con: duckdb.DuckDBPyConnection, sym: str, frame: pd.DataFrame, 
     """Transform one ticker's fetched frame and write its prices/dividends/splits rows."""
     if frame.empty:
         newly_empty.append(sym)
+        log.debug(f'{sym} no data — empty')
         return
     prices = _to_prices(sym, frame)
     divs = _to_dividends(sym, frame)
@@ -199,3 +209,4 @@ def _save_ticker(con: duckdb.DuckDBPyConnection, sym: str, frame: pd.DataFrame, 
         storage.write(con, _DIVS, divs, key=_KEY)
     if not splits.empty:
         storage.write(con, _SPLITS, splits, key=_KEY)
+    log.debug(f'{sym} saved ({len(prices)} rows)')

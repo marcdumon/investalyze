@@ -4,6 +4,7 @@
 
 data_root = "data"                 # dir holding provider trees + the DuckDB
 db        = "investalyze.duckdb"    # DB filename under data_root
+log_level = "INFO"                  # DEBUG | INFO | WARNING | ERROR | CRITICAL
 
 # Downloads are captcha-protected — fetch manually in a browser, drop into raw/.
 # Bulk history — http://stooq.com/db/h/
