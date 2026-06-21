@@ -167,11 +167,33 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             start = None
         frames = _fetch(batch, start=start)
         empty_before = len(newly_empty)
+        batch_prices: list[pd.DataFrame] = []
+        batch_divs: list[pd.DataFrame] = []
+        batch_splits: list[pd.DataFrame] = []
+        recompute: list[str] = []
         for sym in batch:
             frame = frames.get(sym, pd.DataFrame())
-            _save_ticker(con, sym, frame, ac_tolerance=settings['ac_tolerance'], newly_empty=newly_empty, flagged=flagged)
-            if update and not frame.empty and (frame['Dividends'] > 0).any():
-                _recompute_ac(con, sym)
+            prepared = _prepare_ticker(sym, frame, ac_tolerance=settings['ac_tolerance'], newly_empty=newly_empty, flagged=flagged)
+            if prepared is None:
+                continue
+            prices, divs, splits = prepared
+            batch_prices.append(prices)
+            if not divs.empty:
+                batch_divs.append(divs)
+            if not splits.empty:
+                batch_splits.append(splits)
+            if update and (frame['Dividends'] > 0).any():
+                recompute.append(sym)
+        # one merge per table per batch (vs one per ticker) — the merge scans the growing
+        # target once instead of len(batch) times, which dominated wall time.
+        if batch_prices:
+            storage.write(con, _PRICES, pd.concat(batch_prices, ignore_index=True), key=_KEY)
+        if batch_divs:
+            storage.write(con, _DIVS, pd.concat(batch_divs, ignore_index=True), key=_KEY)
+        if batch_splits:
+            storage.write(con, _SPLITS, pd.concat(batch_splits, ignore_index=True), key=_KEY)
+        for sym in recompute:   # after the batch write so the new rows are present
+            _recompute_ac(con, sym)
         if newly_empty:
             pd.DataFrame({'ticker': sorted(empty | set(newly_empty))}).to_csv(empty_file, index=False)
         if flagged:
@@ -189,12 +211,17 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     return int(row[0]) if row is not None else 0
 
 
-def _save_ticker(con: duckdb.DuckDBPyConnection, sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_empty: list[str], flagged: list[dict]) -> None:
-    """Transform one ticker's fetched frame and write its prices/dividends/splits rows."""
+def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_empty: list[str], flagged: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
+    """Transform one ticker's fetched frame into (prices, dividends, splits) rows.
+
+    Returns None (and marks the ticker empty) when Yahoo gave no data. The caller
+    accumulates the frames and writes them per batch. Pure apart from appending to
+    `newly_empty` / `flagged`.
+    """
     if frame.empty:
         newly_empty.append(sym)
         log.debug(f'{sym} no data — empty')
-        return
+        return None
     prices = _to_prices(sym, frame)
     divs = _to_dividends(sym, frame)
     splits = _to_splits(sym, frame)
@@ -203,9 +230,5 @@ def _save_ticker(con: duckdb.DuckDBPyConnection, sym: str, frame: pd.DataFrame, 
     diff = _calc_ac_max_diff(ac, frame['Adj Close'])
     if diff > ac_tolerance:
         flagged.append({'ticker': sym, 'max_rel_diff': diff})
-    storage.write(con, _PRICES, prices, key=_KEY)
-    if not divs.empty:
-        storage.write(con, _DIVS, divs, key=_KEY)
-    if not splits.empty:
-        storage.write(con, _SPLITS, splits, key=_KEY)
-    log.debug(f'{sym} saved ({len(prices)} rows)')
+    log.debug(f'{sym} prepared ({len(prices)} rows)')
+    return prices, divs, splits
