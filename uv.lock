@@ -552,7 +552,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "requests" },
     { name = "seaborn" },
-    { name = "simfin" },
     { name = "statsmodels" },
     { name = "yfinance" },
 ]
@@ -574,7 +573,6 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "requests", specifier = ">=2.31" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "simfin", specifier = ">=1.0.2" },
     { name = "statsmodels", specifier = ">=0.14.2" },
     { name = "yfinance", specifier = ">=1.3.0" },
 ]
@@ -2114,20 +2112,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/4f/db/cfac1baf10650ab4d1c111714410d2fbb77ac5a616db26775db562c8fab2/setuptools-82.0.1.tar.gz", hash = "sha256:7d872682c5d01cfde07da7bccc7b65469d3dca203318515ada1de5eda35efbf9", size = 1152316, upload-time = "2026-03-09T12:47:17.221Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/76/f789f7a86709c6b087c5a2f52f911838cad707cc613162401badc665acfe/setuptools-82.0.1-py3-none-any.whl", hash = "sha256:a59e362652f08dcd477c78bb6e7bd9d80a7995bc73ce773050228a348ce2e5bb", size = 1006223, upload-time = "2026-03-09T12:47:15.026Z" },
-]
-
-[[package]]
-name = "simfin"
-version = "1.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/12/4f7c5cf9b62974fd37bad9b56a08aa95e553c4605dcdc26c80220140d8aa/simfin-1.0.2.tar.gz", hash = "sha256:51aa37da7f84c06c61baed748e9b3812668b58dd61af869723fb11b8150baa3c", size = 54871, upload-time = "2026-04-30T19:45:03.363Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/2d/01d79f7fe346a963c4dac20c95c39c41fbd12246cc7955ce6a94a55b9a3d/simfin-1.0.2-py3-none-any.whl", hash = "sha256:869e9ec7750d6ee88deef6c1e450309a493599484fc34e982c0a2c448143d78c", size = 61629, upload-time = "2026-04-30T19:45:00.468Z" },
 ]
 
 [[package]]

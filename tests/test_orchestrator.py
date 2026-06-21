@@ -33,3 +33,7 @@ def test_run_honors_provider_selection(tmp_path: Path):
 
 def test_yahoo_is_registered():
     assert 'yahoo' in orchestrator.PROVIDERS
+
+
+def test_simfin_is_registered():
+    assert 'simfin' in orchestrator.PROVIDERS

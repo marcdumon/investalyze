@@ -44,7 +44,7 @@ others. More providers expected later.
 - **State** ✅: delisted / no-data tickers recorded in `state/blacklist.csv` and skipped on later runs;
   AC sanity-check offenders written to `state/ac_discrepancies.csv` (non-fatal).
 
-### 2.2 SimFin — fundamentals ✅
+### 2.2 SimFin — fundamentals ✅ (built)
 - **Acquire:** bulk ZIPs from SimFin REST API (auth → presigned S3 redirect), refreshed by file age
   (`refresh_days_fundamentals`, `refresh_days_meta`). No incremental feed.
 - **Statements:** `income`, `balance`, `cashflow`, plus `derived` (ratios).
@@ -57,6 +57,11 @@ others. More providers expected later.
 - **Temporal columns** ✅: rows carry `Fiscal Year`, `Fiscal Period`, `Report Date`, `Publish Date`,
   `Restated Date` → **point-in-time is feasible** (≥2 vintages: original-as-published + latest).
 - **Format:** semicolon-delimited CSVs inside the zips; wide, source-defined columns.
+- **Built:** us market only; `derived` excluded. Tables `income`/`balance`/`cashflow`
+  (wide source columns + `Market`/`Period`/`IsRestated`/`Src`/`SrcId`) and `companies`
+  (joined to industries). Both vintages fold into the boolean `IsRestated`; merge-upsert
+  keys `[Ticker, Market, Period, IsRestated, Fiscal Year, Fiscal Period]` (companies
+  `[Ticker, Market]`). API key from env `SIMFIN_API_KEY`.
 
 ### 2.3 Stooq — bonds, currencies, indices ✅
 - **Acquire:** NOT programmatic. User manually downloads from stooq.com and drops files in raw dir.

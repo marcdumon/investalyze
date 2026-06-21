@@ -4,6 +4,8 @@ import logging
 from dataclasses import replace
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from investalyze.ingest import config, orchestrator
 from investalyze.ingest.logging import configure_logging
 
@@ -12,6 +14,7 @@ log = logging.getLogger('investalyze.ingest')
 
 def main() -> None:
     """Parse CLI args and run the selected providers."""
+    load_dotenv()
     parser = argparse.ArgumentParser(
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
