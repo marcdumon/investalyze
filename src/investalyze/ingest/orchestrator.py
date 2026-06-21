@@ -4,6 +4,7 @@ Each provider fetches + saves itself (saving through storage.write). Adding a
 provider = one new folder under providers/ + one entry in PROVIDERS here. This is
 also the one place that touches config — storage stays config-free plumbing.
 """
+import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -13,6 +14,8 @@ from investalyze.ingest import storage
 from investalyze.ingest.config import Config
 from investalyze.ingest.providers.stooq import provider as stooq
 from investalyze.ingest.providers.yahoo import provider as yahoo
+
+log = logging.getLogger('investalyze.ingest')
 
 # name -> the provider's run(con, data_root, settings, *, update) -> rows loaded
 ProviderRun = Callable[..., int]
@@ -44,9 +47,10 @@ def run(config: Config, providers: Sequence[str] | None = None, *, update: bool 
     selected = list(providers) if providers is not None else list(PROVIDERS)
     con: duckdb.DuckDBPyConnection = storage.connect(config.data_root, config.db)
     try:
-        return {
-            name: PROVIDERS[name](con, config.data_root, config.provider(name), update=update)
-            for name in selected
-        }
+        results: dict[str, int] = {}
+        for name in selected:
+            log.info(f'running {name}')
+            results[name] = PROVIDERS[name](con, config.data_root, config.provider(name), update=update)
+        return results
     finally:
         con.close()

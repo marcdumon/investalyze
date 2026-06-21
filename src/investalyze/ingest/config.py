@@ -10,6 +10,7 @@ from pathlib import Path
 
 _DEFAULT_DATA_ROOT = 'data'
 _DEFAULT_DB = 'investalyze.duckdb'
+_DEFAULT_LOG_LEVEL = 'INFO'
 
 
 @dataclass(frozen=True)
@@ -17,6 +18,7 @@ class Config:
     """Resolved ingest settings."""
     data_root: Path
     db: str
+    log_level: str
     providers: dict[str, dict]
 
     def provider(self, name: str) -> dict:
@@ -36,5 +38,6 @@ def load(path: Path | None = None) -> Config:
     return Config(
         data_root=Path(raw.get('data_root', _DEFAULT_DATA_ROOT)),
         db=raw.get('db', _DEFAULT_DB),
+        log_level=raw.get('log_level', _DEFAULT_LOG_LEVEL),
         providers=providers,
     )
