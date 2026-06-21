@@ -120,3 +120,56 @@ def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
             _download_file(spec.url, headers, dest)
         except Exception as e:   # one bad file must not abort the rest
             log.error(f'failed {spec.filename}: {e}')
+
+
+def _extract(zip_path: Path, dest_dir: Path) -> Path:
+    """Extract the single CSV member of `zip_path` into `dest_dir`; return its path."""
+    with zipfile.ZipFile(zip_path) as z:
+        name = z.namelist()[0]
+        z.extract(name, dest_dir)
+        return dest_dir / name
+
+
+def _read_statement(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path, statement: str) -> pd.DataFrame:
+    """Union the present variant zips for one statement, tagged + SimFinId->SrcId.
+
+    Missing variants are skipped (partial coverage OK); no zip at all -> empty frame.
+    """
+    parts: list[str] = []
+    for variant, period, is_restated in _VARIANTS:
+        zp = raw_dir / f'{_MARKET}-{statement}-{variant}.zip'
+        if not zp.exists():
+            log.warning(f'missing {zp.name} — skip')
+            continue
+        csv = _extract(zp, tmp)
+        parts.append(
+            f"SELECT Ticker, SimFinId AS SrcId, 'simfin' AS Src, '{_MARKET}' AS Market, "
+            f"'{period}' AS Period, {str(is_restated).lower()} AS IsRestated, "
+            f"* EXCLUDE (Ticker, SimFinId) "
+            f"FROM read_csv('{csv}', delim=';', union_by_name=true, null_padding=true)"
+        )
+    if not parts:
+        return pd.DataFrame()
+    return con.execute(' UNION ALL BY NAME '.join(parts)).df()
+
+
+def _read_companies(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path) -> pd.DataFrame:
+    """Companies left-joined to industries (Industry/Sector), SimFinId->SrcId.
+
+    `parallel=false` on the companies read: Business Summary holds free text that
+    can break parallel CSV splitting.
+    """
+    czip = raw_dir / f'{_MARKET}-companies.zip'
+    izip = raw_dir / 'industries.zip'
+    if not czip.exists() or not izip.exists():
+        log.warning('missing companies/industries zip — skip companies')
+        return pd.DataFrame()
+    ccsv = _extract(czip, tmp)
+    icsv = _extract(izip, tmp)
+    return con.execute(
+        f"""SELECT c.Ticker, c.SimFinId AS SrcId, 'simfin' AS Src, c.Market,
+                   i.Industry, i.Sector, c."Company Name", c.IndustryId,
+                   c.* EXCLUDE (Ticker, SimFinId, Market, "Company Name", IndustryId)
+            FROM read_csv('{ccsv}', delim=';', union_by_name=true, null_padding=true, parallel=false) c
+            LEFT JOIN read_csv('{icsv}', delim=';') i ON c.IndustryId = i.IndustryId"""
+    ).df()
