@@ -23,6 +23,7 @@ batch_size   = 75               # tickers per yfinance download call
 sleep        = 1.0              # seconds between batches (rate-limit politeness)
 ac_tolerance = 0.001            # relative tolerance for the AC sanity check
 
-# Added as these providers are built:
-# [simfin]
-#   refresh_days = 1                # api_key via env, NOT here
+[simfin]
+refresh_days_fundamentals = 90   # re-download fundamentals zips older than this many days
+refresh_days_meta         = 90   # companies/industries refresh cadence
+# API key via env SIMFIN_API_KEY (e.g. in .env), NOT here.
