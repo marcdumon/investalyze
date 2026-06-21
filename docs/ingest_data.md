@@ -14,7 +14,7 @@ Each asset class has **exactly one** source. No multi-source overlap on the same
 | Provider | Owns | Datasets |
 |----------|------|----------|
 | **Yahoo** (`yfinance`) | Stock prices | OHLCV, dividends, splits |
-| **SimFin** (bulk REST) | Fundamentals | income, balance, cashflow, derived — **as-filed + restated** |
+| **SimFin** (bulk REST) | Fundamentals | income, balance, cashflow — **as-filed + restated** (US) |
 | **Stooq** (manual download) | Bonds, currencies, indices | OHLC(V) |
 
 Design rule ✅: a provider is a self-contained module. Adding a 4th provider must not touch the
@@ -45,23 +45,26 @@ others. More providers expected later.
   AC sanity-check offenders written to `state/ac_discrepancies.csv` (non-fatal).
 
 ### 2.2 SimFin — fundamentals ✅ (built)
-- **Acquire:** bulk ZIPs from SimFin REST API (auth → presigned S3 redirect), refreshed by file age
-  (`refresh_days_fundamentals`, `refresh_days_meta`). No incremental feed.
-- **Statements:** `income`, `balance`, `cashflow`, plus `derived` (ratios).
-- **Vintages** ✅: **as-reported** (original figures per fiscal period) AND **restated** (latest
-  revised figures). Both wanted.
-- **Granularity:** Annual (`A`) + Quarterly (`Q`).
-- **Markets:** `us`, `de`.
-- **Metadata:** `companies` (name, sector/industry, business summary, CIK, ISIN, main currency,
-  employees, fiscal-year-end month) joined to `industries`.
+- **Acquire:** bulk ZIPs from SimFin REST API (auth `api-key` header → presigned S3 redirect; auth not
+  forwarded to S3), refreshed by file age (`refresh_days_fundamentals`, `refresh_days_meta`). No
+  incremental feed — `--update` is governed by file age, same as a full run. API key from env
+  **`SIMFIN_API_KEY`** (e.g. `.env`), never config.
+- **Scope:** `us` market only (de excluded — re-addable, the `Market` column + keys already carry it).
+  Statements `income`, `balance`, `cashflow`. `derived` (SimFin's pre-computed ratios) **excluded** —
+  recomputable downstream.
+- **Vintages** ✅: as-reported (original) + restated (latest revised), folded into one boolean
+  `IsRestated` column (`False`/`True`), NOT separate `_restated` tables. Verified the two vintages are
+  schema-identical per statement (income 68 / balance 95 / cashflow 62 cols), so the union folds with
+  no NULL columns.
+- **Granularity:** Annual (`A`) + Quarterly (`Q`), in one `Period` column.
+- **Tables:** `income`/`balance`/`cashflow` — wide source columns **verbatim** + added `Market`,
+  `Period`, `IsRestated`, `Src` (`simfin`), `SrcId` (renamed `SimFinId`). `companies` — per-market
+  companies `LEFT JOIN industries` (Industry/Sector folded in). Merge keys: fundamentals
+  `[Ticker, Market, Period, IsRestated, 'Fiscal Year', 'Fiscal Period']`, companies `[Ticker, Market]`.
 - **Temporal columns** ✅: rows carry `Fiscal Year`, `Fiscal Period`, `Report Date`, `Publish Date`,
-  `Restated Date` → **point-in-time is feasible** (≥2 vintages: original-as-published + latest).
-- **Format:** semicolon-delimited CSVs inside the zips; wide, source-defined columns.
-- **Built:** us market only; `derived` excluded. Tables `income`/`balance`/`cashflow`
-  (wide source columns + `Market`/`Period`/`IsRestated`/`Src`/`SrcId`) and `companies`
-  (joined to industries). Both vintages fold into the boolean `IsRestated`; merge-upsert
-  keys `[Ticker, Market, Period, IsRestated, Fiscal Year, Fiscal Period]` (companies
-  `[Ticker, Market]`). API key from env `SIMFIN_API_KEY`.
+  `Restated Date` → **point-in-time is feasible** (original-as-published + latest restated, split by
+  `IsRestated`).
+- **Format:** semicolon-delimited CSVs inside the zips; wide, source-defined columns (kept verbatim).
 
 ### 2.3 Stooq — bonds, currencies, indices ✅
 - **Acquire:** NOT programmatic. User manually downloads from stooq.com and drops files in raw dir.
@@ -143,6 +146,8 @@ data/
   |-------|--------|------|---------|
   | `prices` ✅ | Yahoo | **main** — prediction target, joins fundamentals | Ticker, Date, O, H, L, C, V, AC |
   | **`market_data`** ✅ | Stooq | **secondary / features** — bonds, indices, currencies | `Ticker, Date, O, H, L, C, AssetClass` |
+  | `income`/`balance`/`cashflow` ✅ | SimFin | **fundamentals** — wide statements | source cols + Market, Period, IsRestated, Src, SrcId |
+  | `companies` ✅ | SimFin | **metadata** — name/sector/industry/… | joined to industries |
 
   `dividends(Ticker, Date, Dividend)` and `splits(Ticker, Date, Ratio)` carry the events. `AC` is
   our adjusted close, computed from raw close + events (not Yahoo's, not stored adjusted) and
@@ -152,9 +157,10 @@ data/
   - `market_data` has **no volume** (always 0 for these instruments).
   - **`AssetClass`** ∈ {bonds, currencies, indices} — derived from the Stooq source category dir.
   - **Bonds = two tickers**: yield (`10YUSY`) + price (`10YUSP`), both `AssetClass='bonds'`.
+- **Fundamentals** ✅: one table per statement, both vintages in a boolean `IsRestated` column (the old
+  `_restated` shadow tables are retired). Point-in-time via `Publish Date`/`Restated Date` + `IsRestated`.
 - **Still to design:**
-  - First-class **point-in-time fundamentals** (retire `_restated` shadow tables; use Publish/Restated dates).
-  - Per-dataset **column contract** (no silently drifting wide tables).
+  - Per-dataset **column contract** (no silently drifting wide SimFin tables).
 
 ---
 
