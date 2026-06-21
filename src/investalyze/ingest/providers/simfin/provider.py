@@ -173,3 +173,37 @@ def _read_companies(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path) ->
             FROM read_csv('{ccsv}', delim=';', union_by_name=true, null_padding=true, parallel=false) c
             LEFT JOIN read_csv('{icsv}', delim=';') i ON c.IndustryId = i.IndustryId"""
     ).df()
+
+
+def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
+    """Download SimFin bulk fundamentals + companies and merge-upsert into the DB.
+
+    No incremental feed: `update` is ignored (refresh-by-age governs downloads).
+    `settings` is the `[simfin]` config (missing key raises). Returns the total
+    row count across the simfin tables.
+    """
+    api_key = os.environ.get('SIMFIN_API_KEY')
+    if not api_key:
+        raise RuntimeError('SIMFIN_API_KEY not set (put it in .env or the environment)')
+    raw_dir = data_root / 'simfin' / 'raw'
+    _acquire(raw_dir, settings, api_key)
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        for statement in _STATEMENTS:
+            df = _read_statement(con, raw_dir, tmp, statement)
+            if df.empty:
+                log.warning(f'no data for {statement} — skip')
+                continue
+            storage.write(con, statement, df, key=_KEY_FUND)
+            log.info(f'{statement}: {len(df)} rows')
+        companies = _read_companies(con, raw_dir, tmp)
+        if not companies.empty:
+            storage.write(con, 'companies', companies, key=_KEY_COMPANIES)
+            log.info(f'companies: {len(companies)} rows')
+    counts = {t: con.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
+              for t in _STATEMENTS + ['companies']
+              if t in {r[0] for r in con.execute('SHOW TABLES').fetchall()}}
+    total = sum(counts.values())
+    log.info(f'done — {total} rows across simfin tables ({counts})')
+    return total
