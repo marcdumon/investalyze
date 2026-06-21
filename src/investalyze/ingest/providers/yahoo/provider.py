@@ -199,7 +199,8 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         if flagged:
             pd.DataFrame(flagged).to_csv(state_dir / 'ac_discrepancies.csv', index=False)
         batch_empty = newly_empty[empty_before:]
-        log.info(f'batch {i + 1}/{len(batches)} saved {len(batch) - len(batch_empty)} empty {len(batch_empty)} (n={len(todo)})')
+        since = f'from {start}' if start else 'full history'
+        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_empty)} empty {len(batch_empty)} (n={len(todo)})')
         if batch_empty:
             log.warning(f'no data for {", ".join(batch_empty)} — marked empty')
         if settings['sleep'] and i < len(batches) - 1:
