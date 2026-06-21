@@ -1,9 +1,9 @@
 """Shared plumbing every provider + the orchestrator use.
 
-Three jobs, deliberately small:
-  1. paths   — the data-dir contract (provider-first layout, dirs created by code)
-  2. db      — DuckDB connection (one place, one policy)
-  3. write   — the single helper providers save through (DRY DB writes)
+Pure: takes plain paths/values, knows nothing about config (the orchestrator
+owns that). Two jobs, deliberately small:
+  1. db      — DuckDB connection (one place, one policy)
+  2. write   — the single helper providers save through (DRY DB writes)
 
 Split this module only if one of these grows enough to earn its own file.
 """
@@ -12,36 +12,13 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-# --- paths --------------------------------------------------------------------
-# Provider-first: each provider owns data/<provider>/{raw,processed,state};
-# the shared DB lives at the data root. Dirs are created by code, idempotently.
-
-SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
-DB_FILENAME = 'investalyze.duckdb'
-
-
-def _db_path(data_root: Path, db: str = DB_FILENAME) -> Path:
-    """Path to the shared DuckDB file at the data root."""
-    return data_root / db
-
-
-def setup_provider(data_root: Path, provider: str) -> dict[str, Path]:
-    """Create data/<provider>/{raw,processed,state} if missing. Idempotent.
-
-    Returns the subdir paths keyed by name. A provider's first action; it
-    touches nothing outside its own subtree.
-    """
-    root = data_root / provider
-    paths = {name: root / name for name in SUBDIRS}
-    for p in paths.values():
-        p.mkdir(parents=True, exist_ok=True)
-    return paths
+_DB = 'investalyze.duckdb'
 
 
 # --- db -----------------------------------------------------------------------
-def connect(data_root: Path, db: str = DB_FILENAME) -> duckdb.DuckDBPyConnection:
+def connect(data_root: Path, db: str = _DB) -> duckdb.DuckDBPyConnection:
     """Open a writable connection to the shared DB at the data root."""
-    return duckdb.connect(str(_db_path(data_root, db)))
+    return duckdb.connect(str(data_root / db))
 
 
 # --- write --------------------------------------------------------------------

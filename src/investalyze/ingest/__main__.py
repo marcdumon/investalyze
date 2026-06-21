@@ -12,6 +12,8 @@ def main() -> None:
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
     )
+    parser.add_argument('command', nargs='?', choices=('setup',),
+                        help="'setup' scaffolds the data dirs and exits; omit to run the ingest")
     parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
                         help='TOML config file (default: ./ingest.toml; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None,
@@ -26,6 +28,11 @@ def main() -> None:
     cfg = config.load(args.config)
     if args.data_root is not None:
         cfg = replace(cfg, data_root=args.data_root)
+
+    if args.command == 'setup':
+        orchestrator.create_data_dirs(cfg)
+        print(f'data dirs ready under {cfg.data_root}')
+        return
 
     summary = orchestrator.run(cfg, args.providers, update=args.update)
     for name, rows in summary.items():
