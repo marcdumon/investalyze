@@ -27,5 +27,6 @@ packages = ["src/investalyze"]
 
 [dependency-groups]
 dev = [
+    "pandas-stubs>=2",
     "pytest>=9.1.1",
 ]
