@@ -57,8 +57,8 @@ others. More providers expected later.
   **Two inputs, two read paths** ✅ (both → `market_data`, both saved via the merge/upsert so they converge):
   | Input | Use | Format | AssetClass from |
   |-------|-----|--------|-----------------|
-  | **`d_world_txt.zip`** (bulk) | full history | folder tree `world/<category>/[sub]/<ticker>.txt` | **folder name** (`asset_class_for`) |
-  | **`data_d.txt`** (flat) | daily update | one file, all instruments, no category | **ticker pattern** (`asset_class_from_ticker`) |
+  | **`d_world_txt.zip`** (bulk) | full history | folder tree `world/<category>/[sub]/<ticker>.txt` | **folder name** (`_asset_class_from_category`) |
+  | **`data_d.txt`** (flat) | daily update | one file, all instruments, no category | **ticker pattern** (`_asset_class_from_ticker`) |
   - **Skip `d_us_txt.zip`** ✅ — that's US equities (Yahoo owns them).
 - **Raw row format:** `<TICKER>,<PER>,<DATE>,<TIME>,<OPEN>,<HIGH>,<LOW>,<CLOSE>,<VOL>,<OPENINT>`,
   comma-delimited; date `YYYYMMDD`; VOL always 0.
@@ -112,8 +112,10 @@ data/
     ├── raw/   processed/   state/
 ```
 
-- **First action of every provider** ✅: ensure its own `data/<provider>/{raw,processed,state}/`
-  exists (idempotent setup). It creates nothing outside that subtree.
+- **Dirs are scaffolded once, up front** ✅ by `orchestrator.create_data_dirs(config)` (terminal:
+  `python -m investalyze.ingest setup`). It builds `data/<provider>/{raw,processed,state}/` for every
+  **registered** provider, idempotently — run it, then drop the manual source files into `raw/`.
+  (Storage stays config-free plumbing; the orchestrator is the one place that reads config.)
 - `raw/` immutable · `processed/` regenerable · `state/` holds all resume/freshness/log metadata
   (kept out of raw & processed so neither carries side-effect state — fixes the old scattered-JSON mess).
 

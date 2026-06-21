@@ -1,6 +1,7 @@
 """Stooq provider — bonds, currencies, indices (OHLCV). Manual bulk/update download.
 
-Owns its whole flow: setup dirs -> fetch -> transform -> save (through storage.write).
+Owns its whole flow: fetch -> transform -> save (through storage.write). Data dirs
+are scaffolded separately by orchestrator.create_data_dirs (run once up front).
 Split into more files inside this folder if it grows.
 """
 import zipfile
@@ -72,7 +73,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict | None =
     override the bulk-zip / update-file names.
     """
     settings = settings or {}
-    raw = storage.setup_provider(data_root, 'stooq')['raw']
+    raw = data_root / 'stooq' / 'raw'
     if update:
         df = _read_update_file(raw / settings.get('update_file', _UPDATE_FILE))
     else:

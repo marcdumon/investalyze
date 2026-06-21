@@ -5,6 +5,13 @@
 data_root = "data"                 # dir holding provider trees + the DuckDB
 db        = "investalyze.duckdb"    # DB filename under data_root
 
+# Downloads are captcha-protected — fetch manually in a browser, drop into raw/.
+# Bulk history — http://stooq.com/db/h/
+#   - download the World, Daily, Ascii file: d_world_txt.zip
+#     (skip the US file d_us_txt.zip — those are equities -> Yahoo)
+# Daily update — http://stooq.com/db/
+#   - click `Setting Files Content`: tick `World` (skip `U.S.`), `Save configuration`, `Close`
+#   - pick the days (or `All days Select`, bottom-left), then click `N_d` to get data_d.txt
 [stooq]
 bulk_zip    = "d_world_txt.zip"     # world bulk history (d_us is equities -> Yahoo)
 update_file = "data_d.txt"          # flat daily update file

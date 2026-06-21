@@ -1,9 +1,11 @@
 """The one runner: open the shared DB via storage, then run each provider.
 
 Each provider fetches + saves itself (saving through storage.write). Adding a
-provider = one new folder under providers/ + one entry in PROVIDERS here.
+provider = one new folder under providers/ + one entry in PROVIDERS here. This is
+also the one place that touches config — storage stays config-free plumbing.
 """
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 import duckdb
 
@@ -16,6 +18,18 @@ ProviderRun = Callable[..., int]
 PROVIDERS: dict[str, ProviderRun] = {
     'stooq': stooq.run,
 }
+SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
+
+
+def create_data_dirs(config: Config) -> None:
+    """Create data/<provider>/{raw,processed,state} for every registered provider.
+
+    Run this ONCE, up front, so source files can be dropped into each provider's
+    `raw/` before the first load. Idempotent.
+    """
+    for provider in PROVIDERS:
+        for sub in SUBDIRS:
+            (Path(config.data_root) / provider / sub).mkdir(parents=True, exist_ok=True)
 
 
 def run(config: Config, providers: Sequence[str] | None = None, *, update: bool = False) -> dict[str, int]:
