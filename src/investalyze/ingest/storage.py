@@ -16,9 +16,12 @@ _DB = 'investalyze.duckdb'
 
 
 # --- db -----------------------------------------------------------------------
-def connect(data_root: Path, db: str = _DB) -> duckdb.DuckDBPyConnection:
-    """Open a writable connection to the shared DB at the data root."""
-    return duckdb.connect(str(data_root / db))
+def connect(data_root: Path, db: str = _DB, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open a connection to the shared DB at the data root (writable by default).
+
+    `read_only=True` for consumers (e.g. notebooks) that only query.
+    """
+    return duckdb.connect(str(data_root / db), read_only=read_only)
 
 
 # --- write --------------------------------------------------------------------
