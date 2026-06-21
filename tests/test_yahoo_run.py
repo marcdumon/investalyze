@@ -51,15 +51,15 @@ def test_run_loads_prices_dividends_splits(tmp_path, monkeypatch):
     assert con.execute('SELECT Ticker, Ratio FROM splits').fetchall() == [('AAA', 2.0)]
 
 
-def test_run_skips_empty_ticker_and_records_it(tmp_path, monkeypatch):
+def test_run_skips_empty_ticker_and_blacklists_it(tmp_path, monkeypatch):
     import duckdb
     _ticker_csv(tmp_path, 'DEAD')
     monkeypatch.setattr(provider, '_fetch', lambda syms, **k: {'DEAD': pd.DataFrame()})
     con = duckdb.connect()
     n = provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001})
     assert n == 0
-    empty = (tmp_path / 'yahoo' / 'state' / 'empty.csv').read_text()
-    assert 'DEAD' in empty
+    blacklist = (tmp_path / 'yahoo' / 'state' / 'blacklist.csv').read_text()
+    assert 'DEAD' in blacklist
 
 
 def test_update_recomputes_ac_after_new_dividend(tmp_path, monkeypatch):
