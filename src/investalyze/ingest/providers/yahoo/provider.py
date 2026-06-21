@@ -54,21 +54,21 @@ def _to_splits(ticker: str, frame: pd.DataFrame) -> pd.DataFrame:
     }).reset_index(drop=True)
 
 
-def _calc_adjusted_close(close: pd.Series, dividends: pd.Series, splits: pd.Series) -> pd.Series:
-    """Back-adjusted close from raw close + events (standard total-return method).
+def _calc_adjusted_close(close: pd.Series, dividends: pd.Series) -> pd.Series:
+    """Back-adjusted close from raw close + dividends (total-return method).
 
-    All inputs share one ascending Date index; dividends/splits are 0 where no event.
+    Dividends ONLY: yfinance's Close is already split-adjusted, so splits must not
+    be re-applied here (doing so double-counts them — e.g. EZGO's three reverse
+    splits gave a 150000x error). Both inputs share one ascending Date index;
+    `dividends` is 0 where there is no ex-date event.
     """
     close = close.sort_index()
     dividends = dividends.reindex(close.index).fillna(0.0)
-    splits = splits.reindex(close.index).fillna(0.0)
 
     prev_close = close.shift(1)
     factor = pd.Series(1.0, index=close.index)
     div_days = dividends > 0
     factor[div_days] = 1 - dividends[div_days] / prev_close[div_days]
-    split_days = splits > 0
-    factor[split_days] = factor[split_days] / splits[split_days]
 
     # product of factors strictly after each date
     incl = factor[::-1].cumprod()[::-1]  # product of factor[i:]
@@ -132,8 +132,7 @@ def _recompute_ac(con: duckdb.DuckDBPyConnection, ticker: str) -> None:
         return
     idx = pd.DatetimeIndex(px['Date'])
     div_s = _load_events(con, _DIVS, 'Dividend', ticker, idx)
-    spl_s = _load_events(con, _SPLITS, 'Ratio', ticker, idx)
-    ac = _calc_adjusted_close(pd.Series(px['C'].to_numpy(), index=idx), div_s, spl_s)
+    ac = _calc_adjusted_close(pd.Series(px['C'].to_numpy(), index=idx), div_s)
     px['AC'] = ac.to_numpy()
     storage.write(con, _PRICES, px[['Ticker', 'Date', 'O', 'H', 'L', 'C', 'V', 'AC']], key=_KEY)
 
@@ -171,7 +170,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         for sym in batch:
             frame = frames.get(sym, pd.DataFrame())
             _save_ticker(con, sym, frame, ac_tolerance=settings['ac_tolerance'], newly_empty=newly_empty, flagged=flagged)
-            if update and not frame.empty and ((frame['Dividends'] > 0).any() or (frame['Stock Splits'] > 0).any()):
+            if update and not frame.empty and (frame['Dividends'] > 0).any():
                 _recompute_ac(con, sym)
         if newly_empty:
             pd.DataFrame({'ticker': sorted(empty | set(newly_empty))}).to_csv(empty_file, index=False)
@@ -199,7 +198,7 @@ def _save_ticker(con: duckdb.DuckDBPyConnection, sym: str, frame: pd.DataFrame, 
     prices = _to_prices(sym, frame)
     divs = _to_dividends(sym, frame)
     splits = _to_splits(sym, frame)
-    ac = _calc_adjusted_close(frame['Close'], frame['Dividends'], frame['Stock Splits'])
+    ac = _calc_adjusted_close(frame['Close'], frame['Dividends'])
     prices['AC'] = ac.to_numpy()
     diff = _calc_ac_max_diff(ac, frame['Adj Close'])
     if diff > ac_tolerance:
