@@ -45,3 +45,13 @@ def test_connect_opens_db_file_at_data_root(tmp_path):
     con.execute('INSERT INTO t VALUES (1)')
     assert con.execute('SELECT x FROM t').fetchone() == (1,)
     assert (tmp_path / 'investalyze.duckdb').exists()
+
+
+def test_write_handles_spaced_column_names():
+    con = duckdb.connect()
+    key = ['Ticker', 'Fiscal Year']
+    df = pd.DataFrame({'Ticker': ['AAPL'], 'Fiscal Year': [2023], 'Revenue': [100.0]})
+    assert storage.write(con, 'income', df, key=key) == 1
+    df2 = pd.DataFrame({'Ticker': ['AAPL'], 'Fiscal Year': [2023], 'Revenue': [200.0]})
+    assert storage.write(con, 'income', df2, key=key) == 1          # upsert, not append
+    assert con.execute('SELECT Revenue FROM income').fetchone()[0] == 200.0

@@ -38,13 +38,14 @@ def write(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: lis
     con.register('_incoming', df)
     try:
         con.execute(f'CREATE TABLE IF NOT EXISTS {table} AS SELECT * FROM _incoming WHERE FALSE')
-        on = ' AND '.join(f't.{c} = s.{c}' for c in key)
-        updates = ', '.join(f'{c} = s.{c}' for c in non_key)
-        insert_cols = ', '.join(cols)
-        insert_vals = ', '.join(f's.{c}' for c in cols)
+        on = ' AND '.join(f't."{c}" = s."{c}"' for c in key)
+        updates = ', '.join(f'"{c}" = s."{c}"' for c in non_key)
+        insert_cols = ', '.join(f'"{c}"' for c in cols)
+        insert_vals = ', '.join(f's."{c}"' for c in cols)
+        distinct_on = ', '.join(f'"{c}"' for c in key)
         con.execute(f"""
             MERGE INTO {table} t
-            USING (SELECT DISTINCT ON ({', '.join(key)}) * FROM _incoming) s
+            USING (SELECT DISTINCT ON ({distinct_on}) * FROM _incoming) s
             ON {on}
             WHEN MATCHED THEN UPDATE SET {updates}
             WHEN NOT MATCHED THEN INSERT ({insert_cols}) VALUES ({insert_vals})
