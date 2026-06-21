@@ -147,12 +147,12 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     state_dir.mkdir(parents=True, exist_ok=True)
 
     symbols = pd.read_csv(raw_dir / settings['ticker_file'])['ticker'].tolist()
-    empty_file = state_dir / 'empty.csv'
-    empty = set(pd.read_csv(empty_file)['ticker']) if empty_file.exists() else set()
+    blacklist_file = state_dir / 'blacklist.csv'
+    blacklist = set(pd.read_csv(blacklist_file)['ticker']) if blacklist_file.exists() else set()
     done = _load_existing_tickers(con, _PRICES) if not update else set()
-    todo = [s for s in symbols if s not in empty and s not in done]
+    todo = [s for s in symbols if s not in blacklist and s not in done]
 
-    newly_empty: list[str] = []
+    newly_blacklisted: list[str] = []
     flagged: list[dict] = []
     last_dates = _load_last_dates(con) if update else {}
     batches = _chunk(todo, settings['batch_size'])
@@ -166,14 +166,14 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         else:
             start = None
         frames = _fetch(batch, start=start)
-        empty_before = len(newly_empty)
+        blacklisted_before = len(newly_blacklisted)
         batch_prices: list[pd.DataFrame] = []
         batch_divs: list[pd.DataFrame] = []
         batch_splits: list[pd.DataFrame] = []
         recompute: list[str] = []
         for sym in batch:
             frame = frames.get(sym, pd.DataFrame())
-            prepared = _prepare_ticker(sym, frame, ac_tolerance=settings['ac_tolerance'], newly_empty=newly_empty, flagged=flagged)
+            prepared = _prepare_ticker(sym, frame, ac_tolerance=settings['ac_tolerance'], newly_blacklisted=newly_blacklisted, flagged=flagged)
             if prepared is None:
                 continue
             prices, divs, splits = prepared
@@ -194,34 +194,34 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             storage.write(con, _SPLITS, pd.concat(batch_splits, ignore_index=True), key=_KEY)
         for sym in recompute:   # after the batch write so the new rows are present
             _recompute_ac(con, sym)
-        if newly_empty:
-            pd.DataFrame({'ticker': sorted(empty | set(newly_empty))}).to_csv(empty_file, index=False)
+        if newly_blacklisted:
+            pd.DataFrame({'ticker': sorted(blacklist | set(newly_blacklisted))}).to_csv(blacklist_file, index=False)
         if flagged:
             pd.DataFrame(flagged).to_csv(state_dir / 'ac_discrepancies.csv', index=False)
-        batch_empty = newly_empty[empty_before:]
+        batch_blacklisted = newly_blacklisted[blacklisted_before:]
         since = f'from {start}' if start else 'full history'
-        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_empty)} empty {len(batch_empty)} (n={len(todo)})')
-        if batch_empty:
-            log.warning(f'no data for {", ".join(batch_empty)} — marked empty')
+        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_blacklisted)} blacklisted {len(batch_blacklisted)} (n={len(todo)})')
+        if batch_blacklisted:
+            log.warning(f'no data for {", ".join(batch_blacklisted)} — blacklisted')
         if settings['sleep'] and i < len(batches) - 1:
             time.sleep(settings['sleep'])
 
-    log.info(f'done — {len(todo) - len(newly_empty)} saved, {len(newly_empty)} empty, {len(flagged)} AC-flagged')
+    log.info(f'done — {len(todo) - len(newly_blacklisted)} saved, {len(newly_blacklisted)} blacklisted, {len(flagged)} AC-flagged')
     tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
     row = con.execute(f'SELECT COUNT(*) FROM {_PRICES}').fetchone() if _PRICES in tables else None
     return int(row[0]) if row is not None else 0
 
 
-def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_empty: list[str], flagged: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
+def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_blacklisted: list[str], flagged: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
     """Transform one ticker's fetched frame into (prices, dividends, splits) rows.
 
-    Returns None (and marks the ticker empty) when Yahoo gave no data. The caller
+    Returns None (and blacklists the ticker) when Yahoo gave no data. The caller
     accumulates the frames and writes them per batch. Pure apart from appending to
-    `newly_empty` / `flagged`.
+    `newly_blacklisted` / `flagged`.
     """
     if frame.empty:
-        newly_empty.append(sym)
-        log.debug(f'{sym} no data — empty')
+        newly_blacklisted.append(sym)
+        log.debug(f'{sym} no data — blacklisted')
         return None
     prices = _to_prices(sym, frame)
     divs = _to_dividends(sym, frame)

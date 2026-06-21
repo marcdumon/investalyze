@@ -41,7 +41,7 @@ others. More providers expected later.
   (full history if any ticker is new); overlap re-fetches a few rows, idempotent via merge upsert.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
-- **State** ✅: delisted / empty tickers recorded in `state/empty.csv` and skipped on later runs;
+- **State** ✅: delisted / no-data tickers recorded in `state/blacklist.csv` and skipped on later runs;
   AC sanity-check offenders written to `state/ac_discrepancies.csv` (non-fatal).
 
 ### 2.2 SimFin — fundamentals ✅
@@ -162,4 +162,4 @@ data/
 | 3 | Point-in-time fundamentals table design | 🔶 |
 | 4 | Universe / canonical-ticker model under clean asset split | 🔶 |
 | 5 | `market_data` keys: how yield vs price bonds are distinguished beyond ticker (a Quote flag?) | ❓ |
-| 6 | Per-ticker fetch success/failure tracking | ✅ Yahoo `state/empty.csv` (Stooq/SimFin TBD) |
+| 6 | Per-ticker fetch success/failure tracking | ✅ Yahoo `state/blacklist.csv` (Stooq/SimFin TBD) |
