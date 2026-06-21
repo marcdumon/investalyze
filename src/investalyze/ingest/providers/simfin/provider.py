@@ -76,3 +76,47 @@ def _needs_download(dest: Path, refresh_days: int) -> bool:
         return True
     age = (datetime.date.today() - datetime.date.fromtimestamp(dest.stat().st_mtime)).days
     return age >= refresh_days
+
+
+def _download_file(url: str, headers: dict, dest: Path) -> None:
+    """Download `url` to `dest` atomically.
+
+    SimFin replies with a 30x redirect to a presigned S3 URL; auth goes only to
+    SimFin, never forwarded to S3 (S3 rejects extra Authorization headers).
+    """
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix('.tmp')
+    try:
+        r = requests.get(url, headers=headers, allow_redirects=False, timeout=30)
+        if r.status_code in (301, 302, 303, 307, 308):
+            download_url, extra = r.headers['Location'], {}
+        else:
+            r.raise_for_status()
+            download_url, extra = url, headers
+        with requests.get(download_url, headers=extra, stream=True, timeout=300) as resp:
+            resp.raise_for_status()
+            with open(tmp, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=65536):
+                    f.write(chunk)
+        tmp.rename(dest)
+        log.info(f'downloaded {dest.name}')
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
+    """Download every missing/stale bulk zip into `raw_dir`; a failure is logged, not fatal."""
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    headers = {'Authorization': f'api-key {api_key}'}
+    specs = _specs(settings['refresh_days_fundamentals'], settings['refresh_days_meta'])
+    for spec in specs:
+        dest = raw_dir / spec.filename
+        if not _needs_download(dest, spec.refresh_days):
+            log.debug(f'{spec.filename} fresh — skip')
+            continue
+        log.info(f'downloading {spec.filename}')
+        try:
+            _download_file(spec.url, headers, dest)
+        except Exception as e:   # one bad file must not abort the rest
+            log.error(f'failed {spec.filename}: {e}')
