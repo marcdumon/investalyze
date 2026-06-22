@@ -144,3 +144,54 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
     tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
     row = con.execute(f'SELECT COUNT(*) FROM {_PROFILE}').fetchone() if _PROFILE in tables else None
     return int(row[0]) if row is not None else 0
+
+
+def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict:
+    """Retry every yahoo-meta-blacklisted ticker; revive successes, age out chronic failures.
+
+    `con` is unused — kept so this matches the `(con, data_root, settings)` shape every housekeeping
+    task is dispatched with. `settings` is the `[yahoo-meta]` config: uses `batch_size`, `sleep`,
+    `blacklist_max_attempts` (no fallback — missing raises `KeyError`). Unlike the price provider's
+    `recheck_blacklist`, a revived ticker needs no further bookkeeping here — `yahoo-meta` has no
+    ticker list of its own to prune; the next `fetch_meta` run picks a revived ticker up naturally
+    once it's off this blacklist.
+    """
+    state_dir = data_root / 'yahoo-meta' / 'state'
+    blacklist_file = state_dir / 'blacklist.csv'
+    dead_file = state_dir / 'dead.csv'
+
+    blacklist_df = provider._load_blacklist(blacklist_file)
+    if blacklist_df.empty:
+        return {'rechecked': 0, 'revived': 0, 'died': 0}
+
+    max_attempts = settings['blacklist_max_attempts']
+    today = date.today().isoformat()
+    tickers = blacklist_df['ticker'].tolist()
+    batches = provider._chunk(tickers, settings['batch_size'])
+
+    revived_rows: list[dict] = []
+    still_blacklisted: list[dict] = []
+    died_rows: list[dict] = []
+    for batch in batches:
+        records = blacklist_df[blacklist_df['ticker'].isin(batch)].to_dict('records')
+        for record in records:
+            info = _fetch_info(record['ticker'])
+            if info:
+                revived_rows.append(record)
+            else:
+                record['attempts'] += 1
+                record['last_checked'] = today
+                if record['attempts'] >= max_attempts:
+                    died_rows.append({'ticker': record['ticker'], 'attempts': record['attempts'],
+                                      'first_blacklisted': record['first_blacklisted'], 'died_on': today})
+                else:
+                    still_blacklisted.append(record)
+            if settings['sleep']:
+                time.sleep(settings['sleep'])
+
+    pd.DataFrame(still_blacklisted, columns=provider._BLACKLIST_COLS).to_csv(blacklist_file, index=False)
+    if died_rows:
+        dead_df = pd.concat([provider._load_dead(dead_file), pd.DataFrame(died_rows, columns=provider._DEAD_COLS)], ignore_index=True)
+        dead_df.to_csv(dead_file, index=False)
+
+    return {'rechecked': len(tickers), 'revived': len(revived_rows), 'died': len(died_rows)}
