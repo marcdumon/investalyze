@@ -22,6 +22,7 @@ ticker_file  = "ticker.csv"     # universe under yahoo/raw/
 batch_size   = 75               # tickers per yfinance download call
 sleep        = 1.0              # seconds between batches (rate-limit politeness)
 ac_tolerance = 0.001            # relative tolerance for the AC sanity check
+blacklist_max_attempts = 5      # retries (via housekeeping) before a ticker is permanently dropped
 
 [simfin]
 refresh_days_fundamentals = 90   # re-download fundamentals zips older than this many days

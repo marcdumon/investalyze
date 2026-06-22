@@ -41,8 +41,11 @@ others. More providers expected later.
   (full history if any ticker is new); overlap re-fetches a few rows, idempotent via merge upsert.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
-- **State** ✅: delisted / no-data tickers recorded in `state/blacklist.csv` and skipped on later runs;
-  AC sanity-check offenders written to `state/ac_discrepancies.csv` (non-fatal).
+- **State** ✅: delisted / no-data tickers recorded in `state/blacklist.csv` (with an `attempts`
+  counter) and skipped on later runs; AC sanity-check offenders written to
+  `state/ac_discrepancies.csv` (non-fatal). The `housekeeping` command (see §5) retries blacklisted
+  tickers, reviving ones that return data again and moving chronic failures (past
+  `blacklist_max_attempts`) to `state/dead.csv`, never retried again.
 
 ### 2.2 SimFin — fundamentals ✅ (built)
 - **Acquire:** bulk ZIPs from SimFin REST API (auth `api-key` header → presigned S3 redirect; auth not

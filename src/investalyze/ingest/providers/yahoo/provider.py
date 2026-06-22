@@ -263,3 +263,64 @@ def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly
         flagged.append({'ticker': sym, 'max_rel_diff': diff})
     log.debug(f'{sym} prepared ({len(prices)} rows)')
     return prices, divs, splits
+
+
+def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict:
+    """Retry every blacklisted ticker; revive successes, age out chronic failures, prune ticker.csv.
+
+    `con` is unused here — kept so this matches the (con, data_root, settings) shape every
+    housekeeping task is dispatched with. `settings` is the `[yahoo]` config: uses `ticker_file`,
+    `batch_size`, `sleep` (same as `run`) plus `blacklist_max_attempts` (no fallback — missing
+    raises `KeyError`).
+    """
+    raw_dir = data_root / 'yahoo' / 'raw'
+    state_dir = data_root / 'yahoo' / 'state'
+    blacklist_file = state_dir / 'blacklist.csv'
+    dead_file = state_dir / 'dead.csv'
+    ticker_file = raw_dir / settings['ticker_file']
+
+    blacklist_df = _load_blacklist(blacklist_file)
+    if blacklist_df.empty:
+        return {'rechecked': 0, 'revived': 0, 'died': 0}
+
+    max_attempts = settings['blacklist_max_attempts']
+    today = date.today().isoformat()
+    tickers = blacklist_df['ticker'].tolist()
+    batches = _chunk(tickers, settings['batch_size'])
+
+    revived_rows: list[dict] = []
+    still_blacklisted: list[dict] = []
+    died_rows: list[dict] = []
+    for i, batch in enumerate(batches):
+        frames = _fetch(batch, start=None)
+        records = blacklist_df[blacklist_df['ticker'].isin(batch)].to_dict('records')
+        for record in records:
+            frame = frames.get(record['ticker'], pd.DataFrame())
+            if not frame.empty:
+                revived_rows.append(record)
+                continue
+            record['attempts'] += 1
+            record['last_checked'] = today
+            if record['attempts'] >= max_attempts:
+                died_rows.append({'ticker': record['ticker'], 'attempts': record['attempts'],
+                                  'first_blacklisted': record['first_blacklisted'], 'died_on': today})
+            else:
+                still_blacklisted.append(record)
+        if settings['sleep'] and i < len(batches) - 1:
+            time.sleep(settings['sleep'])
+
+    pd.DataFrame(still_blacklisted, columns=_BLACKLIST_COLS).to_csv(blacklist_file, index=False)
+    if died_rows:
+        dead_df = pd.concat([_load_dead(dead_file), pd.DataFrame(died_rows, columns=_DEAD_COLS)], ignore_index=True)
+        dead_df.to_csv(dead_file, index=False)
+
+    if ticker_file.exists():
+        ticker_df = pd.read_csv(ticker_file)
+        if revived_rows:
+            revived_df = pd.DataFrame([{'ticker': r['ticker'], 'market': r['market']} for r in revived_rows])
+            ticker_df = pd.concat([ticker_df, revived_df], ignore_index=True).drop_duplicates('ticker')
+        exclude = {r['ticker'] for r in still_blacklisted} | {r['ticker'] for r in died_rows}
+        ticker_df = ticker_df[~ticker_df['ticker'].isin(exclude)]
+        ticker_df.to_csv(ticker_file, index=False)
+
+    return {'rechecked': len(tickers), 'revived': len(revived_rows), 'died': len(died_rows)}
