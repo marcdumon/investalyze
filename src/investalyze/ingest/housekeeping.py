@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
+from investalyze.ingest.providers.yahoo import meta as yahoo_meta
 from investalyze.ingest.providers.yahoo import provider as yahoo
 
 log = logging.getLogger('investalyze.ingest')
@@ -16,6 +17,7 @@ log = logging.getLogger('investalyze.ingest')
 HousekeepingTask = Callable[..., dict]
 HOUSEKEEPING_TASKS: dict[str, tuple[str, HousekeepingTask]] = {
     'yahoo-blacklist': ('yahoo', yahoo.recheck_blacklist),
+    'yahoo-meta-blacklist': ('yahoo-meta', yahoo_meta.recheck_meta_blacklist),
 }
 
 

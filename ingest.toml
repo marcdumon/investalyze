@@ -24,6 +24,12 @@ sleep        = 1.0              # seconds between batches (rate-limit politeness
 ac_tolerance = 0.001            # relative tolerance for the AC sanity check
 blacklist_max_attempts = 5      # retries (via housekeeping) before a ticker is permanently dropped
 
+[yahoo-meta]
+batch_size             = 75    # tickers per DB write (commit granularity, not fetch batching)
+sleep                  = 1.0   # seconds between per-ticker .info calls
+refresh_days_meta      = 90    # re-fetch a ticker's profile once FetchedOn is older than this
+blacklist_max_attempts = 5     # retries (via housekeeping) before a ticker is permanently dropped
+
 [simfin]
 refresh_days_fundamentals = 90   # re-download fundamentals zips older than this many days
 refresh_days_meta         = 90   # companies/industries refresh cadence

@@ -14,6 +14,7 @@ from investalyze.ingest import storage
 from investalyze.ingest.config import Config
 from investalyze.ingest.providers.simfin import provider as simfin
 from investalyze.ingest.providers.stooq import provider as stooq
+from investalyze.ingest.providers.yahoo import meta as yahoo_meta
 from investalyze.ingest.providers.yahoo import provider as yahoo
 
 log = logging.getLogger('investalyze.ingest')
@@ -23,6 +24,7 @@ ProviderRun = Callable[..., int]
 PROVIDERS: dict[str, ProviderRun] = {
     'stooq': stooq.run,
     'yahoo': yahoo.run,
+    'yahoo-meta': yahoo_meta.fetch_meta,
     'simfin': simfin.run,
 }
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
