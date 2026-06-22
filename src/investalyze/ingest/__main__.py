@@ -6,7 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from investalyze.ingest import config, orchestrator
+from investalyze.ingest import config, housekeeping, orchestrator
 from investalyze.ingest.logging import configure_logging
 
 log = logging.getLogger('investalyze.ingest')
@@ -19,8 +19,9 @@ def main() -> None:
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
     )
-    parser.add_argument('command', nargs='?', choices=('setup',),
-                        help="'setup' scaffolds the data dirs and exits; omit to run the ingest")
+    parser.add_argument('command', nargs='?', choices=('setup', 'housekeeping'),
+                        help="'setup' scaffolds the data dirs, 'housekeeping' runs maintenance "
+                             "tasks (both exit without ingesting); omit to run the ingest")
     parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
                         help='TOML config file (default: ./ingest.toml; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None,
@@ -28,6 +29,9 @@ def main() -> None:
     parser.add_argument('-p', '--provider', action='append', dest='providers',
                         choices=sorted(orchestrator.PROVIDERS),
                         help='provider to run; repeatable (default: all)')
+    parser.add_argument('-t', '--task', action='append', dest='tasks',
+                        choices=sorted(housekeeping.HOUSEKEEPING_TASKS),
+                        help='housekeeping task to run; repeatable (default: all)')
     parser.add_argument('--update', action='store_true',
                         help='apply the daily update instead of a full load')
     args = parser.parse_args()
@@ -40,6 +44,12 @@ def main() -> None:
     if args.command == 'setup':
         orchestrator.create_data_dirs(cfg)
         log.info(f'data dirs ready under {cfg.data_root}')
+        return
+
+    if args.command == 'housekeeping':
+        summary = housekeeping.run_housekeeping(cfg, args.tasks)
+        for name, result in summary.items():
+            log.info(f'{name}: {result}')
         return
 
     summary = orchestrator.run(cfg, args.providers, update=args.update)

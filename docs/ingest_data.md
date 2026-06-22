@@ -110,7 +110,19 @@ others. More providers expected later.
 
 ---
 
-## 5. Directory structure ✅ (`./data`)
+## 5. Housekeeping
+
+`python -m investalyze.ingest housekeeping` runs maintenance tasks against the ingest state,
+separate from the regular provider ingest. Tasks are selectable with `-t/--task` (repeatable;
+default: all).
+
+| Task | Does |
+|------|------|
+| `yahoo-blacklist` | Retries every ticker in `data/yahoo/state/blacklist.csv`. Tickers that return data again are removed from the blacklist and added back to `ticker.csv` (picked up by the next regular ingest run, not ingested by housekeeping itself). Tickers still empty get `attempts` incremented; past `blacklist_max_attempts` (`ingest.toml [yahoo]`, default 5) they move to `data/yahoo/state/dead.csv` and are never retried again. `ticker.csv` is pruned of anything still blacklisted or now dead on every run. |
+
+---
+
+## 6. Directory structure ✅ (`./data`)
 
 **Provider-first**: each provider owns one self-contained subtree and creates only its own folder.
 The DB is shared and lives outside every provider tree. A provider never touches another's data.
@@ -140,7 +152,7 @@ data/
 
 ---
 
-## 6. DB architecture 🔶 (evolving)
+## 7. DB architecture 🔶 (evolving)
 
 - **Engine:** DuckDB. **Target file:** `data/investalyze.duckdb` ✅ (fresh, decoupled from `irp.duckdb`).
 - **Price data is split by role, not unified** ✅ — main vs secondary, one source per table:
@@ -167,7 +179,7 @@ data/
 
 ---
 
-## 7. Open decisions
+## 8. Open decisions
 
 | # | Decision | Status |
 |---|----------|--------|
