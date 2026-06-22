@@ -33,3 +33,7 @@ def test_run_housekeeping_defaults_to_all_tasks(tmp_path: Path):
 
 def test_yahoo_blacklist_is_registered():
     assert 'yahoo-blacklist' in housekeeping.HOUSEKEEPING_TASKS
+
+
+def test_yahoo_meta_blacklist_is_registered():
+    assert 'yahoo-meta-blacklist' in housekeeping.HOUSEKEEPING_TASKS
