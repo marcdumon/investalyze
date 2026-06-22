@@ -314,13 +314,12 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
         dead_df = pd.concat([_load_dead(dead_file), pd.DataFrame(died_rows, columns=_DEAD_COLS)], ignore_index=True)
         dead_df.to_csv(dead_file, index=False)
 
-    if ticker_file.exists():
-        ticker_df = pd.read_csv(ticker_file)
-        if revived_rows:
-            revived_df = pd.DataFrame([{'ticker': r['ticker'], 'market': r['market']} for r in revived_rows])
-            ticker_df = pd.concat([ticker_df, revived_df], ignore_index=True).drop_duplicates('ticker')
-        exclude = {r['ticker'] for r in still_blacklisted} | {r['ticker'] for r in died_rows}
-        ticker_df = ticker_df[~ticker_df['ticker'].isin(exclude)]
-        ticker_df.to_csv(ticker_file, index=False)
+    ticker_df = pd.read_csv(ticker_file)
+    if revived_rows:
+        revived_df = pd.DataFrame([{'ticker': r['ticker'], 'market': r['market']} for r in revived_rows])
+        ticker_df = pd.concat([ticker_df, revived_df], ignore_index=True).drop_duplicates('ticker', keep='last')
+    exclude = {r['ticker'] for r in still_blacklisted} | {r['ticker'] for r in died_rows}
+    ticker_df = ticker_df[~ticker_df['ticker'].isin(exclude)]
+    ticker_df.to_csv(ticker_file, index=False)
 
     return {'rechecked': len(tickers), 'revived': len(revived_rows), 'died': len(died_rows)}
