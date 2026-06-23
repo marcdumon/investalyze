@@ -8,8 +8,8 @@ from collections.abc import Callable, Sequence
 
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
-from investalyze.ingest.providers.yahoo import meta as yahoo_meta
-from investalyze.ingest.providers.yahoo import provider as yahoo
+from investalyze.ingest.providers.yahoo import meta_data as yahoo_meta
+from investalyze.ingest.providers.yahoo import price_data as yahoo
 
 log = logging.getLogger('investalyze.ingest')
 

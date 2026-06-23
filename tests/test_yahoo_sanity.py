@@ -1,7 +1,7 @@
 """Tests for the adjusted-close sanity comparison."""
 import pandas as pd
 
-from investalyze.ingest.providers.yahoo.provider import _calc_ac_max_diff
+from investalyze.ingest.providers.yahoo.price_data import _calc_ac_max_diff
 
 
 def _s(vals):

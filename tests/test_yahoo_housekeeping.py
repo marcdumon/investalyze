@@ -4,7 +4,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from investalyze.ingest.providers.yahoo import provider
+from investalyze.ingest.providers.yahoo import price_data as provider
 
 _SETTINGS = {'ticker_file': 'ticker.csv', 'batch_size': 10, 'sleep': 0, 'blacklist_max_attempts': 3}
 

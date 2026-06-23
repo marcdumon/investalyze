@@ -5,7 +5,7 @@ re-applying splits here would double-count them (see the EZGO 150000x bug).
 """
 import pandas as pd
 
-from investalyze.ingest.providers.yahoo.provider import _calc_adjusted_close
+from investalyze.ingest.providers.yahoo.price_data import _calc_adjusted_close
 
 
 def _series(dates, vals):

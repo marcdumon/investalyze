@@ -2,7 +2,7 @@
 import datetime
 import os
 
-from investalyze.ingest.providers.simfin.provider import _needs_download, _Spec, _specs
+from investalyze.ingest.providers.simfin.fundamental_data import _needs_download, _Spec, _specs
 
 
 def test_spec_filename_and_url():

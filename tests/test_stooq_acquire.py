@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from investalyze.ingest.providers.stooq.provider import (
+from investalyze.ingest.providers.stooq.market_data import (
     _asset_class_from_category,
     _asset_class_from_ticker,
     _extract_bulk,

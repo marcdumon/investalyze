@@ -3,7 +3,7 @@ from datetime import date
 
 import pandas as pd
 
-from investalyze.ingest.providers.yahoo.provider import _to_dividends, _to_prices, _to_splits
+from investalyze.ingest.providers.yahoo.price_data import _to_dividends, _to_prices, _to_splits
 
 
 def _frame() -> pd.DataFrame:

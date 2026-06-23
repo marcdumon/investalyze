@@ -12,10 +12,10 @@ import duckdb
 
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
-from investalyze.ingest.providers.simfin import provider as simfin
-from investalyze.ingest.providers.stooq import provider as stooq
-from investalyze.ingest.providers.yahoo import meta as yahoo_meta
-from investalyze.ingest.providers.yahoo import provider as yahoo
+from investalyze.ingest.providers.simfin import fundamental_data as simfin
+from investalyze.ingest.providers.stooq import market_data as stooq
+from investalyze.ingest.providers.yahoo import meta_data as yahoo_meta
+from investalyze.ingest.providers.yahoo import price_data as yahoo
 
 log = logging.getLogger('investalyze.ingest')
 
@@ -28,15 +28,22 @@ PROVIDERS: dict[str, ProviderRun] = {
     'simfin': simfin.run,
 }
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
+# Providers that reuse another provider's data tree instead of owning one. yahoo-meta
+# reads yahoo's ticker.csv + blacklist and writes its own state alongside them under
+# data/yahoo/state/ (meta_blacklist.csv / meta_dead.csv) — it has no tree of its own.
+NO_DIR_PROVIDERS: frozenset[str] = frozenset({'yahoo-meta'})
 
 
 def create_data_dirs(config: Config) -> None:
     """Create data/<provider>/{raw,processed,state} for every registered provider.
 
     Run this ONCE, up front, so source files can be dropped into each provider's
-    `raw/` before the first load. Idempotent.
+    `raw/` before the first load. Idempotent. Providers in `NO_DIR_PROVIDERS` are
+    skipped — they live under another provider's tree.
     """
     for provider in PROVIDERS:
+        if provider in NO_DIR_PROVIDERS:
+            continue
         for sub in SUBDIRS:
             (Path(config.data_root) / provider / sub).mkdir(parents=True, exist_ok=True)
 

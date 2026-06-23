@@ -3,7 +3,7 @@ from pathlib import Path
 
 import duckdb
 
-from investalyze.ingest.providers.stooq.provider import run
+from investalyze.ingest.providers.stooq.market_data import run
 
 _HEADER = '<TICKER>,<PER>,<DATE>,<TIME>,<OPEN>,<HIGH>,<LOW>,<CLOSE>,<VOL>,<OPENINT>'
 

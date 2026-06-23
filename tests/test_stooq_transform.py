@@ -3,7 +3,7 @@ from datetime import date
 
 import pandas as pd
 
-from investalyze.ingest.providers.stooq.provider import _transform
+from investalyze.ingest.providers.stooq.market_data import _transform
 
 # Raw Stooq columns, as they appear in the .txt files.
 _RAW_COLS = ['<TICKER>', '<PER>', '<DATE>', '<TIME>', '<OPEN>', '<HIGH>', '<LOW>', '<CLOSE>', '<VOL>', '<OPENINT>']
