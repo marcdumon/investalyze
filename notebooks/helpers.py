@@ -12,6 +12,8 @@ Notebooks import what they need (kernel CWD is this folder) and turn on autorelo
 
     con = connect_readonly()
 """
+import math
+import numbers
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +23,66 @@ from IPython.display import HTML, Markdown, display
 # ======================================================================
 # SHARED — used by more than one notebook
 # ======================================================================
+
+def fmt_number(x, sig=4):
+    """Render a number readably: thousands separator for the big, significant figures for the small.
+
+    Values >= 1 get a thousands separator and at most 4 decimals (1,234,567 / 593.57); values
+    below 1 keep `sig` significant figures so tiny rates survive (0.00002, 0.000369) instead of
+    rounding to zero. Trailing zeros and bare decimal points are trimmed (603 not 603.0000).
+    Bools and non-numbers (strings, dates) pass through untouched — safe on mixed/transposed frames.
+    """
+    if isinstance(x, bool) or not isinstance(x, numbers.Number):
+        return '' if x is pd.NA else x
+    if pd.isna(x):
+        return ''
+    ax = abs(x)
+    if ax == 0:
+        return '0'
+    if ax >= 1:
+        s = f'{x:,.4f}'
+    else:
+        decimals = -math.floor(math.log10(ax)) + (sig - 1)
+        s = f'{x:.{decimals}f}'
+    return s.rstrip('0').rstrip('.') if '.' in s else s
+
+
+def _fmt_cell(x):
+    """Cell formatter: dates as YYYY-MM-DD, numbers via `fmt_number`, everything else untouched."""
+    if x is pd.NaT:
+        return ''
+    if isinstance(x, pd.Timestamp):
+        return '' if pd.isna(x) else x.strftime('%Y-%m-%d')
+    return fmt_number(x)
+
+
+def _is_numeric_col(col):
+    """True if a column holds numbers — including object columns of mixed Int/None (financials)."""
+    if pd.api.types.is_numeric_dtype(col):
+        return not pd.api.types.is_bool_dtype(col)
+    non_null = col.dropna()
+    return len(non_null) > 0 and all(isinstance(v, numbers.Number) and not isinstance(v, bool) for v in non_null)
+
+
+MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
+
+
+def show_df(df):
+    """Display a DataFrame: dates as YYYY-MM-DD, numbers formatted + right-aligned, text left-aligned.
+
+    Numeric columns (incl. object columns of mixed Int/None) are right-aligned; everything else
+    (text, dates, the object-typed transposed identity cards) is left-aligned. Rendered monospace
+    (Styler tables carry no `dataframe` class, so a global `.dataframe` font rule can't reach them).
+    """
+    num_cols = [c for c in df.columns if _is_numeric_col(df[c])]
+    styler = (df.style.format(_fmt_cell)
+              .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})
+              .set_table_styles([{'selector': '', 'props': [('font-family', MONO_FONT)]},
+                                 {'selector': 'th', 'props': [('text-align', 'left')]}]))
+    if num_cols:
+        styler = styler.set_properties(subset=num_cols, **{'text-align': 'right'})
+    display(styler)
+
 
 def connect_readonly():
     """Open a read-only DuckDB connection at the configured data root, display defaults applied.
@@ -32,6 +94,7 @@ def connect_readonly():
 
     display(HTML('<style>table.dataframe td {white-space: nowrap;}</style>'))
     pd.set_option('display.max_columns', None)
+    pd.set_option('display.float_format', fmt_number)
     root = next(p for p in (Path.cwd(), *Path.cwd().parents) if (p / 'ingest.toml').exists())
     cfg = config.load(root / 'ingest.toml')
     return storage.connect(root / cfg.data_root, read_only=True)
@@ -94,13 +157,13 @@ def show_provider_samples(con, provider):
         if table in RESTATED_TABLES and table in present:
             for is_restated, label in ((False, 'as-reported'), (True, 'restated')):
                 show_section_header(f'{provider} — {table} ({label})', level=3)
-                display(sample_rows(con, table, where=f'IsRestated = {is_restated}'))
+                show_df(sample_rows(con, table, where=f'IsRestated = {is_restated}'))
             continue
         show_section_header(f'{provider} — {table}', level=3)
         if table not in present:
             show_note('not in the DB yet')
             continue
-        display(sample_rows(con, table))
+        show_df(sample_rows(con, table))
 
 
 # ======================================================================
@@ -141,8 +204,8 @@ def show_timeseries_section(con, table, ticker):
         show_note('no rows')
         return
     show_note(f'{df.Date.min()} .. {df.Date.max()}  |  {len(df)} rows')
-    display(timeseries_stats(df))
-    display(head_and_tail(df))
+    show_df(timeseries_stats(df))
+    show_df(head_and_tail(df))
 
 
 def show_ticker_profile(con, ticker, min_fill=0.5):
@@ -152,15 +215,15 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
     # identity card — one row, transposed
     show_section_header('companies')
     companies = load_ticker_rows(con, 'companies', ticker)
-    show_note('no rows') if companies.empty else display(companies.T)
+    show_note('no rows') if companies.empty else show_df(companies.T)
 
     show_section_header('company_profile')
     profile = load_ticker_rows(con, 'company_profile', ticker)
-    show_note('no rows') if profile.empty else display(profile.T)
+    show_note('no rows') if profile.empty else show_df(profile.T)
 
     show_section_header('company_officers')
     officers = load_ticker_rows(con, 'company_officers', ticker)
-    show_note('no rows') if officers.empty else display(officers)
+    show_note('no rows') if officers.empty else show_df(officers)
 
     show_timeseries_section(con, 'prices', ticker)
     show_timeseries_section(con, 'dividends', ticker)
@@ -180,7 +243,7 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
                 show_note('no rows')
                 continue
             show_note(fundamentals_coverage(part))
-            display(fundamentals_stats(part, min_fill))
-            display(head_and_tail(part))
+            show_df(fundamentals_stats(part, min_fill))
+            show_df(head_and_tail(part))
 
     show_timeseries_section(con, 'market_data', ticker)  # populates for non-equity tickers
