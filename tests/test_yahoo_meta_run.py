@@ -5,9 +5,9 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-from investalyze.ingest.providers.yahoo import meta
+from investalyze.ingest.providers.yahoo import meta_data as meta
 
-_SETTINGS = {'batch_size': 10, 'sleep': 0, 'refresh_days_meta': 90, 'blacklist_max_attempts': 3}
+_SETTINGS = {'sleep': 0, 'refresh_days_meta': 90, 'blacklist_max_attempts': 3}
 
 
 def _ticker_csv(tmp_path: Path, *rows: tuple[str, str]) -> None:
@@ -93,7 +93,7 @@ def test_fetch_meta_blacklists_ticker_with_no_info(tmp_path, monkeypatch):
     con = duckdb.connect()
     n = meta.fetch_meta(con, tmp_path, _SETTINGS)
     assert n == 0
-    blacklist = pd.read_csv(tmp_path / 'yahoo-meta' / 'state' / 'blacklist.csv')
+    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'meta_blacklist.csv')
     assert blacklist.loc[0, 'ticker'] == 'EMPTY'
     assert blacklist.loc[0, 'market'] == 'nyse'
     assert blacklist.loc[0, 'attempts'] == 1
@@ -101,11 +101,11 @@ def test_fetch_meta_blacklists_ticker_with_no_info(tmp_path, monkeypatch):
 
 def test_fetch_meta_skips_already_meta_blacklisted_ticker(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('QUIET', 'nyse'))
-    meta_state = tmp_path / 'yahoo-meta' / 'state'
+    meta_state = tmp_path / 'yahoo' / 'state'
     meta_state.mkdir(parents=True)
     pd.DataFrame([{'ticker': 'QUIET', 'market': 'nyse', 'attempts': 1,
                   'first_blacklisted': '2024-01-01', 'last_checked': '2024-01-01'}]
-                 ).to_csv(meta_state / 'blacklist.csv', index=False)
+                 ).to_csv(meta_state / 'meta_blacklist.csv', index=False)
     calls: list[str] = []
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: (calls.append(sym) or _info()))
     con = duckdb.connect()

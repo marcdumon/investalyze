@@ -50,8 +50,9 @@ others. More providers expected later.
   yahoo-meta`), fetches `yf.Ticker(t).info` per ticker -> `company_profile` (one row/ticker: address,
   website, industry/sector, business summary, employee count, governance risk scores) +
   `company_officers` (one row/officer) — see §7. Reuses this provider's ticker universe and
-  blacklist/dead exclusions; tracks its own metadata-fetch failures independently under
-  `data/yahoo-meta/state/`. Refreshed per ticker once its `FetchedOn` is older than
+  blacklist/dead exclusions; tracks its own metadata-fetch failures independently in
+  `data/yahoo/state/meta_blacklist.csv` / `meta_dead.csv` (no subdir of its own — it lives under
+  the price provider's tree). Refreshed per ticker once its `FetchedOn` is older than
   `refresh_days_meta` (`ingest.toml [yahoo-meta]`).
 
 ### 2.2 SimFin — fundamentals ✅ (built)
@@ -126,7 +127,7 @@ default: all).
 | Task | Does |
 |------|------|
 | `yahoo-blacklist` | Retries every ticker in `data/yahoo/state/blacklist.csv`. Tickers that return data again are removed from the blacklist and added back to `ticker.csv` (picked up by the next regular ingest run, not ingested by housekeeping itself). Tickers still empty get `attempts` incremented; past `blacklist_max_attempts` (`ingest.toml [yahoo]`, default 5) they move to `data/yahoo/state/dead.csv` and are never retried again. `ticker.csv` is pruned of anything still blacklisted or now dead on every run. |
-| `yahoo-meta-blacklist` | Same recheck/age-out pattern as `yahoo-blacklist`, against `data/yahoo-meta/state/blacklist.csv`/`dead.csv` (independent of the price provider's lists — `yahoo-meta` tracks its own metadata-fetch failures). A revived ticker is simply unblacklisted; the next `yahoo-meta` run re-fetches it naturally (no ticker.csv of its own to prune). |
+| `yahoo-meta-blacklist` | Same recheck/age-out pattern as `yahoo-blacklist`, against `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` (independent of the price provider's lists — `yahoo-meta` tracks its own metadata-fetch failures, alongside them in the same dir). A revived ticker is simply unblacklisted; the next `yahoo-meta` run re-fetches it naturally (no ticker.csv of its own to prune). |
 
 ---
 
@@ -142,7 +143,8 @@ data/
 ├── yahoo/
 │   ├── raw/                     # immutable landed source artifacts (never mutated)
 │   ├── processed/               # canonical parquet, regenerable from raw (safe to wipe)
-│   └── state/                   # markers, per-ticker success/failure, resume cursors
+│   └── state/                   # markers, per-ticker success/failure, resume cursors;
+│                                #   also yahoo-meta's meta_blacklist.csv/meta_dead.csv (no subdir of its own)
 ├── simfin/
 │   ├── raw/   processed/   state/
 └── stooq/

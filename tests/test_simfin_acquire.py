@@ -1,7 +1,7 @@
 """Tests for SimFin acquire: redirect handling + refresh-by-age orchestration."""
 from pathlib import Path
 
-from investalyze.ingest.providers.simfin import provider
+from investalyze.ingest.providers.simfin import fundamental_data as provider
 
 
 class _Resp:

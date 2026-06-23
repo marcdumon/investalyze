@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 
-from investalyze.ingest.providers.simfin import provider
+from investalyze.ingest.providers.simfin import fundamental_data as provider
 
 
 def _zip(path: Path, member: str, text: str) -> None:

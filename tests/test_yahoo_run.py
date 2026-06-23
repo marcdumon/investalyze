@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from investalyze.ingest.providers.yahoo import provider
+from investalyze.ingest.providers.yahoo import price_data as provider
 
 
 def _yahoo_multi(symbols):
