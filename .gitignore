@@ -19,5 +19,3 @@ data
 # Never commit project memory
 CLAUDE.md
 
-# Brainstorming/spec docs — local only
-docs/superpowers/
