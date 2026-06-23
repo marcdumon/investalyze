@@ -136,8 +136,8 @@ def show_note(text):
 PROVIDER_TABLES = {
     'stooq': ['market_data'],
     'yahoo': ['prices', 'dividends', 'splits'],
-    'yahoo-meta': ['company_profile', 'company_officers'],
-    'simfin': ['income', 'balance', 'cashflow', 'companies'],
+    'yahoo-meta': ['_yahoo_companies', 'company_officers'],
+    'simfin': ['income', 'balance', 'cashflow', '_simfin_companies'],
 }
 
 # Fundamentals tables holding both as-reported and restated rows (split by the IsRestated flag).
@@ -217,8 +217,8 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
     companies = load_ticker_rows(con, 'companies', ticker)
     show_note('no rows') if companies.empty else show_df(companies.T)
 
-    show_section_header('company_profile')
-    profile = load_ticker_rows(con, 'company_profile', ticker)
+    show_section_header('_yahoo_companies')
+    profile = load_ticker_rows(con, '_yahoo_companies', ticker)
     show_note('no rows') if profile.empty else show_df(profile.T)
 
     show_section_header('company_officers')

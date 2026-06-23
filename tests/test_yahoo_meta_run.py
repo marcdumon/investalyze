@@ -35,7 +35,7 @@ def test_fetch_meta_writes_profile_and_officers(tmp_path, monkeypatch):
     con = duckdb.connect()
     n = meta.fetch_meta(con, tmp_path, _SETTINGS)
     assert n == 1
-    profile = con.execute("SELECT Ticker, Src, City, FullTimeEmployees FROM company_profile").fetchall()
+    profile = con.execute("SELECT Ticker, Src, City, FullTimeEmployees FROM _yahoo_companies").fetchall()
     assert profile == [('AAA', 'yahoo', 'Cupertino', 100)]
     officers = con.execute("SELECT Ticker, Name, Title FROM company_officers").fetchall()
     assert officers == [('AAA', 'Jane Doe', 'CEO')]
@@ -64,10 +64,10 @@ def test_fetch_meta_refetches_stale_ticker(tmp_path, monkeypatch):
     monkeypatch.setattr(meta, '_fetch_info', fake_info)
     con = duckdb.connect()
     meta.fetch_meta(con, tmp_path, _SETTINGS)
-    con.execute("UPDATE company_profile SET FetchedOn = DATE '2020-01-01' WHERE Ticker = 'AAA'")
+    con.execute("UPDATE _yahoo_companies SET FetchedOn = DATE '2020-01-01' WHERE Ticker = 'AAA'")
     meta.fetch_meta(con, tmp_path, _SETTINGS)
     assert calls == ['AAA', 'AAA']
-    row = con.execute("SELECT FetchedOn FROM company_profile WHERE Ticker = 'AAA'").fetchone()
+    row = con.execute("SELECT FetchedOn FROM _yahoo_companies WHERE Ticker = 'AAA'").fetchone()
     assert row[0] == date.today()
 
 

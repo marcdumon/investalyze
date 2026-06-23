@@ -36,7 +36,7 @@ def test_run_loads_fundamentals_and_companies(tmp_path: Path, monkeypatch):
     n = provider.run(con, tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 90})
     assert n > 0
     assert con.execute('SELECT COUNT(*) FROM income').fetchone()[0] == 2     # asreported + restated
-    assert con.execute("SELECT Sector FROM companies WHERE Ticker = 'AAPL'").fetchone()[0] == 'Tech'
+    assert con.execute("SELECT Sector FROM _simfin_companies WHERE Ticker = 'AAPL'").fetchone()[0] == 'Tech'
     # re-run is idempotent (merge-upsert on the key, not append)
     provider.run(con, tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 90})
     assert con.execute('SELECT COUNT(*) FROM income').fetchone()[0] == 2
@@ -55,7 +55,7 @@ def test_companies_columns_are_canonical(tmp_path: Path, monkeypatch):
     monkeypatch.setenv('SIMFIN_API_KEY', 'K')
     con = duckdb.connect()
     provider.run(con, tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 90})
-    cols = {c[0] for c in con.execute('DESCRIBE companies').fetchall()}
+    cols = {c[0] for c in con.execute('DESCRIBE _simfin_companies').fetchall()}
     assert {'CompanyName', 'NumberEmployees', 'BusinessSummary', 'MainCurrency',
             'FinancialYearEndMonth'} <= cols
     assert not ({'Company Name', 'Number Employees', 'Business Summary', 'Main Currency',

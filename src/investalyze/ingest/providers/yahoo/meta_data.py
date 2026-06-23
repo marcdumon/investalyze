@@ -20,7 +20,7 @@ from investalyze.ingest.providers.yahoo import columns, price_data as provider
 
 log = logging.getLogger('investalyze.ingest.yahoo-meta')
 
-_PROFILE, _OFFICERS = 'company_profile', 'company_officers'
+_PROFILE, _OFFICERS = '_yahoo_companies', 'company_officers'
 _PROFILE_KEY = ['Ticker', 'Src']
 _OFFICERS_KEY = ['Ticker', 'Src', 'Name']
 _PROFILE_COLS = [

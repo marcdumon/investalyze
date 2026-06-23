@@ -20,9 +20,9 @@ log = logging.getLogger('investalyze.migrate')
 
 # table -> {old column name: new column name}
 _RENAMES: dict[str, dict[str, str]] = {
-    'company_profile': yahoo_cols.COMPANY_PROFILE,
+    '_yahoo_companies': yahoo_cols.COMPANY_PROFILE,
     'company_officers': yahoo_cols.COMPANY_OFFICERS,
-    'companies': simfin_cols.COMPANIES,
+    '_simfin_companies': simfin_cols.COMPANIES,
 }
 
 
