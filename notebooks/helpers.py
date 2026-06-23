@@ -77,16 +77,25 @@ PROVIDER_TABLES = {
     'simfin': ['income', 'balance', 'cashflow', 'companies'],
 }
 
+# Fundamentals tables holding both as-reported and restated rows (split by the IsRestated flag).
+RESTATED_TABLES = {'income', 'balance', 'cashflow'}
 
-def sample_rows(con, table, n=15):
-    """`n` random rows from `table` as a DataFrame."""
-    return con.execute(f'SELECT * FROM {table} ORDER BY random() LIMIT {n}').df()
+
+def sample_rows(con, table, n=15, where=None):
+    """`n` random rows from `table` as a DataFrame, optionally filtered by a SQL `where` clause."""
+    clause = f' WHERE {where}' if where else ''
+    return con.execute(f'SELECT * FROM {table}{clause} ORDER BY random() LIMIT {n}').df()
 
 
 def show_provider_samples(con, provider):
-    """Display an n-row sample of every table the provider owns."""
+    """Display an n-row sample of every table the provider owns; split restated fundamentals."""
     present = list_tables(con)
     for table in PROVIDER_TABLES[provider]:
+        if table in RESTATED_TABLES and table in present:
+            for is_restated, label in ((False, 'as-reported'), (True, 'restated')):
+                show_section_header(f'{provider} — {table} ({label})', level=3)
+                display(sample_rows(con, table, where=f'IsRestated = {is_restated}'))
+            continue
         show_section_header(f'{provider} — {table}', level=3)
         if table not in present:
             show_note('not in the DB yet')
