@@ -30,3 +30,8 @@ dev = [
     "pandas-stubs>=2",
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so root-level packages (e.g. `scripts`) import
+# under pytest. `investalyze` itself resolves via its editable install.
+pythonpath = ["."]

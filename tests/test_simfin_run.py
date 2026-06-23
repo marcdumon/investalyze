@@ -22,7 +22,9 @@ def _seed_raw(raw: Path) -> None:
     _zip(raw / 'us-income-annual-full-asreported.zip', 'a.csv', _income('AAPL', 100))
     _zip(raw / 'us-income-annual-full.zip', 'b.csv', _income('AAPL', 110))
     _zip(raw / 'us-companies.zip', 'c.csv',
-         'Ticker;SimFinId;Company Name;IndustryId;Market\nAAPL;101;Apple Inc;100001;us\n')
+         'Ticker;SimFinId;Company Name;IndustryId;Market;Number Employees;Business Summary;'
+         'Main Currency;End of financial year (month)\n'
+         'AAPL;101;Apple Inc;100001;us;1000;Makes phones;USD;9\n')
     _zip(raw / 'industries.zip', 'i.csv', 'IndustryId;Industry;Sector\n100001;HW;Tech\n')
 
 
@@ -45,3 +47,16 @@ def test_run_raises_without_api_key(tmp_path: Path, monkeypatch):
     con = duckdb.connect()
     with pytest.raises(RuntimeError, match='SIMFIN_API_KEY'):
         provider.run(con, tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 90})
+
+
+def test_companies_columns_are_canonical(tmp_path: Path, monkeypatch):
+    _seed_raw(tmp_path / 'simfin' / 'raw')
+    monkeypatch.setattr(provider, '_acquire', lambda *a, **k: None)
+    monkeypatch.setenv('SIMFIN_API_KEY', 'K')
+    con = duckdb.connect()
+    provider.run(con, tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 90})
+    cols = {c[0] for c in con.execute('DESCRIBE companies').fetchall()}
+    assert {'CompanyName', 'NumberEmployees', 'BusinessSummary', 'MainCurrency',
+            'FinancialYearEndMonth'} <= cols
+    assert not ({'Company Name', 'Number Employees', 'Business Summary', 'Main Currency',
+                 'End of financial year (month)'} & cols)
