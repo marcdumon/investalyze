@@ -16,13 +16,13 @@ import pandas as pd
 import yfinance as yf
 
 from investalyze.ingest import storage
-from investalyze.ingest.providers.yahoo import price_data as provider
+from investalyze.ingest.providers.yahoo import columns, price_data as provider
 
 log = logging.getLogger('investalyze.ingest.yahoo-meta')
 
 _PROFILE, _OFFICERS = 'company_profile', 'company_officers'
 _PROFILE_KEY = ['Ticker', 'Src']
-_OFFICERS_KEY = ['Ticker', 'Src', 'name']
+_OFFICERS_KEY = ['Ticker', 'Src', 'Name']
 _PROFILE_COLS = [
     'address1',
     'city',
@@ -59,16 +59,16 @@ def _fetch_info(symbol: str) -> dict:
 
 
 def _to_profile(ticker: str, info: dict, fetched_on: date) -> pd.DataFrame:
-    """One ticker's `.info` -> a single `company_profile` row."""
+    """One ticker's `.info` -> a single `company_profile` row (canonical PascalCase columns)."""
     row = {'Ticker': ticker, 'Src': 'yahoo'}
     for col in _PROFILE_COLS:
         row[col] = info.get(col)
     row['FetchedOn'] = fetched_on
-    return pd.DataFrame([row])
+    return pd.DataFrame([row]).rename(columns=columns.COMPANY_PROFILE)
 
 
 def _to_officers(ticker: str, info: dict) -> pd.DataFrame:
-    """One ticker's `companyOfficers` -> `company_officers` rows (empty if none)."""
+    """One ticker's `companyOfficers` -> `company_officers` rows (canonical PascalCase; empty if none)."""
     officers = info.get('companyOfficers') or []
     rows = []
     for officer in officers:
@@ -76,7 +76,8 @@ def _to_officers(ticker: str, info: dict) -> pd.DataFrame:
         for col in _OFFICER_COLS:
             row[col] = officer.get(col)
         rows.append(row)
-    return pd.DataFrame(rows, columns=['Ticker', 'Src'] + _OFFICER_COLS)
+    frame = pd.DataFrame(rows, columns=['Ticker', 'Src'] + _OFFICER_COLS)
+    return frame.rename(columns=columns.COMPANY_OFFICERS)
 
 
 def _load_existing_profile(con: duckdb.DuckDBPyConnection) -> dict[str, date]:

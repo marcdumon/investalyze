@@ -35,9 +35,9 @@ def test_fetch_meta_writes_profile_and_officers(tmp_path, monkeypatch):
     con = duckdb.connect()
     n = meta.fetch_meta(con, tmp_path, _SETTINGS)
     assert n == 1
-    profile = con.execute("SELECT Ticker, Src, city, fullTimeEmployees FROM company_profile").fetchall()
+    profile = con.execute("SELECT Ticker, Src, City, FullTimeEmployees FROM company_profile").fetchall()
     assert profile == [('AAA', 'yahoo', 'Cupertino', 100)]
-    officers = con.execute("SELECT Ticker, name, title FROM company_officers").fetchall()
+    officers = con.execute("SELECT Ticker, Name, Title FROM company_officers").fetchall()
     assert officers == [('AAA', 'Jane Doe', 'CEO')]
 
 

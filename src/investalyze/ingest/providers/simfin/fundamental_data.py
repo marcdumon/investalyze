@@ -19,6 +19,7 @@ import pandas as pd
 import requests
 
 from investalyze.ingest import storage
+from investalyze.ingest.providers.simfin import columns
 
 log = logging.getLogger('investalyze.ingest.simfin')
 
@@ -172,7 +173,7 @@ def _read_companies(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path) ->
                    c.* EXCLUDE (Ticker, SimFinId, Market, "Company Name", IndustryId)
             FROM read_csv('{ccsv}', delim=';', union_by_name=true, null_padding=true, parallel=false) c
             LEFT JOIN read_csv('{icsv}', delim=';') i ON c.IndustryId = i.IndustryId"""
-    ).df()
+    ).df().rename(columns=columns.COMPANIES)
 
 
 def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
