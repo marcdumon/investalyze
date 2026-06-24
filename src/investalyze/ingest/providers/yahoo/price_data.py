@@ -101,8 +101,7 @@ def _fetch(symbols: list[str], *, start: str | None) -> dict[str, pd.DataFrame]:
     raw = yf.download(symbols, auto_adjust=False, actions=True, group_by='ticker', progress=False, period='max', start=start)
     if raw is None or raw.empty:
         return {}
-    return {sym: pd.DataFrame(raw[sym]).dropna(how='all') if sym in raw.columns.get_level_values(0) else pd.DataFrame()
-            for sym in symbols}
+    return {sym: pd.DataFrame(raw[sym]).dropna(how='all') if sym in raw.columns.get_level_values(0) else pd.DataFrame() for sym in symbols}
 
 
 def _load_existing_tickers(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
@@ -213,7 +212,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             storage.write(con, _DIVS, pd.concat(batch_divs, ignore_index=True), key=_KEY)
         if batch_splits:
             storage.write(con, _SPLITS, pd.concat(batch_splits, ignore_index=True), key=_KEY)
-        for sym in recompute:   # after the batch write so the new rows are present
+        for sym in recompute:  # after the batch write so the new rows are present
             _recompute_ac(con, sym)
         if newly_blacklisted:
             today = date.today().isoformat()
@@ -239,7 +238,9 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     return storage.count_rows(con, _PRICES)
 
 
-def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_blacklisted: list[str], flagged: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
+def _prepare_ticker(
+    sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_blacklisted: list[str], flagged: list[dict]
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
     """Transform one ticker's fetched frame into (prices, dividends, splits) rows.
 
     Returns None (and blacklists the ticker) when Yahoo gave no data. The caller
@@ -299,8 +300,12 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
             record['attempts'] += 1
             record['last_checked'] = today
             if record['attempts'] >= max_attempts:
-                died_rows.append({'ticker': record['ticker'], 'attempts': record['attempts'],
-                                  'first_blacklisted': record['first_blacklisted'], 'died_on': today})
+                died_rows.append({
+                    'ticker': record['ticker'],
+                    'attempts': record['attempts'],
+                    'first_blacklisted': record['first_blacklisted'],
+                    'died_on': today,
+                })
             else:
                 still_blacklisted.append(record)
         if settings['sleep'] and i < len(batches) - 1:

@@ -16,7 +16,8 @@ import pandas as pd
 import yfinance as yf
 
 from investalyze.ingest import storage
-from investalyze.ingest.providers.yahoo import columns, price_data as provider
+from investalyze.ingest.providers.yahoo import columns
+from investalyze.ingest.providers.yahoo import price_data as provider
 
 log = logging.getLogger('investalyze.ingest.yahoo-meta')
 
@@ -60,9 +61,9 @@ def _fetch_info(symbol: str) -> dict:
 
 def _to_profile(ticker: str, info: dict, fetched_on: date) -> pd.DataFrame:
     """One ticker's `.info` -> a single `_yahoo_companies` row (canonical PascalCase columns)."""
-    row = {'Ticker': ticker, 'Src': 'yahoo'}
+    row: dict[str, str | date] = {'Ticker': ticker, 'Src': 'yahoo'}
     for col in _PROFILE_COLS:
-        row[col] = info.get(col)
+        row[col] = info.get(col, '')
     row['FetchedOn'] = fetched_on
     return pd.DataFrame([row]).rename(columns=columns.COMPANY_PROFILE)
 

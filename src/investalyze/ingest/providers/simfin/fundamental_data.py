@@ -6,6 +6,7 @@ S3 redirect), refreshed by file age; no incremental feed. Owns its whole flow:
 acquire zips into raw/ -> extract + union via DuckDB -> merge-upsert via storage.
 Split into more files in this folder if it grows.
 """
+
 import datetime
 import logging
 import os
@@ -40,6 +41,7 @@ _KEY_COMPANIES = ['Ticker', 'Market']
 @dataclass(frozen=True)
 class _Spec:
     """One bulk file to download."""
+
     dataset: str
     variant: str | None
     market: str | None
@@ -64,10 +66,8 @@ class _Spec:
 
 def _specs(refresh_fundamentals: int, refresh_meta: int) -> list[_Spec]:
     """The full download matrix: fundamentals (3 statements x 4 variants) + metadata."""
-    fundamentals = [_Spec(s, v, _MARKET, refresh_fundamentals)
-                    for s in _STATEMENTS for v, _period, _restated in _VARIANTS]
-    meta = [_Spec('companies', None, _MARKET, refresh_meta),
-            _Spec('industries', None, None, refresh_meta)]
+    fundamentals = [_Spec(s, v, _MARKET, refresh_fundamentals) for s in _STATEMENTS for v, _period, _restated in _VARIANTS]
+    meta = [_Spec('companies', None, _MARKET, refresh_meta), _Spec('industries', None, None, refresh_meta)]
     return fundamentals + meta
 
 
@@ -119,7 +119,7 @@ def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
         log.info(f'downloading {spec.filename}')
         try:
             _download_file(spec.url, headers, dest)
-        except Exception as e:   # one bad file must not abort the rest
+        except Exception as e:  # one bad file must not abort the rest
             log.error(f'failed {spec.filename}: {e}')
 
 
@@ -146,7 +146,7 @@ def _read_statement(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path, st
         parts.append(
             f"SELECT Ticker, SimFinId AS SrcId, 'simfin' AS Src, '{_MARKET}' AS Market, "
             f"'{period}' AS Period, {str(is_restated).lower()} AS IsRestated, "
-            f"* EXCLUDE (Ticker, SimFinId) "
+            f'* EXCLUDE (Ticker, SimFinId) '
             f"FROM read_csv('{csv}', delim=';', union_by_name=true, null_padding=true)"
         )
     if not parts:
@@ -167,13 +167,18 @@ def _read_companies(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path) ->
         return pd.DataFrame()
     ccsv = _extract(czip, tmp)
     icsv = _extract(izip, tmp)
-    return con.execute(
-        f"""SELECT c.Ticker, c.SimFinId AS SrcId, 'simfin' AS Src, c.Market,
+    return (
+        con
+        .execute(
+            f"""SELECT c.Ticker, c.SimFinId AS SrcId, 'simfin' AS Src, c.Market,
                    i.Industry, i.Sector, c."Company Name", c.IndustryId,
                    c.* EXCLUDE (Ticker, SimFinId, Market, "Company Name", IndustryId)
             FROM read_csv('{ccsv}', delim=';', union_by_name=true, null_padding=true, parallel=false) c
             LEFT JOIN read_csv('{icsv}', delim=';') i ON c.IndustryId = i.IndustryId"""
-    ).df().rename(columns=columns.COMPANIES)
+        )
+        .df()
+        .rename(columns=columns.COMPANIES)
+    )
 
 
 def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
@@ -202,8 +207,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         if not companies.empty:
             storage.write(con, '_simfin_companies', companies, key=_KEY_COMPANIES)
             log.info(f'companies: {len(companies)} rows')
-    counts = {t: storage.count_rows(con, t) for t in _STATEMENTS + ['_simfin_companies']
-              if storage.table_exists(con, t)}
+    counts = {t: storage.count_rows(con, t) for t in _STATEMENTS + ['_simfin_companies'] if storage.table_exists(con, t)}
     total = sum(counts.values())
     log.info(f'done — {total} rows across simfin tables ({counts})')
     return total

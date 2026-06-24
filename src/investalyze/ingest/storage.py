@@ -7,6 +7,7 @@ owns that). Two jobs, deliberately small:
 
 Split this module only if one of these grows enough to earn its own file.
 """
+
 from pathlib import Path
 
 import duckdb
@@ -27,9 +28,7 @@ def connect(data_root: Path, db: str = _DB, *, read_only: bool = False) -> duckd
 # --- introspection ------------------------------------------------------------
 def table_exists(con: duckdb.DuckDBPyConnection, table: str) -> bool:
     """True if `table` exists in the connected DB."""
-    return con.execute(
-        'SELECT 1 FROM information_schema.tables WHERE table_name = ?', [table]
-    ).fetchone() is not None
+    return con.execute('SELECT 1 FROM information_schema.tables WHERE table_name = ?', [table]).fetchone() is not None
 
 
 def count_rows(con: duckdb.DuckDBPyConnection, table: str) -> int:

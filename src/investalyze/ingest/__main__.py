@@ -1,4 +1,5 @@
 """CLI entry: `python -m investalyze.ingest`. Parse args, run the orchestrator."""
+
 import argparse
 import logging
 from dataclasses import replace
@@ -19,21 +20,26 @@ def main() -> None:
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
     )
-    parser.add_argument('command', nargs='?', choices=('setup', 'housekeeping'),
-                        help="'setup' scaffolds the data dirs, 'housekeeping' runs maintenance "
-                             "tasks (both exit without ingesting); omit to run the ingest")
-    parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
-                        help='TOML config file (default: ./ingest.toml; missing is fine)')
-    parser.add_argument('--data-root', type=Path, default=None,
-                        help='override the data dir from config')
-    parser.add_argument('-p', '--provider', action='append', dest='providers',
-                        choices=sorted(orchestrator.PROVIDERS),
-                        help='provider to run; repeatable (default: all)')
-    parser.add_argument('-t', '--task', action='append', dest='tasks',
-                        choices=sorted(housekeeping.HOUSEKEEPING_TASKS),
-                        help='housekeeping task to run; repeatable (default: all)')
-    parser.add_argument('--update', action='store_true',
-                        help='apply the daily update instead of a full load')
+    parser.add_argument(
+        'command',
+        nargs='?',
+        choices=('setup', 'housekeeping'),
+        help="'setup' scaffolds the data dirs, 'housekeeping' runs maintenance tasks (both exit without ingesting); omit to run the ingest",
+    )
+    parser.add_argument('--config', type=Path, default=Path('ingest.toml'), help='TOML config file (default: ./ingest.toml; missing is fine)')
+    parser.add_argument('--data-root', type=Path, default=None, help='override the data dir from config')
+    parser.add_argument(
+        '-p', '--provider', action='append', dest='providers', choices=sorted(orchestrator.PROVIDERS), help='provider to run; repeatable (default: all)'
+    )
+    parser.add_argument(
+        '-t',
+        '--task',
+        action='append',
+        dest='tasks',
+        choices=sorted(housekeeping.HOUSEKEEPING_TASKS),
+        help='housekeeping task to run; repeatable (default: all)',
+    )
+    parser.add_argument('--update', action='store_true', help='apply the daily update instead of a full load')
     args = parser.parse_args()
 
     cfg = config.load(args.config)
