@@ -24,6 +24,7 @@ class _ColorFormatter(logging.Formatter):
     """Wrap each formatted line in its level's ANSI color."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format the record, then wrap the whole line in its level's ANSI color."""
         color = LEVEL_COLORS_ANSI.get(record.levelno, _RESET)
         return f'{color}{super().format(record)}{_RESET}'
 

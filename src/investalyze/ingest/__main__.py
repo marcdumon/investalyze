@@ -24,12 +24,15 @@ def main() -> None:
         'command',
         nargs='?',
         choices=('setup', 'housekeeping'),
-        help="'setup' scaffolds the data dirs, 'housekeeping' runs maintenance tasks (both exit without ingesting); omit to run the ingest",
+        help=("'setup' scaffolds the data dirs, 'housekeeping' runs maintenance tasks "
+              '(both exit without ingesting); omit to run the ingest'),
     )
-    parser.add_argument('--config', type=Path, default=Path('ingest.toml'), help='TOML config file (default: ./ingest.toml; missing is fine)')
+    parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
+                        help='TOML config file (default: ./ingest.toml; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None, help='override the data dir from config')
     parser.add_argument(
-        '-p', '--provider', action='append', dest='providers', choices=sorted(orchestrator.PROVIDERS), help='provider to run; repeatable (default: all)'
+        '-p', '--provider', action='append', dest='providers', choices=sorted(orchestrator.PROVIDERS),
+        help='provider to run; repeatable (default: all)',
     )
     parser.add_argument(
         '-t',

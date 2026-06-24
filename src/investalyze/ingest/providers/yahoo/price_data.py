@@ -200,7 +200,8 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         recompute: list[str] = []
         for sym in batch:
             frame = frames.get(sym, pd.DataFrame())
-            prepared = _prepare_ticker(sym, frame, ac_tolerance=settings['ac_tolerance'], newly_blacklisted=newly_blacklisted, flagged=flagged)
+            prepared = _prepare_ticker(sym, frame, ac_tolerance=settings['ac_tolerance'],
+                                       newly_blacklisted=newly_blacklisted, flagged=flagged)
             if prepared is None:
                 continue
             prices, divs, splits = prepared
@@ -235,7 +236,8 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             pd.DataFrame(flagged).to_csv(state_dir / 'ac_discrepancies.csv', index=False)
         batch_blacklisted = newly_blacklisted[blacklisted_before:]
         since = f'from {start}' if start else 'full history'
-        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_blacklisted)} blacklisted {len(batch_blacklisted)} (n={len(todo)})')
+        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_blacklisted)} '
+                 f'blacklisted {len(batch_blacklisted)} (n={len(todo)})')
         if batch_blacklisted:
             log.warning(f'no data for {", ".join(batch_blacklisted)} — blacklisted')
         if settings['sleep'] and i < len(batches) - 1:
