@@ -3,6 +3,7 @@
 Mirrors orchestrator.py's shape — a registry of name -> (provider name, task callable), one
 place that opens the DB connection. Adding a task = one new function + one registry entry.
 """
+
 import logging
 from collections.abc import Callable, Sequence
 
@@ -25,10 +26,8 @@ def ticker_diff(con: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
     table. Returns sorted lists under 'simfin_only' (in simfin, missing from yahoo) and 'yahoo_only'
     (in yahoo, missing from simfin).
     """
-    simfin_only = [t for (t,) in con.execute(
-        'SELECT Ticker FROM _simfin_companies EXCEPT SELECT Ticker FROM prices ORDER BY Ticker').fetchall()]
-    yahoo_only = [t for (t,) in con.execute(
-        'SELECT Ticker FROM prices EXCEPT SELECT Ticker FROM _simfin_companies ORDER BY Ticker').fetchall()]
+    simfin_only = [t for (t,) in con.execute('SELECT Ticker FROM _simfin_companies EXCEPT SELECT Ticker FROM prices ORDER BY Ticker').fetchall()]
+    yahoo_only = [t for (t,) in con.execute('SELECT Ticker FROM prices EXCEPT SELECT Ticker FROM _simfin_companies ORDER BY Ticker').fetchall()]
     log.info(f'ticker diff: {len(simfin_only)} simfin-only, {len(yahoo_only)} yahoo-only')
     return {'simfin_only': simfin_only, 'yahoo_only': yahoo_only}
 
@@ -40,7 +39,7 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root, settings: dict)
     BusinessSummary). `data_root`/`settings` are accepted to match the housekeeping task shape and
     are unused. Returns row counts: total, in_yahoo, in_simfin, both.
     """
-    con.execute('''
+    con.execute("""
         CREATE OR REPLACE TABLE companies AS
         SELECT
             COALESCE(y.Ticker, s.Ticker)                     AS Ticker,
@@ -62,15 +61,15 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root, settings: dict)
             COALESCE(y.BusinessSummary, s.BusinessSummary)   AS BusinessSummary
         FROM _yahoo_companies y
         FULL OUTER JOIN _simfin_companies s ON y.Ticker = s.Ticker
-    ''')
-    row = con.execute('''
+    """)
+    row = con.execute("""
         SELECT count(*),
                count(*) FILTER (WHERE InYahoo),
                count(*) FILTER (WHERE InSimfin),
                count(*) FILTER (WHERE InYahoo AND InSimfin)
         FROM companies
-    ''').fetchone()
-    result = {'rows': row[0], 'in_yahoo': row[1], 'in_simfin': row[2], 'both': row[3]}
+    """).fetchone()
+    result = {'rows': row[0], 'in_yahoo': row[1], 'in_simfin': row[2], 'both': row[3]}  # type: ignore [count() never returns None]
     log.info(f'rebuilt companies: {result}')
     return result
 

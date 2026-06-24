@@ -12,6 +12,7 @@ Notebooks import what they need (kernel CWD is this folder) and turn on autorelo
 
     con = connect_readonly()
 """
+
 import math
 import numbers
 from pathlib import Path
@@ -19,10 +20,10 @@ from pathlib import Path
 import pandas as pd
 from IPython.display import HTML, Markdown, display
 
-
 # ======================================================================
 # SHARED — used by more than one notebook
 # ======================================================================
+
 
 def fmt_number(x, sig=4):
     """Render a number readably: thousands separator for the big, significant figures for the small.
@@ -38,7 +39,7 @@ def fmt_number(x, sig=4):
         return x
     if isinstance(x, bool):
         return x
-    ax = abs(x)
+    ax = abs(x)  # type: ignore
     if ax == 0:
         return '0'
     if ax >= 1:
@@ -63,10 +64,7 @@ def _is_numeric_col(col):
     if pd.api.types.is_numeric_dtype(col):
         return not pd.api.types.is_bool_dtype(col)
     non_null = col.dropna()
-    return (
-        not non_null.empty
-        and non_null.map(type).isin((int, float, complex)).all()
-    )
+    return not non_null.empty and non_null.map(type).isin((int, float, complex)).all()
 
 
 MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
@@ -80,10 +78,12 @@ def show_df(df):
     (Styler tables carry no `dataframe` class, so a global `.dataframe` font rule can't reach them).
     """
     num_cols = [c for c in df.columns if _is_numeric_col(df[c])]
-    styler = (df.style.format(_fmt_cell)
-              .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})
-              .set_table_styles([{'selector': '', 'props': [('font-family', MONO_FONT)]},
-                                 {'selector': 'th', 'props': [('text-align', 'left')]}]))
+    styler = (
+        df.style
+        .format(_fmt_cell)
+        .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})
+        .set_table_styles([{'selector': '', 'props': [('font-family', MONO_FONT)]}, {'selector': 'th', 'props': [('text-align', 'left')]}])
+    )
     if num_cols:
         styler = styler.set_properties(subset=num_cols, **{'text-align': 'right'})
     display(styler)
@@ -185,6 +185,7 @@ def show_provider_samples(con, provider):
 # 2_ticker_profile — per-ticker drill-down
 # ======================================================================
 
+
 def timeseries_stats(df):
     """count/min/max/mean/std per numeric column of a time series (Date span shown separately)."""
     return df.select_dtypes('number').describe().T[['count', 'min', 'max', 'mean', 'std']]
@@ -192,7 +193,7 @@ def timeseries_stats(df):
 
 def fundamentals_coverage(df):
     """One-line coverage summary for a fundamentals slice."""
-    fy = f"{int(df['Fiscal Year'].min())} .. {int(df['Fiscal Year'].max())}"
+    fy = f'{int(df["Fiscal Year"].min())} .. {int(df["Fiscal Year"].max())}'
     periods = ' '.join(f'{p}={n}' for p, n in df['Period'].value_counts().sort_index().items())
     currency = ', '.join(sorted(df['Currency'].dropna().unique()))
     return f'Fiscal Year {fy}  |  {periods}  |  {currency}  |  {len(df)} rows'

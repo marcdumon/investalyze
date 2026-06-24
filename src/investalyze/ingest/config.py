@@ -4,6 +4,7 @@ Reads `ingest.toml` (paths + per-provider settings) into a `Config`, with
 built-in defaults so the package runs with no config file at all. Secrets (e.g.
 the SimFin API key) are NOT here — they come from the environment.
 """
+
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,7 @@ _DEFAULT_LOG_LEVEL = 'INFO'
 @dataclass(frozen=True)
 class Config:
     """Resolved ingest settings."""
+
     data_root: Path
     db: str
     log_level: str

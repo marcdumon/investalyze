@@ -4,6 +4,7 @@ Each provider fetches + saves itself (saving through storage.write). Adding a
 provider = one new folder under providers/ + one entry in PROVIDERS here. This is
 also the one place that touches config — storage stays config-free plumbing.
 """
+
 import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path

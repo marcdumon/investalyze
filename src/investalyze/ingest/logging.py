@@ -4,6 +4,7 @@
 `logging.getLogger(...)`. The module name is safe — `import logging` here resolves
 to the stdlib (absolute import), same as the reference repo.
 """
+
 import logging
 
 LOG_FMT = '%(asctime)s|%(levelname)s|%(name)s: %(message)s'
