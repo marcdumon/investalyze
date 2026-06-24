@@ -41,13 +41,13 @@ others. More providers expected later.
   (full history if any ticker is new); overlap re-fetches a few rows, idempotent via merge upsert.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
-- **State** ✅: delisted / no-data tickers recorded in `state/blacklist.csv` (with an `attempts`
+- **State** ✅: delisted / no-data tickers recorded in `state/price_blacklist.csv` (with an `attempts`
   counter) and skipped on later runs; AC sanity-check offenders written to
   `state/ac_discrepancies.csv` (non-fatal). The `housekeeping` command (see §5) retries blacklisted
   tickers, reviving ones that return data again and moving chronic failures (past
-  `blacklist_max_attempts`) to `state/dead.csv`, never retried again.
+  `blacklist_max_attempts`) to `state/price_dead.csv`, never retried again.
 - **Metadata** ✅ (built): a separate provider, `yahoo-meta` (`python -m investalyze.ingest -p
-  yahoo-meta`), fetches `yf.Ticker(t).info` per ticker -> `company_profile` (one row/ticker: address,
+  yahoo-meta`), fetches `yf.Ticker(t).info` per ticker -> `_yahoo_companies` (one row/ticker: address,
   website, industry/sector, business summary, employee count, governance risk scores) +
   `company_officers` (one row/officer) — see §7. Reuses this provider's ticker universe and
   blacklist/dead exclusions; tracks its own metadata-fetch failures independently in
@@ -69,9 +69,11 @@ others. More providers expected later.
   no NULL columns.
 - **Granularity:** Annual (`A`) + Quarterly (`Q`), in one `Period` column.
 - **Tables:** `income`/`balance`/`cashflow` — wide source columns **verbatim** + added `Market`,
-  `Period`, `IsRestated`, `Src` (`simfin`), `SrcId` (renamed `SimFinId`). `companies` — per-market
-  companies `LEFT JOIN industries` (Industry/Sector folded in). Merge keys: fundamentals
-  `[Ticker, Market, Period, IsRestated, 'Fiscal Year', 'Fiscal Period']`, companies `[Ticker, Market]`.
+  `Period`, `IsRestated`, `Src` (`simfin`), `SrcId` (renamed `SimFinId`). `_simfin_companies` —
+  per-market companies `LEFT JOIN industries` (Industry/Sector folded in); the raw SimFin metadata
+  table, merged into the combined `companies` table by the `companies` housekeeping task. Merge keys:
+  fundamentals `[Ticker, Market, Period, IsRestated, 'Fiscal Year', 'Fiscal Period']`,
+  `_simfin_companies` `[Ticker, Market]`.
 - **Temporal columns** ✅: rows carry `Fiscal Year`, `Fiscal Period`, `Report Date`, `Publish Date`,
   `Restated Date` → **point-in-time is feasible** (original-as-published + latest restated, split by
   `IsRestated`).
@@ -126,8 +128,9 @@ default: all).
 
 | Task | Does |
 |------|------|
-| `yahoo-blacklist` | Retries every ticker in `data/yahoo/state/blacklist.csv`. Tickers that return data again are removed from the blacklist and added back to `ticker.csv` (picked up by the next regular ingest run, not ingested by housekeeping itself). Tickers still empty get `attempts` incremented; past `blacklist_max_attempts` (`ingest.toml [yahoo]`, default 5) they move to `data/yahoo/state/dead.csv` and are never retried again. `ticker.csv` is pruned of anything still blacklisted or now dead on every run. |
+| `yahoo-blacklist` | Retries every ticker in `data/yahoo/state/price_blacklist.csv`. Tickers that return data again are removed from the blacklist and added back to `ticker.csv` (picked up by the next regular ingest run, not ingested by housekeeping itself). Tickers still empty get `attempts` incremented; past `blacklist_max_attempts` (`ingest.toml [yahoo]`, default 5) they move to `data/yahoo/state/price_dead.csv` and are never retried again. `ticker.csv` is pruned of anything still blacklisted or now dead on every run. |
 | `yahoo-meta-blacklist` | Same recheck/age-out pattern as `yahoo-blacklist`, against `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` (independent of the price provider's lists — `yahoo-meta` tracks its own metadata-fetch failures, alongside them in the same dir). A revived ticker is simply unblacklisted; the next `yahoo-meta` run re-fetches it naturally (no ticker.csv of its own to prune). |
+| `companies` | Rebuilds the combined `companies` table (`CREATE OR REPLACE`) from `_yahoo_companies` `FULL OUTER JOIN _simfin_companies` on `Ticker`. One row per ticker with `InYahoo`/`InSimfin` flags; Yahoo wins the overlapping fields (Industry, Sector, NrEmployees, BusinessSummary). |
 
 ---
 
@@ -172,9 +175,10 @@ data/
   | `prices` ✅ | Yahoo | **main** — prediction target, joins fundamentals | Ticker, Date, O, H, L, C, V, AC |
   | **`market_data`** ✅ | Stooq | **secondary / features** — bonds, indices, currencies | `Ticker, Date, O, H, L, C, AssetClass` |
   | `income`/`balance`/`cashflow` ✅ | SimFin | **fundamentals** — wide statements | source cols + Market, Period, IsRestated, Src, SrcId |
-  | `companies` ✅ | SimFin | **metadata** — name/sector/industry/… | joined to industries |
-  | `company_profile` ✅ | Yahoo | **metadata** — profile fields from `yf.Ticker.info` | Ticker, Src, address1, city, state, zip, country, website, industry, sector, longBusinessSummary, fullTimeEmployees, auditRisk, boardRisk, compensationRisk, shareHolderRightsRisk, overallRisk, irWebsite, FetchedOn |
-  | `company_officers` ✅ | Yahoo | **metadata** — one row per officer | Ticker, Src, name, title, age, yearBorn, fiscalYear, totalPay, exercisedValue, unexercisedValue |
+  | `companies` ✅ | **combined** (Yahoo + SimFin) | **metadata** — one merged row per ticker, rebuilt by the `companies` housekeeping task | Ticker, InYahoo, InSimfin, Industry, Sector, NrEmployees, CompanyName, Address, City, State, Zip, Country, ISIN, CIK, Website, IRWebsite, BusinessSummary |
+  | `_yahoo_companies` ✅ | Yahoo | **raw metadata** — profile fields from `yf.Ticker.info` (one row/ticker) | Ticker, Src, Address1, City, State, Zip, Country, Website, Industry, Sector, BusinessSummary, FullTimeEmployees, AuditRisk, BoardRisk, CompensationRisk, ShareholderRightsRisk, OverallRisk, IRWebsite, FetchedOn |
+  | `_simfin_companies` ✅ | SimFin | **raw metadata** — companies ⨝ industries | Ticker, SrcId, Src, Market, Industry, Sector, CompanyName, IndustryId, ISIN, FinancialYearEndMonth, NumberEmployees, BusinessSummary, CIK, MainCurrency |
+  | `company_officers` ✅ | Yahoo | **metadata** — one row per officer | Ticker, Src, Name, Title, Age, YearBorn, FiscalYear, TotalPay, ExercisedValue, UnexercisedValue |
 
   `dividends(Ticker, Date, Dividend)` and `splits(Ticker, Date, Ratio)` carry the events. `AC` is
   our adjusted close, computed from raw close + events (not Yahoo's, not stored adjusted) and
@@ -200,4 +204,4 @@ data/
 | 3 | Point-in-time fundamentals table design | 🔶 |
 | 4 | Universe / canonical-ticker model under clean asset split | 🔶 |
 | 5 | `market_data` keys: how yield vs price bonds are distinguished beyond ticker (a Quote flag?) | ❓ |
-| 6 | Per-ticker fetch success/failure tracking | ✅ Yahoo `state/blacklist.csv` (Stooq/SimFin TBD) |
+| 6 | Per-ticker fetch success/failure tracking | ✅ Yahoo `state/price_blacklist.csv` (Stooq/SimFin TBD) |

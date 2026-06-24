@@ -12,7 +12,7 @@ _SETTINGS = {'ticker_file': 'ticker.csv', 'batch_size': 10, 'sleep': 0, 'blackli
 def _state(tmp_path: Path, blacklist_rows: list[dict]) -> None:
     state_dir = tmp_path / 'yahoo' / 'state'
     state_dir.mkdir(parents=True)
-    pd.DataFrame(blacklist_rows).to_csv(state_dir / 'blacklist.csv', index=False)
+    pd.DataFrame(blacklist_rows).to_csv(state_dir / 'price_blacklist.csv', index=False)
 
 
 def _ticker_csv(tmp_path: Path, *rows: tuple[str, str]) -> None:
@@ -41,7 +41,7 @@ def test_recheck_revives_ticker_with_data(tmp_path, monkeypatch):
     con = duckdb.connect()
     result = provider.recheck_blacklist(con, tmp_path, _SETTINGS)
     assert result == {'rechecked': 1, 'revived': 1, 'died': 0}
-    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'blacklist.csv')
+    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'price_blacklist.csv')
     assert blacklist.empty
     tickers = pd.read_csv(tmp_path / 'yahoo' / 'raw' / 'ticker.csv')
     assert set(tickers['ticker']) == {'AAA', 'BACK'}
@@ -56,7 +56,7 @@ def test_recheck_increments_attempts_when_still_empty(tmp_path, monkeypatch):
     con = duckdb.connect()
     result = provider.recheck_blacklist(con, tmp_path, _SETTINGS)
     assert result == {'rechecked': 1, 'revived': 0, 'died': 0}
-    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'blacklist.csv')
+    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'price_blacklist.csv')
     assert blacklist.loc[0, 'attempts'] == 2
     assert blacklist.loc[0, 'last_checked'] != '2024-01-01'
     tickers = pd.read_csv(tmp_path / 'yahoo' / 'raw' / 'ticker.csv')
@@ -71,9 +71,9 @@ def test_recheck_moves_to_dead_after_max_attempts(tmp_path, monkeypatch):
     con = duckdb.connect()
     result = provider.recheck_blacklist(con, tmp_path, _SETTINGS)  # max_attempts=3, this is the 3rd try
     assert result == {'rechecked': 1, 'revived': 0, 'died': 1}
-    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'blacklist.csv')
+    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'price_blacklist.csv')
     assert blacklist.empty
-    dead = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'dead.csv')
+    dead = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'price_dead.csv')
     assert dead.loc[0, 'ticker'] == 'GONE'
     assert dead.loc[0, 'attempts'] == 3
     tickers = pd.read_csv(tmp_path / 'yahoo' / 'raw' / 'ticker.csv')

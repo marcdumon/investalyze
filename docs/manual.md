@@ -43,7 +43,7 @@ other; run it on its own with:
 python -m investalyze.ingest -p yahoo-meta
 ```
 
-Fetches `yf.Ticker(t).info` per ticker into two tables — `company_profile` (address,
+Fetches `yf.Ticker(t).info` per ticker into two tables — `_yahoo_companies` (address,
 website, industry/sector, business summary, employee count, governance risk scores) and
 `company_officers` (one row per officer). Reuses the Yahoo price provider's ticker list
 and blacklist/dead exclusions, but tracks its own metadata-fetch failures independently
@@ -56,12 +56,16 @@ the DB is populated.
 
 ---
 
-## Housekeeping — recheck blacklisted tickers
+## Housekeeping
 
-Each provider that can blacklist a ticker (a fetch failure, retried and tracked) gets a
-housekeeping task that rechecks its blacklist: revives tickers that now succeed, ages out
-ones that still fail, and moves a ticker to `dead.csv` past the provider's
-`blacklist_max_attempts`.
+Maintenance tasks run separately from the regular provider ingest. Two kinds:
+
+- **Blacklist rechecks** — each provider that can blacklist a ticker (a fetch failure,
+  retried and tracked) gets a task that rechecks its blacklist: revives tickers that now
+  succeed, ages out ones that still fail, and moves a ticker to its dead list past the
+  provider's `blacklist_max_attempts`.
+- **Combined-table rebuild** — `companies` merges the per-source `_yahoo_companies` +
+  `_simfin_companies` raw metadata tables into one row per ticker.
 
 ```bash
 # run every registered housekeeping task
@@ -73,12 +77,13 @@ python -m investalyze.ingest housekeeping -t yahoo-blacklist
 
 | Flag | Effect |
 |------|--------|
-| `-t NAME` | Run only this task; repeatable (`-t yahoo-blacklist -t yahoo-meta-blacklist`). Default: all. |
+| `-t NAME` | Run only this task; repeatable (`-t yahoo-blacklist -t companies`). Default: all. |
 
 Current tasks:
 
-| Task | Checks |
-|------|--------|
-| `yahoo-blacklist` | `data/yahoo/state/blacklist.csv`/`dead.csv` — the Yahoo price provider's failed tickers. |
-| `yahoo-meta-blacklist` | `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
+| Task | Does |
+|------|------|
+| `yahoo-blacklist` | Rechecks `data/yahoo/state/price_blacklist.csv`/`price_dead.csv` — the Yahoo price provider's failed tickers. |
+| `yahoo-meta-blacklist` | Rechecks `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
+| `companies` | Rebuilds the combined `companies` table from `_yahoo_companies` + `_simfin_companies` (full outer join on Ticker; Yahoo wins overlapping fields). |
 
