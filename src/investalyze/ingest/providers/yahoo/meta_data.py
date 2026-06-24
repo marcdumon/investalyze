@@ -59,7 +59,7 @@ def _fetch_info(symbol: str) -> dict:
 
 
 def _to_profile(ticker: str, info: dict, fetched_on: date) -> pd.DataFrame:
-    """One ticker's `.info` -> a single `company_profile` row (canonical PascalCase columns)."""
+    """One ticker's `.info` -> a single `_yahoo_companies` row (canonical PascalCase columns)."""
     row = {'Ticker': ticker, 'Src': 'yahoo'}
     for col in _PROFILE_COLS:
         row[col] = info.get(col)
@@ -82,7 +82,7 @@ def _to_officers(ticker: str, info: dict) -> pd.DataFrame:
 
 def _load_existing_profile(con: duckdb.DuckDBPyConnection) -> dict[str, date]:
     """Each Yahoo ticker's stored `FetchedOn` (empty dict if the table is absent)."""
-    if _PROFILE not in {t for (t,) in con.execute('SHOW TABLES').fetchall()}:
+    if not storage.table_exists(con, _PROFILE):
         return {}
     rows = con.execute(f"SELECT Ticker, FetchedOn FROM {_PROFILE} WHERE Src = 'yahoo'").fetchall()
     return dict(rows)
@@ -148,9 +148,7 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
             time.sleep(settings['sleep'])
 
     log.info(f'done — {saved} saved, {blacklisted} blacklisted')
-    tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
-    row = con.execute(f'SELECT COUNT(*) FROM {_PROFILE}').fetchone() if _PROFILE in tables else None
-    return int(row[0]) if row is not None else 0
+    return storage.count_rows(con, _PROFILE)
 
 
 def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict:
@@ -179,9 +177,8 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     remaining = {r['ticker']: r for r in blacklist_df.to_dict('records')}
     dead_df = provider._load_dead(dead_file)
 
-    revived = died = n = 0
-    for ticker in tickers:
-        n += 1
+    revived = died = 0
+    for n, ticker in enumerate(tickers, start=1):
         log.info(f'fetching {ticker} ({n}/{len(tickers)})')
         info = _fetch_info(ticker)
         record = remaining.pop(ticker)

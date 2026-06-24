@@ -47,6 +47,25 @@ def test_connect_opens_db_file_at_data_root(tmp_path):
     assert (tmp_path / 'investalyze.duckdb').exists()
 
 
+def test_table_exists_reflects_presence():
+    con = duckdb.connect()
+    assert storage.table_exists(con, 'market_data') is False
+    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    assert storage.table_exists(con, 'market_data') is True
+
+
+def test_count_rows_is_zero_for_absent_table():
+    con = duckdb.connect()
+    assert storage.count_rows(con, 'market_data') == 0
+
+
+def test_count_rows_counts_present_rows():
+    con = duckdb.connect()
+    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    storage.write(con, 'market_data', _row('GBPUSD', 1.2), key=_KEY)
+    assert storage.count_rows(con, 'market_data') == 2
+
+
 def test_write_handles_spaced_column_names():
     con = duckdb.connect()
     key = ['Ticker', 'Fiscal Year']

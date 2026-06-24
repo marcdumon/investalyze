@@ -202,9 +202,8 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         if not companies.empty:
             storage.write(con, '_simfin_companies', companies, key=_KEY_COMPANIES)
             log.info(f'companies: {len(companies)} rows')
-    counts = {t: con.execute(f'SELECT COUNT(*) FROM {t}').fetchone()[0]
-              for t in _STATEMENTS + ['_simfin_companies']
-              if t in {r[0] for r in con.execute('SHOW TABLES').fetchall()}}
+    counts = {t: storage.count_rows(con, t) for t in _STATEMENTS + ['_simfin_companies']
+              if storage.table_exists(con, t)}
     total = sum(counts.values())
     log.info(f'done — {total} rows across simfin tables ({counts})')
     return total
