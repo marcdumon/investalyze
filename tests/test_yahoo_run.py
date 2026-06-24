@@ -58,7 +58,7 @@ def test_run_skips_empty_ticker_and_blacklists_it(tmp_path, monkeypatch):
     con = duckdb.connect()
     n = provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001})
     assert n == 0
-    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'blacklist.csv')
+    blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'price_blacklist.csv')
     assert blacklist.loc[0, 'ticker'] == 'DEAD'
     assert blacklist.loc[0, 'market'] == 'nyse'
     assert blacklist.loc[0, 'attempts'] == 1
@@ -71,7 +71,7 @@ def test_run_skips_tickers_already_dead(tmp_path, monkeypatch):
     state_dir = tmp_path / 'yahoo' / 'state'
     state_dir.mkdir(parents=True)
     pd.DataFrame([{'ticker': 'GONE', 'attempts': 5, 'first_blacklisted': '2024-01-01', 'died_on': '2024-02-01'}]
-                 ).to_csv(state_dir / 'dead.csv', index=False)
+                 ).to_csv(state_dir / 'price_dead.csv', index=False)
     fetched: list[str] = []
     def fake_fetch(syms, **k):
         fetched.extend(syms)

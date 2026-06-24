@@ -77,9 +77,9 @@ def test_fetch_meta_skips_price_blacklisted_and_dead_tickers(tmp_path, monkeypat
     price_state.mkdir(parents=True)
     pd.DataFrame([{'ticker': 'BLACK', 'market': 'nyse', 'attempts': 1,
                   'first_blacklisted': '2024-01-01', 'last_checked': '2024-01-01'}]
-                 ).to_csv(price_state / 'blacklist.csv', index=False)
+                 ).to_csv(price_state / 'price_blacklist.csv', index=False)
     pd.DataFrame([{'ticker': 'DEAD', 'attempts': 5, 'first_blacklisted': '2024-01-01', 'died_on': '2024-02-01'}]
-                 ).to_csv(price_state / 'dead.csv', index=False)
+                 ).to_csv(price_state / 'price_dead.csv', index=False)
     calls: list[str] = []
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: (calls.append(sym) or _info()))
     con = duckdb.connect()

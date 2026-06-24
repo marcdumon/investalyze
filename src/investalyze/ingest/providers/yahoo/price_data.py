@@ -101,7 +101,14 @@ def _fetch(symbols: list[str], *, start: str | None) -> dict[str, pd.DataFrame]:
     raw = yf.download(symbols, auto_adjust=False, actions=True, group_by='ticker', progress=False, period='max', start=start)
     if raw is None or raw.empty:
         return {}
-    return {sym: pd.DataFrame(raw[sym]).dropna(how='all') if sym in raw.columns.get_level_values(0) else pd.DataFrame() for sym in symbols}
+    present = set(raw.columns.get_level_values(0))
+    frames: dict[str, pd.DataFrame] = {}
+    for sym in symbols:
+        if sym in present:
+            frames[sym] = pd.DataFrame(raw[sym]).dropna(how='all')
+        else:
+            frames[sym] = pd.DataFrame()
+    return frames
 
 
 def _load_existing_tickers(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
@@ -164,8 +171,8 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     ticker_df = pd.read_csv(raw_dir / settings['ticker_file'])
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
-    blacklist_file = state_dir / 'blacklist.csv'
-    dead_file = state_dir / 'dead.csv'
+    blacklist_file = state_dir / 'price_blacklist.csv'
+    dead_file = state_dir / 'price_dead.csv'
     orig_blacklist_df = _load_blacklist(blacklist_file)
     blacklist_tickers = set(orig_blacklist_df['ticker'])
     dead_tickers = set(_load_dead(dead_file)['ticker'])
@@ -273,8 +280,8 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
     """
     raw_dir = data_root / 'yahoo' / 'raw'
     state_dir = data_root / 'yahoo' / 'state'
-    blacklist_file = state_dir / 'blacklist.csv'
-    dead_file = state_dir / 'dead.csv'
+    blacklist_file = state_dir / 'price_blacklist.csv'
+    dead_file = state_dir / 'price_dead.csv'
     ticker_file = raw_dir / settings['ticker_file']
 
     blacklist_df = _load_blacklist(blacklist_file)

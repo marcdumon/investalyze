@@ -111,8 +111,8 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
 
-    price_blacklisted = set(provider._load_blacklist(state_dir / 'blacklist.csv')['ticker'])
-    price_dead = set(provider._load_dead(state_dir / 'dead.csv')['ticker'])
+    price_blacklisted = set(provider._load_blacklist(state_dir / 'price_blacklist.csv')['ticker'])
+    price_dead = set(provider._load_dead(state_dir / 'price_dead.csv')['ticker'])
 
     blacklist_file = state_dir / 'meta_blacklist.csv'
     blacklist_df = provider._load_blacklist(blacklist_file)
@@ -121,9 +121,8 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
 
     today = date.today()
     existing = _load_existing_profile(con)
-    candidates = list(
-        dict.fromkeys(s for s in symbols if s not in price_blacklisted and s not in price_dead and s not in meta_blacklisted and s not in meta_dead)
-    )
+    excluded = price_blacklisted | price_dead | meta_blacklisted | meta_dead
+    candidates = list(dict.fromkeys(s for s in symbols if s not in excluded))
     todo = [s for s in candidates if _is_due(existing.get(s), settings['refresh_days_meta'], today)]
 
     saved = blacklisted = 0
