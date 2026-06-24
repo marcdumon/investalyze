@@ -107,15 +107,14 @@ def _fetch(symbols: list[str], *, start: str | None) -> dict[str, pd.DataFrame]:
 
 def _load_existing_tickers(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
     """Distinct tickers already loaded in `table` (empty set if the table is absent)."""
-    tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
-    if table not in tables:
+    if not storage.table_exists(con, table):
         return set()
     return {t for (t,) in con.execute(f'SELECT DISTINCT Ticker FROM {table}').fetchall()}
 
 
 def _load_last_dates(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
     """Each ticker's latest stored `prices` date (ISO string); empty if the table is absent."""
-    if _PRICES not in {t for (t,) in con.execute('SHOW TABLES').fetchall()}:
+    if not storage.table_exists(con, _PRICES):
         return {}
     return {t: str(d) for t, d in con.execute('SELECT Ticker, MAX(Date) FROM prices GROUP BY Ticker').fetchall()}
 
@@ -136,7 +135,7 @@ def _load_dead(path: Path) -> pd.DataFrame:
 
 def _load_events(con: duckdb.DuckDBPyConnection, table: str, value_col: str, ticker: str, idx: pd.DatetimeIndex) -> pd.Series:
     """Stored events for `ticker` from `table`, reindexed to `idx` with 0.0 where absent."""
-    if table not in {t for (t,) in con.execute('SHOW TABLES').fetchall()}:
+    if not storage.table_exists(con, table):
         return pd.Series(0.0, index=idx)
     rows = con.execute(f'SELECT Date, {value_col} FROM {table} WHERE Ticker = ?', [ticker]).df()
     return pd.Series(rows[value_col].to_numpy(), index=pd.DatetimeIndex(rows['Date'])).reindex(idx).fillna(0.0)
@@ -237,9 +236,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             time.sleep(settings['sleep'])
 
     log.info(f'done — {len(todo) - len(newly_blacklisted)} saved, {len(newly_blacklisted)} blacklisted, {len(flagged)} AC-flagged')
-    tables = {t for (t,) in con.execute('SHOW TABLES').fetchall()}
-    row = con.execute(f'SELECT COUNT(*) FROM {_PRICES}').fetchone() if _PRICES in tables else None
-    return int(row[0]) if row is not None else 0
+    return storage.count_rows(con, _PRICES)
 
 
 def _prepare_ticker(sym: str, frame: pd.DataFrame, *, ac_tolerance: float, newly_blacklisted: list[str], flagged: list[dict]) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:

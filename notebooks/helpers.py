@@ -32,10 +32,12 @@ def fmt_number(x, sig=4):
     rounding to zero. Trailing zeros and bare decimal points are trimmed (603 not 603.0000).
     Bools and non-numbers (strings, dates) pass through untouched — safe on mixed/transposed frames.
     """
-    if isinstance(x, bool) or not isinstance(x, numbers.Number):
-        return '' if x is pd.NA else x
     if pd.isna(x):
         return ''
+    if not isinstance(x, numbers.Number):
+        return x
+    if isinstance(x, bool):
+        return x
     ax = abs(x)
     if ax == 0:
         return '0'
@@ -61,7 +63,10 @@ def _is_numeric_col(col):
     if pd.api.types.is_numeric_dtype(col):
         return not pd.api.types.is_bool_dtype(col)
     non_null = col.dropna()
-    return len(non_null) > 0 and all(isinstance(v, numbers.Number) and not isinstance(v, bool) for v in non_null)
+    return (
+        not non_null.empty
+        and non_null.map(type).isin((int, float, complex)).all()
+    )
 
 
 MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
@@ -127,6 +132,16 @@ def show_section_header(title, level=2):
 def show_note(text):
     """Render an italic one-line note."""
     display(Markdown(f'*{text}*'))
+
+
+def show_df_or_note(df, transpose=False, note='no rows'):
+    """Show `df` (optionally transposed), or an italic note when it's empty."""
+    if df.empty:
+        show_note(note)
+    elif transpose:
+        show_df(df.T)
+    else:
+        show_df(df)
 
 
 # ======================================================================
@@ -214,16 +229,13 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
 
     # identity card — one row, transposed
     show_section_header('companies')
-    companies = load_ticker_rows(con, 'companies', ticker)
-    show_note('no rows') if companies.empty else show_df(companies.T)
+    show_df_or_note(load_ticker_rows(con, 'companies', ticker), transpose=True)
 
     show_section_header('_yahoo_companies')
-    profile = load_ticker_rows(con, '_yahoo_companies', ticker)
-    show_note('no rows') if profile.empty else show_df(profile.T)
+    show_df_or_note(load_ticker_rows(con, '_yahoo_companies', ticker), transpose=True)
 
     show_section_header('company_officers')
-    officers = load_ticker_rows(con, 'company_officers', ticker)
-    show_note('no rows') if officers.empty else show_df(officers)
+    show_df_or_note(load_ticker_rows(con, 'company_officers', ticker))
 
     show_timeseries_section(con, 'prices', ticker)
     show_timeseries_section(con, 'dividends', ticker)

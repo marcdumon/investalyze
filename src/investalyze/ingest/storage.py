@@ -24,6 +24,21 @@ def connect(data_root: Path, db: str = _DB, *, read_only: bool = False) -> duckd
     return duckdb.connect(str(data_root / db), read_only=read_only)
 
 
+# --- introspection ------------------------------------------------------------
+def table_exists(con: duckdb.DuckDBPyConnection, table: str) -> bool:
+    """True if `table` exists in the connected DB."""
+    return con.execute(
+        'SELECT 1 FROM information_schema.tables WHERE table_name = ?', [table]
+    ).fetchone() is not None
+
+
+def count_rows(con: duckdb.DuckDBPyConnection, table: str) -> int:
+    """Row count of `table`, or 0 if it doesn't exist."""
+    if not table_exists(con, table):
+        return 0
+    return int(con.execute(f'SELECT count(*) FROM {table}').fetchone()[0])  # type: ignore[index]
+
+
 # --- write --------------------------------------------------------------------
 def write(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: list[str]) -> int:
     """Merge-upsert `df` into `table` on `key`. The one path output reaches the DB.
