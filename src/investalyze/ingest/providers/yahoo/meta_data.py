@@ -132,9 +132,10 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
         if not info:
             log.debug(f'{sym} no metadata — blacklisted')
             today_iso = today.isoformat()
-            new_row = pd.DataFrame([
-                {'ticker': sym, 'market': market_by_ticker.get(sym, ''), 'attempts': 1, 'first_blacklisted': today_iso, 'last_checked': today_iso}
-            ])
+            new_row = pd.DataFrame([{
+                'ticker': sym, 'market': market_by_ticker.get(sym, ''), 'attempts': 1,
+                'first_blacklisted': today_iso, 'last_checked': today_iso,
+            }])
             blacklist_df = pd.concat([blacklist_df, new_row], ignore_index=True)
             blacklist_df.sort_values('ticker').to_csv(blacklist_file, index=False)
             blacklisted += 1
@@ -189,7 +190,8 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
             record['last_checked'] = today
             if record['attempts'] >= max_attempts:
                 died += 1
-                died_row = {'ticker': ticker, 'attempts': record['attempts'], 'first_blacklisted': record['first_blacklisted'], 'died_on': today}
+                died_row = {'ticker': ticker, 'attempts': record['attempts'],
+                            'first_blacklisted': record['first_blacklisted'], 'died_on': today}
                 dead_df = pd.concat([dead_df, pd.DataFrame([died_row])], ignore_index=True)
                 dead_df.to_csv(dead_file, index=False)
             else:

@@ -1,9 +1,10 @@
 """Shared plumbing every provider + the orchestrator use.
 
 Pure: takes plain paths/values, knows nothing about config (the orchestrator
-owns that). Two jobs, deliberately small:
-  1. db      — DuckDB connection (one place, one policy)
-  2. write   — the single helper providers save through (DRY DB writes)
+owns that). A few small jobs, deliberately so:
+  1. connect       — DuckDB connection (one place, one policy)
+  2. introspection — table_exists / count_rows
+  3. write         — the single helper providers save through (DRY DB writes)
 
 Split this module only if one of these grows enough to earn its own file.
 """
@@ -66,5 +67,5 @@ def write(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: lis
         """)
     finally:
         con.unregister('_incoming')
-    count: int = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]  # type: ignore[index]
+    count: int = con.execute(f'SELECT count(*) FROM {table}').fetchone()[0]  # type: ignore[index]
     return count
