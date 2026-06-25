@@ -28,7 +28,7 @@ Options:
 | Flag | Effect |
 |------|--------|
 | `-p NAME` | Run only this provider; repeatable (`-p stooq -p yahoo`). Default: all. |
-| `--update` | Load the daily update file instead of the full history. |
+| `--update` | Incremental load instead of full history. For Yahoo, re-fetches each ticker's last `refetch_days` (`[yahoo]`, default 7) so provisional/revised closes get corrected; for Stooq, loads the daily update file. |
 | `--config PATH` | Use a different config file (default: `./ingest.toml`). |
 | `--data-root PATH` | Override the data directory for this run. |
 

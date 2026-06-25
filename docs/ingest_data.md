@@ -37,8 +37,14 @@ others. More providers expected later.
   raw close + events (not Yahoo's, not `auto_adjust`). Validated against Yahoo's `Adj Close` at
   `ac_tolerance` (0.1%) during ingest. A new dividend/split rewrites the ticker's whole `AC` history,
   recomputed cheaply from stored raw + events (no re-download).
-- **Update:** incremental — one batched call per batch from the earliest stored date across it
-  (full history if any ticker is new); overlap re-fetches a few rows, idempotent via merge upsert.
+- **Update:** incremental — one batched call per batch starting `refetch_days` (`ingest.toml [yahoo]`,
+  default 7) before the earliest stored date across the batch (full history if any ticker is new).
+  The trailing overlap deliberately re-fetches the last few days so a **provisional** close (e.g. an
+  11am run stores the intraday price as that day's `C`) and any later provider revision get overwritten
+  by the finalized values on the next update — idempotent via merge upsert on `[Ticker, Date]`.
+  *Caveat:* this self-heals only going forward. Rows written before this behaviour existed (the old
+  logic started at `last + 1 day` and never re-touched the provisional day) are sealed stale and fall
+  outside the window — reconcile them once with a full (non-`--update`) reload.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
 - **State** ✅: delisted / no-data tickers recorded in `state/price_blacklist.csv` (with an `attempts`

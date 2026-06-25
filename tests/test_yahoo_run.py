@@ -100,13 +100,14 @@ def test_update_recomputes_ac_after_new_dividend(tmp_path, monkeypatch):
         {'Open': [12.0], 'High': [12.0], 'Low': [12.0], 'Close': [12.0], 'Adj Close': [12.0],
          'Volume': [100], 'Dividends': [0.6], 'Stock Splits': [0.0]},
         index=pd.DatetimeIndex([pd.Timestamp('2024-03-22')], name='Date'))})
-    provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001}, update=True)
+    provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001,
+                                  'refetch_days': 7}, update=True)
     ac_day1 = con.execute("SELECT AC FROM prices WHERE Date = '2024-03-20'").fetchone()
     assert ac_day1 is not None and ac_day1[0] < 10.0   # back-adjusted by the new dividend
 
 
 def test_update_batches_from_earliest_start(tmp_path, monkeypatch):
-    """Two tickers with different last dates update in ONE call from the earliest start."""
+    """Two tickers with different last dates update in ONE call from the earliest start minus the refetch window."""
     import duckdb
     _ticker_csv(tmp_path, 'AAA', 'BBB')
     con = duckdb.connect()
@@ -121,8 +122,9 @@ def test_update_batches_from_earliest_start(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(provider, '_fetch',
                         lambda syms, **k: (calls.append((tuple(syms), k.get('start'))) or {}))
-    provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001}, update=True)
+    provider.run(con, tmp_path, {'ticker_file': 'ticker.csv', 'sleep': 0, 'batch_size': 10, 'ac_tolerance': 0.001,
+                                  'refetch_days': 5}, update=True)
     assert len(calls) == 1                       # one batched call, not one per ticker
     syms, start = calls[0]
     assert set(syms) == {'AAA', 'BBB'}
-    assert start == '2024-03-21'                 # earliest (AAA's 03-20) + 1 day
+    assert start == '2024-03-15'                 # earliest (AAA's 03-20) minus the 5-day refetch window

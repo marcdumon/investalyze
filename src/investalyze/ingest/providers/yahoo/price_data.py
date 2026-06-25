@@ -187,9 +187,11 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     for i, batch in enumerate(batches):
         if update:
             known = [last_dates[s] for s in batch if s in last_dates]
-            # earliest start across the batch (full history if any ticker is new); overlap on tickers
-            # with later starts re-fetches a few rows -> idempotent via merge upsert.
-            start = None if len(known) < len(batch) else (pd.Timestamp(min(known)) + pd.Timedelta(days=1)).date().isoformat()
+            # start `refetch_days` before the batch's earliest last-date (full history if any ticker
+            # is new). The trailing overlap re-fetches recent rows so provisional intraday closes and
+            # later provider revisions overwrite the stored ones -> idempotent via merge upsert.
+            window = pd.Timedelta(days=settings['refetch_days'])
+            start = None if len(known) < len(batch) else (pd.Timestamp(min(known)) - window).date().isoformat()
         else:
             start = None
         frames = _fetch(batch, start=start)
