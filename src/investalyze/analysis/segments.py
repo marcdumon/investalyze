@@ -17,7 +17,7 @@ _META_COLS = ['segment_id', 'Ticker', 'AssetClass', 'start_date', 'end_date', 's
 def load_series(
     con: duckdb.DuckDBPyConnection, *, classes: list[str], tickers: list[str] | None = None, start: str | None = None, end: str | None = None
 ) -> pd.DataFrame:
-    """Long frame `[Ticker, Date, AssetClass, Value]` for the selected universe.
+    """Long frame `[Ticker, Date, AssetClass, Price]` for the selected universe.
 
     `stocks` reads `prices.AC` (split/dividend adjusted); the market classes read
     `market_data.C` filtered by `AssetClass` (that table has no adjusted close). `tickers`,
@@ -44,7 +44,7 @@ def load_series(
 
     if _STOCK_CLASS in classes:
         where, values = _filters()
-        selects.append(f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Value "
+        selects.append(f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Price "
                        f'FROM prices WHERE AC IS NOT NULL{where}')
         params += values
 
@@ -52,24 +52,24 @@ def load_series(
     if market:
         where, values = _filters()
         class_placeholders = ', '.join('?' for _ in market)
-        selects.append(f'SELECT Ticker, Date, AssetClass, C AS Value '
+        selects.append(f'SELECT Ticker, Date, AssetClass, C AS Price '
                        f'FROM market_data WHERE AssetClass IN ({class_placeholders})'
                        f' AND C IS NOT NULL{where}')
         params += market + values
 
     if not selects:
-        return pd.DataFrame({'Ticker': [], 'Date': [], 'AssetClass': [], 'Value': []})
+        return pd.DataFrame({'Ticker': [], 'Date': [], 'AssetClass': [], 'Price': []})
 
     sql = ' UNION ALL '.join(selects) + ' ORDER BY Ticker, Date'
     return con.execute(sql, params).df()
 
 
 def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> tuple[np.ndarray, pd.DataFrame]:
-    """Chop each instrument's `Value` series into fixed-width raw windows.
+    """Chop each instrument's `Price` series into fixed-width raw windows.
 
     Per instrument: sort by Date, index rows 0..k-1, take windows starting at offsets
     0, stride, 2*stride, ... while the window fits (`offset + window_length <= k`). Each row is the
-    raw `Value` series over the window; encode via `investalyze.analysis.encodings` and slice into
+    raw `Price` series over the window; encode via `investalyze.analysis.encodings` and slice into
     segment / successor downstream at whatever segment length you pick. Windows holding a NaN or
     non-positive value are dropped (cannot rebase / log). Segmenting is by row position — calendar
     gaps are ignored.
@@ -88,11 +88,11 @@ def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> 
 
     for ticker, group in series.groupby('Ticker', sort=True):
         group = group.sort_values('Date')
-        values = group['Value'].to_numpy(dtype=float)
+        prices = group['Price'].to_numpy(dtype=float)
         dates = group['Date'].to_numpy()
         asset_class = group['AssetClass'].iloc[0]
-        for offset in range(0, len(values) - window_length + 1, stride):
-            window = values[offset : offset + window_length]
+        for offset in range(0, len(prices) - window_length + 1, stride):
+            window = prices[offset : offset + window_length]
             if not (window > 0).all():  # rejects non-positive and NaN (NaN > 0 is False)
                 continue
             rows.append(window)

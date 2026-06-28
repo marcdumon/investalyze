@@ -14,7 +14,7 @@ _DB = Path('data') / 'investalyze.duckdb'
 def _frame(ticker: str, values: list[float], asset_class: str = 'stocks') -> pd.DataFrame:
     """Synthetic long frame for one instrument with consecutive daily dates."""
     dates = pd.date_range('2024-01-01', periods=len(values), freq='D').date
-    return pd.DataFrame({'Ticker': ticker, 'Date': dates, 'AssetClass': asset_class, 'Value': values})
+    return pd.DataFrame({'Ticker': ticker, 'Date': dates, 'AssetClass': asset_class, 'Price': values})
 
 
 # --- build_segments: raw windows + shape --------------------------------------
@@ -86,7 +86,7 @@ def test_load_series_stocks_uses_ac():
         con.close()
     assert not df.empty
     assert set(df['AssetClass'].unique()) == {'stocks'}
-    assert df['Value'].notna().all()
+    assert df['Price'].notna().all()
     assert df['Ticker'].is_monotonic_increasing
 
 
@@ -113,5 +113,5 @@ def test_build_segments_returns_raw_values_from_db():
     assert W.shape[1] == 25
     assert not meta.empty
     # row 0 is the raw first 25 AC values for AAPL (sorted by Date), not rebased
-    raw_first_25 = series.sort_values('Date')['Value'].to_numpy(dtype=float)[:25]
+    raw_first_25 = series.sort_values('Date')['Price'].to_numpy(dtype=float)[:25]
     assert np.allclose(W[0], raw_first_25)
