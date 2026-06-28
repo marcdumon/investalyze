@@ -1,7 +1,10 @@
 """Unit tests for the pure vector encodings."""
 import numpy as np
+import pytest
 
 from investalyze.analysis import encodings
+
+_ALL = [encodings.rebase_to_100, encodings.log_returns, encodings.demean, encodings.zscore, encodings.minmax]
 
 
 def test_rebase_to_100_starts_at_100_and_math():
@@ -61,3 +64,43 @@ def test_minmax_maps_to_unit_range():
     assert np.allclose(out.min(axis=1), 0.0)
     assert np.allclose(out.max(axis=1), 1.0)
     assert np.allclose(out[0], [0.0, 0.5, 1.0])
+
+
+# --- future transformed by the history's parameters ---------------------------
+def test_rebase_future_continuous_with_history():
+    history = np.array([[10.0, 11.0]])
+    future = np.array([[12.0]])
+    enc_hist, enc_fut = encodings.rebase_to_100(history, future)
+    assert np.allclose(enc_hist, [[100.0, 110.0]])
+    assert np.allclose(enc_fut, [[120.0]])  # same base as the history
+
+
+def test_demean_future_uses_history_mean():
+    history = np.array([[1.0, 2.0, 3.0]])  # mean 2
+    future = np.array([[5.0]])
+    _, enc_fut = encodings.demean(history, future)
+    assert np.allclose(enc_fut, [[3.0]])  # 5 - 2
+
+
+def test_minmax_future_may_exceed_unit_range():
+    history = np.array([[10.0, 20.0]])  # range [10, 20]
+    future = np.array([[30.0]])
+    _, enc_fut = encodings.minmax(history, future)
+    assert np.allclose(enc_fut, [[2.0]])  # (30 - 10) / 10, outside [0, 1] by design
+
+
+def test_log_returns_future_includes_bridge_step():
+    history = np.array([[1.0, np.e]])      # last price e
+    future = np.array([[np.e ** 2]])
+    enc_hist, enc_fut = encodings.log_returns(history, future)
+    assert np.allclose(enc_hist, [[1.0]])
+    assert np.allclose(enc_fut, [[1.0]])  # log(e**2 / e) — measured against the history end
+
+
+@pytest.mark.parametrize('fn', _ALL)
+def test_no_future_leak_into_history(fn):
+    history = np.array([[10.0, 11.0, 12.0, 13.0]])
+    future = np.array([[14.0, 15.0]])
+    enc_a, _ = fn(history, future)
+    enc_b, _ = fn(history, np.array([[999.0, 0.001]]))  # wreck the future
+    assert np.array_equal(enc_a, enc_b)                 # encoded history is unchanged
