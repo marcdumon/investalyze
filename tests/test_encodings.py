@@ -36,3 +36,28 @@ def test_handles_empty_input():
     empty = np.empty((0, 4))
     assert encodings.rebase_to_100(empty).shape == (0, 4)
     assert encodings.log_returns(empty).shape == (0, 3)
+
+
+def test_demean_subtracts_row_mean():
+    windows = np.array([[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]])
+    out = encodings.demean(windows)
+    assert np.allclose(out.mean(axis=1), 0.0)
+    assert np.allclose(out[0], [-1.0, 0.0, 1.0])
+    assert np.allclose(out[1], [-10.0, 0.0, 10.0])
+
+
+def test_zscore_mean_zero_std_one():
+    windows = np.array([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
+    out = encodings.zscore(windows)
+    assert np.allclose(out.mean(axis=1), 0.0)
+    assert np.allclose(out.std(axis=1), 1.0)
+    # same shape -> identical z-scores regardless of scale
+    assert np.allclose(out[0], out[1])
+
+
+def test_minmax_maps_to_unit_range():
+    windows = np.array([[10.0, 12.0, 14.0], [5.0, 0.0, 10.0]])
+    out = encodings.minmax(windows)
+    assert np.allclose(out.min(axis=1), 0.0)
+    assert np.allclose(out.max(axis=1), 1.0)
+    assert np.allclose(out[0], [0.0, 0.5, 1.0])
