@@ -1,8 +1,8 @@
-"""Chop price series into fixed-length, rebased-to-100 segment vectors + a successor map.
+"""Chop price series into fixed-width raw windows for motif and transition analysis.
 
-Each segment is rebased to start at 100 (`v / v[0] * 100`) — level-invariant across
-instruments while preserving amplitude, so plain Euclidean distance means "same shape,
-same size of move". The output feeds motif clustering and next-segment transition analysis.
+`build_segments` emits raw price windows of a single `window_length`. Encoding (rebase-to-100,
+log-returns, ...) and the segment/successor split are downstream choices: apply a function from
+`investalyze.analysis.encodings`, then slice each row at the segment length you pick.
 """
 
 import duckdb
@@ -64,22 +64,22 @@ def load_series(
     return con.execute(sql, params).df()
 
 
-def build_segments(series: pd.DataFrame, *, length: int, stride: int) -> tuple[np.ndarray, pd.DataFrame, np.ndarray]:
-    """Chop each instrument's `Value` series into rebased-to-100 segments.
+def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> tuple[np.ndarray, pd.DataFrame]:
+    """Chop each instrument's `Value` series into fixed-width raw windows.
 
     Per instrument: sort by Date, index rows 0..k-1, take windows starting at offsets
-    0, stride, 2*stride, ... while `offset + length <= k`. Each window is rebased to 100;
-    windows holding a NaN or non-positive value are dropped (cannot rebase). Segmenting is
-    by row position — calendar gaps are ignored.
+    0, stride, 2*stride, ... while the window fits (`offset + window_length <= k`). Each row is the
+    raw `Value` series over the window; encode via `investalyze.analysis.encodings` and slice into
+    segment / successor downstream at whatever segment length you pick. Windows holding a NaN or
+    non-positive value are dropped (cannot rebase / log). Segmenting is by row position — calendar
+    gaps are ignored.
 
     Returns:
-      X         float ndarray (n_segments, length) — `window / window[0] * 100`.
-      meta      DataFrame: segment_id, Ticker, AssetClass, start_date, end_date, start_idx.
-      successor int ndarray (n_segments,) — segment_id of the block starting `start_idx + length`
-                in the same instrument, else -1.
+      W    float ndarray (n_segments, window_length) — raw prices.
+      meta DataFrame: segment_id, Ticker, AssetClass, start_date, end_date, start_idx.
     """
-    if length <= 0:
-        raise ValueError('length must be > 0')
+    if window_length <= 0:
+        raise ValueError('window_length must be > 0')
     if stride <= 0:
         raise ValueError('stride must be > 0')
 
@@ -91,25 +91,21 @@ def build_segments(series: pd.DataFrame, *, length: int, stride: int) -> tuple[n
         values = group['Value'].to_numpy(dtype=float)
         dates = group['Date'].to_numpy()
         asset_class = group['AssetClass'].iloc[0]
-        for offset in range(0, len(values) - length + 1, stride):
-            window = values[offset : offset + length]
+        for offset in range(0, len(values) - window_length + 1, stride):
+            window = values[offset : offset + window_length]
             if not (window > 0).all():  # rejects non-positive and NaN (NaN > 0 is False)
                 continue
-            rows.append(window / window[0] * 100.0)
+            rows.append(window)
             meta_records.append({
                 'segment_id': len(rows) - 1,
                 'Ticker': ticker,
                 'AssetClass': asset_class,
                 'start_date': dates[offset],
-                'end_date': dates[offset + length - 1],
+                'end_date': dates[offset + window_length - 1],
                 'start_idx': offset,
             })
 
     if not meta_records:
-        return np.empty((0, length), dtype=float), pd.DataFrame(columns=_META_COLS), np.empty(0, dtype=int)
+        return np.empty((0, window_length), dtype=float), pd.DataFrame(columns=_META_COLS)
 
-    # successor = the segment starting `length` rows later in the same instrument, else -1.
-    by_key = {(rec['Ticker'], rec['start_idx']): rec['segment_id'] for rec in meta_records}
-    successor = np.array([by_key.get((rec['Ticker'], rec['start_idx'] + length), -1) for rec in meta_records], dtype=int)
-
-    return np.vstack(rows), pd.DataFrame(meta_records), successor
+    return np.vstack(rows), pd.DataFrame(meta_records)
