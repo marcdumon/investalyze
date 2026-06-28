@@ -16,6 +16,3 @@ wheels/
 /data/
 data
 
-# Never commit project memory
-CLAUDE.md
-
