@@ -12,7 +12,10 @@ With `future=None` each function returns the encoded history. With a future it r
 import numpy as np
 
 
-def rebase_to_100(history: np.ndarray, future: np.ndarray | None = None):
+def rebase_to_100(
+    history: np.ndarray,
+    future: np.ndarray | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Rebase each row to start at 100 (`row / row[0] * 100`). Level-invariant, amplitude-preserving.
 
     The base is `history[0]`; the future is rebased by the same base, staying continuous with it.
@@ -24,7 +27,10 @@ def rebase_to_100(history: np.ndarray, future: np.ndarray | None = None):
     return hist, future / base * 100.0
 
 
-def log_returns(history: np.ndarray, future: np.ndarray | None = None):
+def log_returns(
+    history: np.ndarray,
+    future: np.ndarray | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Per-row log returns `diff(log(row))`. Additive, amplitude-aware.
 
     The history yields `m - 1` returns. The future's returns are measured against the history's last
@@ -37,7 +43,10 @@ def log_returns(history: np.ndarray, future: np.ndarray | None = None):
     return hist, np.diff(np.log(bridged), axis=1)
 
 
-def demean(history: np.ndarray, future: np.ndarray | None = None):
+def demean(
+    history: np.ndarray,
+    future: np.ndarray | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Center each row on the history's mean (`row - mean`). Removes level, keeps absolute amplitude."""
     mean = history.mean(axis=1, keepdims=True)
     hist = history - mean
@@ -46,7 +55,10 @@ def demean(history: np.ndarray, future: np.ndarray | None = None):
     return hist, future - mean
 
 
-def zscore(history: np.ndarray, future: np.ndarray | None = None):
+def zscore(
+    history: np.ndarray,
+    future: np.ndarray | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Standardize each row by the history's mean and std (`(row - mean) / std`). Removes level and scale."""
     mean = history.mean(axis=1, keepdims=True)
     std = history.std(axis=1, keepdims=True)
@@ -56,7 +68,10 @@ def zscore(history: np.ndarray, future: np.ndarray | None = None):
     return hist, (future - mean) / std
 
 
-def minmax(history: np.ndarray, future: np.ndarray | None = None):
+def minmax(
+    history: np.ndarray,
+    future: np.ndarray | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """Rescale each row to [0, 1] using the history's min and max (`(row - min) / (max - min)`).
 
     The future is scaled by the same range, so a future that exceeds the history's range lands outside
