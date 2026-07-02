@@ -21,22 +21,22 @@ def _frame(ticker: str, values: list[float], asset_class: str = 'stocks') -> pd.
 def test_raw_window_shape_and_values():
     series = _frame('AAA', [10.0, 11.0, 12.0, 13.0, 14.0, 15.0])
     W, meta = segments.build_segments(series, window_length=3, stride=3)
-    assert W.shape == (2, 3)  # offsets 0 and 3
-    assert np.allclose(W[0], [10.0, 11.0, 12.0])  # raw, not rebased
-    assert np.allclose(W[1], [13.0, 14.0, 15.0])
+    assert W.shape == (3, 2)  # window_length rows, one column per window (offsets 0 and 3)
+    assert np.allclose(W[:, 0], [10.0, 11.0, 12.0])  # raw, not rebased
+    assert np.allclose(W[:, 1], [13.0, 14.0, 15.0])
     assert list(meta['start_idx']) == [0, 3]
 
 
 def test_window_count_follows_stride():
     series = _frame('AAA', list(map(float, range(1, 9))))  # 8 rows
     W, _ = segments.build_segments(series, window_length=3, stride=1)
-    assert W.shape[0] == 6  # (8 - 3)//1 + 1
+    assert W.shape[1] == 6  # (8 - 3)//1 + 1 windows, one per column
 
 
 def test_drop_short_instrument():
     series = _frame('AAA', [1.0, 2.0, 3.0])  # window_length 4 does not fit
     W, meta = segments.build_segments(series, window_length=4, stride=1)
-    assert W.shape == (0, 4)
+    assert W.shape == (4, 0)
     assert meta.empty
 
 
@@ -44,9 +44,9 @@ def test_drop_window_with_nan_or_nonpositive():
     # window at offset 0 has a NaN, at offset 3 has a 0 -> both dropped, offset 6 survives
     series = _frame('AAA', [10.0, np.nan, 12.0, 13.0, 0.0, 15.0, 16.0, 17.0, 18.0])
     W, meta = segments.build_segments(series, window_length=3, stride=3)
-    assert W.shape == (1, 3)
+    assert W.shape == (3, 1)
     assert meta['start_idx'].tolist() == [6]
-    assert np.allclose(W[0], [16.0, 17.0, 18.0])
+    assert np.allclose(W[:, 0], [16.0, 17.0, 18.0])
 
 
 @pytest.mark.parametrize('window_length, stride', [(0, 1), (-1, 1), (3, 0), (3, -1)])
@@ -72,8 +72,8 @@ def test_does_not_cross_ticker():
     W, meta = segments.build_segments(series, window_length=3, stride=1)
     # each ticker yields exactly one window; no leakage across tickers
     assert meta['Ticker'].tolist() == ['AAA', 'BBB']
-    assert np.allclose(W[0], [1.0, 2.0, 3.0])
-    assert np.allclose(W[1], [5.0, 6.0, 7.0])
+    assert np.allclose(W[:, 0], [1.0, 2.0, 3.0])
+    assert np.allclose(W[:, 1], [5.0, 6.0, 7.0])
 
 
 # --- load_series / build_segments against the real DB -------------------------
@@ -110,8 +110,7 @@ def test_build_segments_returns_raw_values_from_db():
     finally:
         con.close()
     W, meta = segments.build_segments(series, window_length=25, stride=20)
-    assert W.shape[1] == 25
+    assert W.shape[0] == 25  # window_length rows
     assert not meta.empty
-    # row 0 is the raw first 25 AC values for AAPL (sorted by Date), not rebased
     raw_first_25 = series.sort_values('Date')['Price'].to_numpy(dtype=float)[:25]
-    assert np.allclose(W[0], raw_first_25)
+    assert np.allclose(W[:, 0], raw_first_25)
