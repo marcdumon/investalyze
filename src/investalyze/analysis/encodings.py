@@ -1,86 +1,57 @@
-"""Pure vector encodings for price/return windows: turn raw rows into comparable shapes.
+"""Column-oriented encoders: turn windows-in-columns into comparable shapes.
 
-Each function encodes a 2-D `history` (rows = windows) independently per row. The normalisation
-parameters are learned from `history` only; pass an optional `future` and it is transformed with
-those same parameters, so nothing from the future leaks back into the encoded history (the
-`scaler.fit(history).transform(future)` discipline, made structural by keeping the two arrays apart).
-
-With `future=None` each function returns the encoded history. With a future it returns the pair
-`(encoded_history, encoded_future)`.
+Each input is a 2-D array with one window per column and time down the rows. Parameters are
+learned per column from `history` only; the fitted transformer applied to a `future` slice uses
+those same parameters, so nothing from the future leaks into the encoded history. The sklearn
+scalers (`zscore`, `minmax`, `demean`) additionally pass a constant column through unscaled, so a
+flat window encodes to zeros rather than NaN.
 """
 
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
-def rebase_to_100(
-    history: np.ndarray,
-    future: np.ndarray | None = None,
-) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Rebase each row to start at 100 (`row / row[0] * 100`). Level-invariant, amplitude-preserving.
-
-    The base is `history[0]`; the future is rebased by the same base, staying continuous with it.
-    """
-    base = history[:, [0]]
-    hist = history / base * 100.0
-    if future is None:
-        return hist
-    return hist, future / base * 100.0
+def zscore() -> StandardScaler:
+    """Per-window standardisation to mean 0, std 1 (learned per column from history)."""
+    return StandardScaler()
 
 
-def log_returns(
-    history: np.ndarray,
-    future: np.ndarray | None = None,
-) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Per-row log returns `diff(log(row))`. Additive, amplitude-aware.
-
-    The history yields `m - 1` returns. The future's returns are measured against the history's last
-    price first, so its leading return is the history→future step (causal); it keeps `future` width.
-    """
-    hist = np.diff(np.log(history), axis=1)
-    if future is None:
-        return hist
-    bridged = np.concatenate([history[:, [-1]], future], axis=1)
-    return hist, np.diff(np.log(bridged), axis=1)
+def minmax() -> MinMaxScaler:
+    """Per-window rescale to [0, 1] (learned per column from history)."""
+    return MinMaxScaler()
 
 
-def demean(
-    history: np.ndarray,
-    future: np.ndarray | None = None,
-) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Center each row on the history's mean (`row - mean`). Removes level, keeps absolute amplitude."""
-    mean = history.mean(axis=1, keepdims=True)
-    hist = history - mean
-    if future is None:
-        return hist
-    return hist, future - mean
+def demean() -> StandardScaler:
+    """Per-window centring to mean 0, keeping absolute amplitude."""
+    return StandardScaler(with_std=False)
 
 
-def zscore(
-    history: np.ndarray,
-    future: np.ndarray | None = None,
-) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Standardize each row by the history's mean and std (`(row - mean) / std`). Removes level and scale."""
-    mean = history.mean(axis=1, keepdims=True)
-    std = history.std(axis=1, keepdims=True)
-    hist = (history - mean) / std
-    if future is None:
-        return hist
-    return hist, (future - mean) / std
+class RebaseTo100:
+    """Rebase each window to start at 100 (`column / column[0] * 100`)."""
+
+    def fit(self, history: np.ndarray) -> 'RebaseTo100':
+        """Learn each window's base: its first-row (earliest) price."""
+        self.base_ = history[[0], :]
+        return self
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Rebase `x` by the fitted base; a future stays continuous with its history."""
+        return x / self.base_ * 100.0
 
 
-def minmax(
-    history: np.ndarray,
-    future: np.ndarray | None = None,
-) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
-    """Rescale each row to [0, 1] using the history's min and max (`(row - min) / (max - min)`).
+class LogReturns:
+    """Per-window log returns (`diff(log(column))` down the rows)."""
 
-    The future is scaled by the same range, so a future that exceeds the history's range lands outside
-    [0, 1] — the honest result of refusing to peek at it when setting the bounds.
-    """
-    lo = history.min(axis=1, keepdims=True)
-    hi = history.max(axis=1, keepdims=True)
-    rng = hi - lo
-    hist = (history - lo) / rng
-    if future is None:
-        return hist
-    return hist, (future - lo) / rng
+    def fit(self, history: np.ndarray) -> 'LogReturns':
+        """Store each window's last observed price as the bridge anchor for the future."""
+        self.anchor_ = history[[-1], :]
+        return self
+
+    def transform(self, history: np.ndarray) -> np.ndarray:
+        """Log returns within `history`; yields `time_steps - 1` rows."""
+        return np.diff(np.log(history), axis=0)
+
+    def transform_future(self, future: np.ndarray) -> np.ndarray:
+        """Log returns for `future`, its leading return bridged from the history's last price."""
+        bridged = np.vstack([self.anchor_, future])
+        return np.diff(np.log(bridged), axis=0)

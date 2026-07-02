@@ -2,7 +2,7 @@
 
 `build_segments` emits raw price windows of a single `window_length`. Encoding (rebase-to-100,
 log-returns, ...) and the segment/successor split are downstream choices: apply a function from
-`investalyze.analysis.encodings`, then slice each row at the segment length you pick.
+`investalyze.analysis.encodings`, then slice each column at the segment length you pick.
 """
 
 import duckdb
@@ -23,12 +23,13 @@ def load_series(
     `market_data.C` filtered by `AssetClass` (that table has no adjusted close). `tickers`,
     if given, further restricts within the chosen classes. Sorted by Ticker then Date.
     """
+
     def _filters() -> tuple[str, list]:
         """Shared WHERE tail (ticker list + date range): the SQL fragment and its bind params."""
         clauses: list[str] = []
         values: list = []
         if tickers is not None:
-            clauses.append(f"Ticker IN ({', '.join('?' for _ in tickers)})")
+            clauses.append(f'Ticker IN ({", ".join("?" for _ in tickers)})')
             values.extend(tickers)
         if start is not None:
             clauses.append('Date >= ?')
@@ -44,17 +45,14 @@ def load_series(
 
     if _STOCK_CLASS in classes:
         where, values = _filters()
-        selects.append(f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Price "
-                       f'FROM prices WHERE AC IS NOT NULL{where}')
+        selects.append(f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Price FROM prices WHERE AC IS NOT NULL{where}")
         params += values
 
     market = [c for c in classes if c in _MARKET_CLASSES]
     if market:
         where, values = _filters()
         class_placeholders = ', '.join('?' for _ in market)
-        selects.append(f'SELECT Ticker, Date, AssetClass, C AS Price '
-                       f'FROM market_data WHERE AssetClass IN ({class_placeholders})'
-                       f' AND C IS NOT NULL{where}')
+        selects.append(f'SELECT Ticker, Date, AssetClass, C AS Price FROM market_data WHERE AssetClass IN ({class_placeholders}) AND C IS NOT NULL{where}')
         params += market + values
 
     if not selects:
@@ -68,15 +66,16 @@ def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> 
     """Chop each instrument's `Price` series into fixed-width raw windows.
 
     Per instrument: sort by Date, index rows 0..k-1, take windows starting at offsets
-    0, stride, 2*stride, ... while the window fits (`offset + window_length <= k`). Each row is the
+    0, stride, 2*stride, ... while the window fits (`offset + window_length <= k`). Each column is the
     raw `Price` series over the window; encode via `investalyze.analysis.encodings` and slice into
     segment / successor downstream at whatever segment length you pick. Windows holding a NaN or
-    non-positive value are dropped (cannot rebase / log). Segmenting is by row position — calendar
+    non-positive value are dropped (cannot rebase / log). Segmenting is by row position, calendar
     gaps are ignored.
 
     Returns:
-      W    float ndarray (n_segments, window_length) — raw prices.
-      meta DataFrame: segment_id, Ticker, AssetClass, start_date, end_date, start_idx.
+      W    float ndarray (window_length, n_segments): each column is one window's raw prices.
+      meta DataFrame aligned to W's columns: meta.iloc[i] describes W[:, i]. Columns:
+           segment_id, Ticker, AssetClass, start_date, end_date, start_idx.
     """
     if window_length <= 0:
         raise ValueError('window_length must be > 0')
@@ -106,6 +105,6 @@ def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> 
             })
 
     if not meta_records:
-        return np.empty((0, window_length), dtype=float), pd.DataFrame(columns=_META_COLS)
+        return np.empty((window_length, 0), dtype=float), pd.DataFrame(columns=_META_COLS)
 
-    return np.vstack(rows), pd.DataFrame(meta_records)
+    return np.column_stack(rows), pd.DataFrame(meta_records)
