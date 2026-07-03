@@ -1,0 +1,9 @@
+# Persistent manual data corrections, applied via `python -m investalyze.cleaning {check,apply}`.
+# Each [[section]] is a fix type (a module in src/investalyze/cleaning/); each entry one instance.
+# start/end are optional inclusive dates. Log the evidence in notebooks/9999_data_quirks.ipynb first.
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^NDX']
+end = 1985-10-01
+reason = 'pre-launch history is a scaled proxy of ^NDQ (NASDAQ-100 launched 1985-10-02), see notebooks/9999_data_quirks.ipynb'
