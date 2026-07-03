@@ -123,6 +123,12 @@ others. More providers expected later.
   canonical column set per dataset.
 - **Side-effect discipline** ✅ (architecture goal): acquire → land raw (immutable) → transform
   (pure/testable) → validate → load. No side effects interleaved with logic.
+- **Persistent manual fixes** ✅ (built): source-wrong data (e.g. `^NDX` pre-1985-10-02 proxy
+  history) is corrected in the DB itself, not filtered at read time. Since ingest only
+  merge-upserts, a full reload resurrects deleted rows; fixes live in `cleaning.toml` (one
+  entry per instance, one module per fix type in `src/investalyze/cleaning/`) and are
+  re-applied manually via `python -m investalyze.cleaning check` / `apply` (see manual.md).
+  Evidence per fix is logged in `notebooks/9999_data_quirks.ipynb`.
 
 ---
 

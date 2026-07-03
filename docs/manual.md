@@ -1,7 +1,8 @@
 # investalyze — Manual
 
 User guide for the `investalyze` repo. Work in progress — built in parts; each part is documented
-here as it lands. **Part 1: ingest** (getting market data into the DB).
+here as it lands. **Part 1: ingest** (getting market data into the DB) and **cleaning**
+(persistent manual fixes for bad vendor data).
 
 ---
 
@@ -86,4 +87,55 @@ Current tasks:
 | `yahoo-blacklist` | Rechecks `data/yahoo/state/price_blacklist.csv`/`price_dead.csv` — the Yahoo price provider's failed tickers. |
 | `yahoo-meta-blacklist` | Rechecks `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
 | `companies` | Rebuilds the combined `companies` table from `_yahoo_companies` + `_simfin_companies` (full outer join on Ticker; Yahoo wins overlapping fields). |
+
+---
+
+## Cleaning: persistent manual data fixes
+
+Vendor data is sometimes wrong at the source (e.g. `^NDX` ships pre-launch history that is a
+scaled proxy of `^NDQ`). Ingest never deletes (every write is a merge-upsert), so a full
+reload resurrects manually deleted rows. Fixes therefore live in a persistent registry and
+are re-applied after any reload, as an explicit manual step (never inside ingest).
+
+`cleaning.toml` lists the fix instances; each fix *type* is a module in
+`src/investalyze/cleaning/` exposing `detect(con, fix)` and `apply(con, fix)`:
+
+```toml
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^NDX']
+end = 1985-10-01          # inclusive TOML date; start/end optional (omitted = open-ended)
+reason = 'pre-launch history is a scaled proxy of ^NDQ, see notebooks/9999_data_quirks.ipynb'
+```
+
+```bash
+# report what each fix would touch (read-only): 0 rows = clean, N rows = pending
+python -m investalyze.cleaning check
+
+# delete the matching rows (idempotent; clean fixes are skipped)
+python -m investalyze.cleaning apply
+```
+
+| Flag | Effect |
+|------|--------|
+| `--config PATH` | Fixes TOML (default: `./cleaning.toml`). |
+| `--ingest-config PATH` | Ingest TOML giving the DB location (default: `./ingest.toml`). |
+
+Workflow when a new problem is found:
+
+1. Log the evidence in `notebooks/9999_data_quirks.ipynb`.
+2. Known fix type → add a TOML entry. New kind of problem → add one fix-type module and
+   register it in `registry.FIX_TYPES`.
+3. `check`, then `apply`. After any full reload: `check` shows the resurrected rows, `apply`
+   removes them again.
+
+Note: `check` confirms the target rows *exist*, not that the quirk still *holds*: if a
+vendor ever replaces bogus rows with real data, re-evaluate the entry by hand (its `reason`
+points at the evidence).
+
+Fix types:
+
+| Type | Does |
+|------|------|
+| `delete_date_range` | Deletes all rows for the listed tickers within an inclusive date range. |
 
