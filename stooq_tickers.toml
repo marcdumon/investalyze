@@ -1,0 +1,177 @@
+# Ticker identity reference for Stooq market_data (indices, bonds, currencies). Feeds the
+# `market_instruments` table (housekeeping task `market-instruments`, see
+# investalyze.ingest.providers.stooq.instrument_names). Indices use arbitrary vendor symbols with
+# no decodable structure and are manually curated here; bond_countries/bond_types/currency_codes
+# are lookup data used to decode the systematic bond and currency ticker patterns.
+
+[indices]
+"^SPX" = { name = "S&P 500", country = "United States" }
+"^DJI" = { name = "Dow Jones Industrial Average", country = "United States" }
+"^NDQ" = { name = "Nasdaq Composite", country = "United States" }
+"^NDX" = { name = "Nasdaq-100", country = "United States" }
+"^AOR" = { name = "All Ordinaries", country = "Australia" }
+"^NKX" = { name = "Nikkei 225", country = "Japan" }
+"^UKX" = { name = "FTSE 100", country = "United Kingdom" }
+"^FTM" = { name = "FTSE 250", country = "United Kingdom" }
+"^TSX" = { name = "S&P/TSX Composite", country = "Canada" }
+"^DAX" = { name = "DAX", country = "Germany" }
+"^MDAX" = { name = "MDAX", country = "Germany" }
+"^SDXP" = { name = "SDAX", country = "Germany" }
+"^TDXP" = { name = "TecDAX", country = "Germany" }
+"^CDAX" = { name = "CDAX", country = "Germany" }
+"^CAC" = { name = "CAC 40", country = "France" }
+"^HSI" = { name = "Hang Seng Index", country = "Hong Kong" }
+"^SET" = { name = "SET Index", country = "Thailand" }
+"^KLCI" = { name = "FTSE Bursa Malaysia KLCI", country = "Malaysia" }
+"^SNX" = { name = "BSE SENSEX", country = "India" }
+"^KOSPI" = { name = "KOSPI", country = "South Korea" }
+"^AEX" = { name = "AEX", country = "Netherlands" }
+"^OSEAX" = { name = "Oslo Bors All-Share Index (OSEAX)", country = "Norway" }
+"^JCI" = { name = "Jakarta Composite Index", country = "Indonesia" }
+"^PSEI" = { name = "PSE Composite Index (PSEi)", country = "Philippines" }
+"^OMXS" = { name = "OMX Stockholm 30", country = "Sweden" }
+"^ATH" = { name = "Athens General Composite", country = "Greece" }
+"^IPSA" = { name = "S&P IPSA", country = "Chile" }
+"^IBEX" = { name = "IBEX 35", country = "Spain" }
+"^STI" = { name = "Straits Times Index", country = "Singapore" }
+"^MRV" = { name = "Merval", country = "Argentina" }
+"^SMI" = { name = "Swiss Market Index", country = "Switzerland" }
+"^BVP" = { name = "Ibovespa", country = "Brazil" }
+"^XU100" = { name = "BIST 100", country = "Turkey" }
+"^SHC" = { name = "SSE Composite Index (Shanghai Composite)", country = "China" }
+"^SHBS" = { name = "Shanghai B-Share Index", country = "China" }
+"^BUX" = { name = "BUX", country = "Hungary" }
+"^BEL20" = { name = "BEL 20", country = "Belgium" }
+"^IPC" = { name = "S&P/BMV IPC", country = "Mexico" }
+"^ICEX" = { name = "OMX Iceland (ICEX)", country = "Iceland" }
+"^PSI20" = { name = "PSI-20", country = "Portugal" }
+"^PX" = { name = "PX Index", country = "Czech Republic" }
+"^CRY" = { name = "Thomson Reuters/CoreCommodity CRB Index", country = "Global (commodities)" }
+"^HEX" = { name = "OMX Helsinki 25", country = "Finland" }
+"^TWSE" = { name = "TAIEX", country = "Taiwan" }
+"^TOP40" = { name = "FTSE/JSE Top 40", country = "South Africa" }
+"^SAX" = { name = "SAX", country = "Slovakia" }
+"^RTS" = { name = "RTS Index", country = "Russia" }
+"^RTSTR" = { name = "RTS Total Return Index", country = "Russia" }
+"^MOEX" = { name = "MOEX Russia Index", country = "Russia" }
+"^MOEX10" = { name = "MOEX 10 Index", country = "Russia" }
+"^MCFTR" = { name = "MOEX/MICEX Total Return Index", country = "Russia" }
+"^FMIB" = { name = "FTSE MIB", country = "Italy" }
+"^OMXV" = { name = "OMX Vilnius", country = "Lithuania" }
+"^OMXT" = { name = "OMX Tallinn", country = "Estonia" }
+"^OMXR" = { name = "OMX Riga", country = "Latvia" }
+"^OMXC25" = { name = "OMX Copenhagen 25", country = "Denmark" }
+"^BET" = { name = "BET Index", country = "Romania" }
+"^NZ50" = { name = "S&P/NZX 50", country = "New Zealand" }
+"^TASI" = { name = "Tadawul All-Share Index", country = "Saudi Arabia" }
+"^MT30" = { name = "MSCI Tadawul 30", country = "Saudi Arabia" }
+"^NOMUC" = { name = "Nomu Parallel Market Capped Index", country = "Saudi Arabia" }
+"^SOFIX" = { name = "SOFIX", country = "Bulgaria" }
+
+[bond_countries]
+AT = "Austria"
+AU = "Australia"
+BE = "Belgium"
+BR = "Brazil"
+CA = "Canada"
+CH = "Switzerland"
+CL = "Chile"
+CN = "China"
+CO = "Colombia"
+CY = "Cyprus"
+CZ = "Czech Republic"
+DE = "Germany"
+DK = "Denmark"
+EG = "Egypt"
+ES = "Spain"
+FI = "Finland"
+FR = "France"
+GR = "Greece"
+HK = "Hong Kong"
+HU = "Hungary"
+ID = "Indonesia"
+IE = "Ireland"
+IL = "Israel"
+IN = "India"
+IS = "Iceland"
+IT = "Italy"
+JP = "Japan"
+KE = "Kenya"
+KR = "South Korea"
+LK = "Sri Lanka"
+MA = "Morocco"
+MT = "Malta"
+MU = "Mauritius"
+MX = "Mexico"
+MY = "Malaysia"
+NA = "Namibia"
+NG = "Nigeria"
+NL = "Netherlands"
+NO = "Norway"
+NZ = "New Zealand"
+PH = "Philippines"
+PK = "Pakistan"
+PL = "Poland"
+PT = "Portugal"
+RO = "Romania"
+SE = "Sweden"
+SG = "Singapore"
+SI = "Slovenia"
+SK = "Slovakia"
+TR = "Turkey"
+TW = "Taiwan"
+UG = "Uganda"
+UK = "United Kingdom"
+US = "United States"
+VN = "Vietnam"
+ZA = "South Africa"
+ZM = "Zambia"
+
+[bond_types]
+Y = "yield"
+P = "price"
+
+[currency_codes]
+ARS = "Argentine Peso"
+AUD = "Australian Dollar"
+BRL = "Brazilian Real"
+BTC = "Bitcoin"
+CAD = "Canadian Dollar"
+CHF = "Swiss Franc"
+CLP = "Chilean Peso"
+CNY = "Chinese Yuan"
+CZK = "Czech Koruna"
+DKK = "Danish Krone"
+EGP = "Egyptian Pound"
+EUR = "Euro"
+GBP = "British Pound"
+HKD = "Hong Kong Dollar"
+HUF = "Hungarian Forint"
+IDR = "Indonesian Rupiah"
+ILS = "Israeli Shekel"
+INR = "Indian Rupee"
+ISK = "Icelandic Krona"
+JPY = "Japanese Yen"
+KRW = "South Korean Won"
+MXN = "Mexican Peso"
+MYR = "Malaysian Ringgit"
+NAD = "Namibian Dollar"
+NOK = "Norwegian Krone"
+NZD = "New Zealand Dollar"
+PHP = "Philippine Peso"
+PLN = "Polish Zloty"
+RON = "Romanian Leu"
+RUB = "Russian Ruble"
+SEK = "Swedish Krona"
+SGD = "Singapore Dollar"
+THB = "Thai Baht"
+TRY = "Turkish Lira"
+TWD = "Taiwan Dollar"
+UAH = "Ukrainian Hryvnia"
+USD = "US Dollar"
+XAG = "silver"
+XAU = "gold"
+XDR = "IMF Special Drawing Rights"
+XPD = "palladium"
+XPT = "platinum"
+ZAR = "South African Rand"

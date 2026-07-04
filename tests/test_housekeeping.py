@@ -20,13 +20,14 @@ def _ticker_csv(tmp_path: Path, *rows: tuple[str, str]) -> None:
 
 
 def _seed_company_sources(data_root: Path) -> None:
-    """Create empty `_yahoo_companies`/`_simfin_companies` so the `companies` rebuild task can run."""
+    """Create empty source tables so the `companies` and `market-instruments` rebuild tasks can run."""
     con = storage.connect(data_root, 'investalyze.duckdb')
     con.execute('CREATE TABLE _yahoo_companies (Ticker VARCHAR, Industry VARCHAR, Sector VARCHAR, '
                 'FullTimeEmployees BIGINT, Address1 VARCHAR, City VARCHAR, State VARCHAR, Zip VARCHAR, '
                 'Country VARCHAR, Website VARCHAR, IRWebsite VARCHAR, BusinessSummary VARCHAR)')
     con.execute('CREATE TABLE _simfin_companies (Ticker VARCHAR, Industry VARCHAR, Sector VARCHAR, '
                 'NumberEmployees BIGINT, CompanyName VARCHAR, ISIN VARCHAR, CIK BIGINT, BusinessSummary VARCHAR)')
+    con.execute('CREATE TABLE market_data (Ticker VARCHAR, Date DATE, O DOUBLE, H DOUBLE, L DOUBLE, C DOUBLE, AssetClass VARCHAR)')
     con.close()
 
 

@@ -11,6 +11,7 @@ import duckdb
 
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
+from investalyze.ingest.providers.stooq import instrument_names
 from investalyze.ingest.providers.yahoo import meta_data as yahoo_meta
 from investalyze.ingest.providers.yahoo import price_data as yahoo
 
@@ -76,11 +77,37 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root, settings: dict)
     return result
 
 
+def rebuild_market_instruments(con: duckdb.DuckDBPyConnection, data_root, settings: dict) -> dict[str, int]:
+    """Rebuild `market_instruments`: one row per distinct market_data ticker, name + country decoded.
+
+    Indices come from the manually curated `[indices]` table in `stooq_tickers.toml`; bonds and
+    currencies are decoded from their systematic ticker patterns (see
+    investalyze.ingest.providers.stooq.instrument_names). `data_root`/`settings` are accepted to
+    match the housekeeping task shape and are unused. Returns row counts: total, decoded, undecoded.
+    """
+    tickers = con.execute('SELECT DISTINCT Ticker, AssetClass FROM market_data').fetchall()
+    rows = []
+    for ticker, asset_class in tickers:
+        described = instrument_names.describe(ticker)
+        name, country = described if described is not None else (None, None)
+        rows.append((ticker, name, country, asset_class))
+
+    con.execute('CREATE OR REPLACE TABLE market_instruments (Ticker VARCHAR, Name VARCHAR, Country VARCHAR, AssetClass VARCHAR)')
+    if rows:
+        con.executemany('INSERT INTO market_instruments VALUES (?, ?, ?, ?)', rows)
+
+    row = con.execute('SELECT count(*), count(*) FILTER (WHERE Name IS NOT NULL) FROM market_instruments').fetchone()
+    result = {'rows': row[0], 'decoded': row[1], 'undecoded': row[0] - row[1]}  # type: ignore [count() never returns None]
+    log.info(f'rebuilt market_instruments: {result}')
+    return result
+
+
 # name -> (settings section to use, the task's (con, data_root, settings) -> dict result)
 HOUSEKEEPING_TASKS: dict[str, tuple[str, HousekeepingTask]] = {
     'yahoo-blacklist': ('yahoo', yahoo.recheck_blacklist),
     'yahoo-meta-blacklist': ('yahoo-meta', yahoo_meta.recheck_meta_blacklist),
     'companies': ('combined', rebuild_companies),
+    'market-instruments': ('combined', rebuild_market_instruments),
 }
 
 
