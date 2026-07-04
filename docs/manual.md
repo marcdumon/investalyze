@@ -59,7 +59,7 @@ the DB is populated.
 
 ## Housekeeping
 
-Maintenance tasks run separately from the regular provider ingest. Two kinds:
+Maintenance tasks run separately from the regular provider ingest. Three kinds:
 
 - **Blacklist rechecks** — each provider that can blacklist a ticker (a fetch failure,
   retried and tracked) gets a task that rechecks its blacklist: revives tickers that now
@@ -67,6 +67,12 @@ Maintenance tasks run separately from the regular provider ingest. Two kinds:
   provider's `blacklist_max_attempts`.
 - **Combined-table rebuild** — `companies` merges the per-source `_yahoo_companies` +
   `_simfin_companies` raw metadata tables into one row per ticker.
+- **Ticker identification rebuild** — `market_instruments` gives every `market_data` ticker
+  (indices, bonds, currencies) a name and country, the equivalent of `companies` for
+  non-stock instruments. Indices are manually curated in `stooq_tickers.toml` (arbitrary vendor
+  symbols, no decodable structure); bonds and currencies follow systematic Stooq ticker patterns
+  and are decoded automatically. Supports lookup in both directions, e.g. `WHERE Name ILIKE
+  '%Nasdaq-100%'` finds `^NDX`.
 
 ```bash
 # run every registered housekeeping task
@@ -87,6 +93,7 @@ Current tasks:
 | `yahoo-blacklist` | Rechecks `data/yahoo/state/price_blacklist.csv`/`price_dead.csv` — the Yahoo price provider's failed tickers. |
 | `yahoo-meta-blacklist` | Rechecks `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
 | `companies` | Rebuilds the combined `companies` table from `_yahoo_companies` + `_simfin_companies` (full outer join on Ticker; Yahoo wins overlapping fields). |
+| `market-instruments` | Rebuilds `market_instruments`, name/country per market_data ticker (indices, bonds, currencies), see `stooq_tickers.toml`. |
 
 ---
 

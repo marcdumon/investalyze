@@ -149,7 +149,7 @@ def show_df_or_note(df, transpose=False, note='no rows'):
 # ======================================================================
 
 PROVIDER_TABLES = {
-    'stooq': ['market_data'],
+    'stooq': ['market_data', 'market_instruments'],
     'yahoo': ['prices', 'dividends', 'splits'],
     'yahoo-meta': ['_yahoo_companies', 'company_officers'],
     'simfin': ['income', 'balance', 'cashflow', '_simfin_companies'],
