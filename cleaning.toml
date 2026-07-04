@@ -7,3 +7,69 @@ table = 'market_data'
 tickers = ['^NDX']
 end = 1985-10-01
 reason = 'pre-launch history is a scaled proxy of ^NDQ (NASDAQ-100 launched 1985-10-02), see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^NDQ']
+end = 1971-02-07
+reason = 'pre-launch history is fabricated (Nasdaq Composite launched 1971-02-08); a subset exactly duplicates ^SPX, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^NKX']
+end = 1949-05-15
+reason = 'predates Nikkei 225 official retroactive base (1949-05-16); earlier data is only an unofficial reconstruction, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^AOR']
+end = 1979-12-30
+reason = 'predates All Ordinaries official base (1979-12-31); earlier data is a third-party (GFD/Lamberton) reconstruction, not ASX/S&P DJI official history, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^CAC']
+end = 1987-12-30
+reason = 'predates CAC 40 official base (1987-12-31); no documented official predecessor extension found, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^IBEX']
+end = 1989-12-28
+reason = 'predates IBEX 35 official retroactive base (1989-12-29); no documented official basis for earlier data, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^PX']
+end = 1994-04-04
+reason = 'predates Prague PX index real launch (1994-04-05, base 1000); no documented official basis for earlier data, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^NOMUC']
+end = 2019-03-20
+reason = 'predates Nomu Parallel Market Capped Index official base (2019-03-21); no documented official basis for earlier data, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^SPX']
+end = 1922-12-31
+reason = 'predates the 1923 Standard Statistics index (S&P Dow Jones Indices earliest predecessor lineage); no basis for earlier data, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^UKX']
+end = 1984-01-02
+reason = 'predates FTSE 100 real launch (1984-01-03); no evidence LSE/FTSE Russell recognize any earlier official history, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^TSX']
+end = 1977-01-02
+reason = 'predates TSE 300 official base (1977-01-03); no documented official predecessor found, see notebooks/9999_data_quirks.ipynb'
+
+[[delete_date_range]]
+table = 'market_data'
+tickers = ['^PSEI']
+end = 1990-02-27
+reason = 'predates PSEi official base (1990-02-28); no documented official predecessor found, see notebooks/9999_data_quirks.ipynb'
