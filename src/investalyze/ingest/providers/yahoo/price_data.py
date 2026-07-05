@@ -1,7 +1,7 @@
 """Yahoo provider — stock prices (raw OHLCV + adjusted close), dividends, splits.
 
 Owns its whole flow: read the ticker universe -> fetch via yfinance -> transform ->
-compute adjusted close -> sanity-check vs Yahoo -> save through storage.write. The
+compute adjusted close -> sanity-check vs Yahoo -> store through storage.store. The
 network fetch is the only side effect. Split into more files in this folder if it grows.
 """
 
@@ -111,35 +111,35 @@ def _fetch(symbols: list[str], *, start: str | None) -> dict[str, pd.DataFrame]:
     return frames
 
 
-def _load_existing_tickers(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
-    """Distinct tickers already loaded in `table` (empty set if the table is absent)."""
+def _get_existing_tickers(con: duckdb.DuckDBPyConnection, table: str) -> set[str]:
+    """Distinct tickers already stored in `table` (empty set if the table is absent)."""
     if not storage.table_exists(con, table):
         return set()
     return {t for (t,) in con.execute(f'SELECT DISTINCT Ticker FROM {table}').fetchall()}
 
 
-def _load_last_dates(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
+def _get_last_dates(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
     """Each ticker's latest stored `prices` date (ISO string); empty if the table is absent."""
     if not storage.table_exists(con, _PRICES):
         return {}
     return {t: str(d) for t, d in con.execute('SELECT Ticker, MAX(Date) FROM prices GROUP BY Ticker').fetchall()}
 
 
-def _load_blacklist(path: Path) -> pd.DataFrame:
+def _read_blacklist(path: Path) -> pd.DataFrame:
     """Blacklist records (empty frame with the right columns if the file is absent)."""
     if path.exists():
         return pd.read_csv(path)
     return pd.DataFrame(columns=_BLACKLIST_COLS)
 
 
-def _load_dead(path: Path) -> pd.DataFrame:
+def _read_dead(path: Path) -> pd.DataFrame:
     """Permanently-dead records (empty frame with the right columns if the file is absent)."""
     if path.exists():
         return pd.read_csv(path)
     return pd.DataFrame(columns=_DEAD_COLS)
 
 
-def _load_events(con: duckdb.DuckDBPyConnection, table: str, value_col: str, ticker: str, idx: pd.DatetimeIndex) -> pd.Series:
+def _get_events(con: duckdb.DuckDBPyConnection, table: str, value_col: str, ticker: str, idx: pd.DatetimeIndex) -> pd.Series:
     """Stored events for `ticker` from `table`, reindexed to `idx` with 0.0 where absent."""
     if not storage.table_exists(con, table):
         return pd.Series(0.0, index=idx)
@@ -153,10 +153,10 @@ def _recompute_ac(con: duckdb.DuckDBPyConnection, ticker: str) -> None:
     if px.empty:
         return
     idx = pd.DatetimeIndex(px['Date'])
-    div_s = _load_events(con, _DIVS, 'Dividend', ticker, idx)
+    div_s = _get_events(con, _DIVS, 'Dividend', ticker, idx)
     ac = _calc_adjusted_close(pd.Series(px['C'].to_numpy(), index=idx), div_s)
     px['AC'] = ac.to_numpy()
-    storage.write(con, _PRICES, px[['Ticker', 'Date', 'O', 'H', 'L', 'C', 'V', 'AC']], key=_KEY)
+    storage.store(con, _PRICES, px[['Ticker', 'Date', 'O', 'H', 'L', 'C', 'V', 'AC']], key=_KEY)
 
 
 def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
@@ -173,15 +173,15 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
     blacklist_file = state_dir / 'price_blacklist.csv'
     dead_file = state_dir / 'price_dead.csv'
-    orig_blacklist_df = _load_blacklist(blacklist_file)
+    orig_blacklist_df = _read_blacklist(blacklist_file)
     blacklist_tickers = set(orig_blacklist_df['ticker'])
-    dead_tickers = set(_load_dead(dead_file)['ticker'])
-    done = _load_existing_tickers(con, _PRICES) if not update else set()
+    dead_tickers = set(_read_dead(dead_file)['ticker'])
+    done = _get_existing_tickers(con, _PRICES) if not update else set()
     todo = [s for s in symbols if s not in blacklist_tickers and s not in dead_tickers and s not in done]
 
     newly_blacklisted: list[str] = []
     flagged: list[dict] = []
-    last_dates = _load_last_dates(con) if update else {}
+    last_dates = _get_last_dates(con) if update else {}
     batches = _chunk(todo, settings['batch_size'])
     # fetch + save one batch at a time so progress commits as we go (an interrupted run resumes).
     for i, batch in enumerate(batches):
@@ -217,11 +217,11 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         # one merge per table per batch (vs one per ticker) — the merge scans the growing
         # target once instead of len(batch) times, which dominated wall time.
         if batch_prices:
-            storage.write(con, _PRICES, pd.concat(batch_prices, ignore_index=True), key=_KEY)
+            storage.store(con, _PRICES, pd.concat(batch_prices, ignore_index=True), key=_KEY)
         if batch_divs:
-            storage.write(con, _DIVS, pd.concat(batch_divs, ignore_index=True), key=_KEY)
+            storage.store(con, _DIVS, pd.concat(batch_divs, ignore_index=True), key=_KEY)
         if batch_splits:
-            storage.write(con, _SPLITS, pd.concat(batch_splits, ignore_index=True), key=_KEY)
+            storage.store(con, _SPLITS, pd.concat(batch_splits, ignore_index=True), key=_KEY)
         for sym in recompute:  # after the batch write so the new rows are present
             _recompute_ac(con, sym)
         if newly_blacklisted:
@@ -288,7 +288,7 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
     dead_file = state_dir / 'price_dead.csv'
     ticker_file = raw_dir / settings['ticker_file']
 
-    blacklist_df = _load_blacklist(blacklist_file)
+    blacklist_df = _read_blacklist(blacklist_file)
     if blacklist_df.empty:
         return {'rechecked': 0, 'revived': 0, 'died': 0}
 
@@ -324,7 +324,7 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
 
     pd.DataFrame(still_blacklisted, columns=_BLACKLIST_COLS).to_csv(blacklist_file, index=False)
     if died_rows:
-        dead_df = pd.concat([_load_dead(dead_file), pd.DataFrame(died_rows, columns=_DEAD_COLS)], ignore_index=True)
+        dead_df = pd.concat([_read_dead(dead_file), pd.DataFrame(died_rows, columns=_DEAD_COLS)], ignore_index=True)
         dead_df.to_csv(dead_file, index=False)
 
     ticker_df = pd.read_csv(ticker_file)

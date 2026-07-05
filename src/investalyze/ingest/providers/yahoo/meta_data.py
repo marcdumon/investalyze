@@ -81,7 +81,7 @@ def _to_officers(ticker: str, info: dict) -> pd.DataFrame:
     return frame.rename(columns=columns.COMPANY_OFFICERS)
 
 
-def _load_existing_profile(con: duckdb.DuckDBPyConnection) -> dict[str, date]:
+def _get_existing_profile(con: duckdb.DuckDBPyConnection) -> dict[str, date]:
     """Each Yahoo ticker's stored `FetchedOn` (empty dict if the table is absent)."""
     if not storage.table_exists(con, _PROFILE):
         return {}
@@ -111,16 +111,16 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
 
-    price_blacklisted = set(provider._load_blacklist(state_dir / 'price_blacklist.csv')['ticker'])
-    price_dead = set(provider._load_dead(state_dir / 'price_dead.csv')['ticker'])
+    price_blacklisted = set(provider._read_blacklist(state_dir / 'price_blacklist.csv')['ticker'])
+    price_dead = set(provider._read_dead(state_dir / 'price_dead.csv')['ticker'])
 
     blacklist_file = state_dir / 'meta_blacklist.csv'
-    blacklist_df = provider._load_blacklist(blacklist_file)
+    blacklist_df = provider._read_blacklist(blacklist_file)
     meta_blacklisted = set(blacklist_df['ticker'])
-    meta_dead = set(provider._load_dead(state_dir / 'meta_dead.csv')['ticker'])
+    meta_dead = set(provider._read_dead(state_dir / 'meta_dead.csv')['ticker'])
 
     today = date.today()
-    existing = _load_existing_profile(con)
+    existing = _get_existing_profile(con)
     excluded = price_blacklisted | price_dead | meta_blacklisted | meta_dead
     candidates = list(dict.fromkeys(s for s in symbols if s not in excluded))
     todo = [s for s in candidates if _is_due(existing.get(s), settings['refresh_days_meta'], today)]
@@ -140,10 +140,10 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
             blacklist_df.sort_values('ticker').to_csv(blacklist_file, index=False)
             blacklisted += 1
         else:
-            storage.write(con, _PROFILE, _to_profile(sym, info, today), key=_PROFILE_KEY)
+            storage.store(con, _PROFILE, _to_profile(sym, info, today), key=_PROFILE_KEY)
             officers = _to_officers(sym, info)
             if not officers.empty:
-                storage.write(con, _OFFICERS, officers, key=_OFFICERS_KEY)
+                storage.store(con, _OFFICERS, officers, key=_OFFICERS_KEY)
             saved += 1
         if settings['sleep']:
             time.sleep(settings['sleep'])
@@ -168,7 +168,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     blacklist_file = state_dir / 'meta_blacklist.csv'
     dead_file = state_dir / 'meta_dead.csv'
 
-    blacklist_df = provider._load_blacklist(blacklist_file)
+    blacklist_df = provider._read_blacklist(blacklist_file)
     if blacklist_df.empty:
         return {'rechecked': 0, 'revived': 0, 'died': 0}
 
@@ -176,7 +176,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     today = date.today().isoformat()
     tickers = blacklist_df['ticker'].tolist()
     remaining = {r['ticker']: r for r in blacklist_df.to_dict('records')}
-    dead_df = provider._load_dead(dead_file)
+    dead_df = provider._read_dead(dead_file)
 
     revived = died = 0
     for n, ticker in enumerate(tickers, start=1):
