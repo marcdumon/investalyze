@@ -19,7 +19,7 @@ FIX_TYPES = {
 _REQUIRED = ('table', 'tickers', 'reason')
 
 
-def load_fixes(path: Path) -> list[Fix]:
+def read_fixes(path: Path) -> list[Fix]:
     """Parse `cleaning.toml` into `Fix` records.
 
     Every top-level array-of-tables section must be a known fix type, and every entry must

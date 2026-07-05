@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument('--update', action='store_true', help='apply the daily update instead of a full load')
     args = parser.parse_args()
 
-    cfg = config.load(args.config)
+    cfg = config.read(args.config)
     if args.data_root is not None:
         cfg = replace(cfg, data_root=args.data_root)
     configure_logging(cfg.log_level)

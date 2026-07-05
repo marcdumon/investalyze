@@ -1,4 +1,4 @@
-"""Configuration loading.
+"""Configuration reading.
 
 Reads `ingest.toml` (paths + per-provider settings) into a `Config`, with
 built-in defaults so the package runs with no config file at all. Secrets (e.g.
@@ -28,8 +28,8 @@ class Config:
         return self.providers.get(name, {})
 
 
-def load(path: Path | None = None) -> Config:
-    """Load `Config` from a TOML file, falling back to defaults.
+def read(path: Path | None = None) -> Config:
+    """Read `Config` from a TOML file, falling back to defaults.
 
     Top-level keys set `data_root` / `db`; every TOML table (e.g. `[stooq]`) is a
     per-provider settings section. A missing or unspecified file yields all
