@@ -1,6 +1,7 @@
 """Unit tests for the price-segment windowing layer."""
 from pathlib import Path
 
+import duckdb
 import numpy as np
 import pandas as pd
 import pytest
@@ -76,12 +77,40 @@ def test_does_not_cross_ticker():
     assert np.allclose(W[:, 1], [5.0, 6.0, 7.0])
 
 
-# --- load_series / build_segments against the real DB -------------------------
+# --- list_tickers / get_series / build_segments against the real DB -----------
+def test_list_tickers_rejects_unknown_class():
+    con = duckdb.connect()
+    with pytest.raises(ValueError, match='unknown class'):
+        segments.list_tickers(con, classes=['stock'])  # typo: should be 'stocks'
+
+
 @pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_load_series_stocks_uses_ac():
+def test_list_tickers_stocks():
     con = storage.connect(Path('data'), read_only=True)
     try:
-        df = segments.load_series(con, classes=['stocks'], tickers=['AAPL'])
+        tickers = segments.list_tickers(con, classes=['stocks'])
+    finally:
+        con.close()
+    assert 'AAPL' in tickers
+    assert tickers == sorted(tickers)
+
+
+@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
+def test_list_tickers_mixed_classes():
+    con = storage.connect(Path('data'), read_only=True)
+    try:
+        tickers = segments.list_tickers(con, classes=['stocks', 'indices'])
+    finally:
+        con.close()
+    assert 'AAPL' in tickers
+    assert '^DJI' in tickers
+
+
+@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
+def test_get_series_stocks_uses_ac():
+    con = storage.connect(Path('data'), read_only=True)
+    try:
+        df = segments.get_series(con, ['AAPL'])
     finally:
         con.close()
     assert not df.empty
@@ -91,11 +120,11 @@ def test_load_series_stocks_uses_ac():
 
 
 @pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_load_series_market_and_mixed():
+def test_get_series_market_and_mixed():
     con = storage.connect(Path('data'), read_only=True)
     try:
-        idx = segments.load_series(con, classes=['indices'], tickers=['^DJI'])
-        mixed = segments.load_series(con, classes=['stocks', 'indices'], tickers=['AAPL', '^DJI'])
+        idx = segments.get_series(con, ['^DJI'])
+        mixed = segments.get_series(con, ['AAPL', '^DJI'])
     finally:
         con.close()
     assert set(idx['AssetClass'].unique()) == {'indices'}
@@ -106,7 +135,7 @@ def test_load_series_market_and_mixed():
 def test_build_segments_returns_raw_values_from_db():
     con = storage.connect(Path('data'), read_only=True)
     try:
-        series = segments.load_series(con, classes=['stocks'], tickers=['AAPL'])
+        series = segments.get_series(con, ['AAPL'])
     finally:
         con.close()
     W, meta = segments.build_segments(series, window_length=25, stride=20)

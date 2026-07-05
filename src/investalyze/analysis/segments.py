@@ -11,55 +11,58 @@ import pandas as pd
 
 _STOCK_CLASS = 'stocks'
 _MARKET_CLASSES = ('indices', 'bonds', 'currencies')
+_ALL_CLASSES = frozenset({_STOCK_CLASS, *_MARKET_CLASSES})
 _META_COLS = ['segment_id', 'Ticker', 'AssetClass', 'start_date', 'end_date', 'start_idx']
 
 
-def load_series(
-    con: duckdb.DuckDBPyConnection, *, classes: list[str], tickers: list[str] | None = None, start: str | None = None, end: str | None = None
-) -> pd.DataFrame:
-    """Long frame `[Ticker, Date, AssetClass, Price]` for the selected universe.
+def list_tickers(con: duckdb.DuckDBPyConnection, *, classes: list[str]) -> list[str]:
+    """Distinct tickers belonging to the given classes, sorted.
 
-    `stocks` reads `prices.AC` (split/dividend adjusted); the market classes read
-    `market_data.C` filtered by `AssetClass` (that table has no adjusted close). `tickers`,
-    if given, further restricts within the chosen classes. Sorted by Ticker then Date.
+    `stocks` comes from `prices.AC` (split/dividend adjusted); the market classes come from
+    `market_data.AssetClass`. Raises ValueError on an unrecognized class name.
     """
+    unknown = [c for c in classes if c not in _ALL_CLASSES]
+    if unknown:
+        raise ValueError(f'unknown class(es) {unknown}, known: {sorted(_ALL_CLASSES)}')
 
-    def _filters() -> tuple[str, list]:
-        """Shared WHERE tail (ticker list + date range): the SQL fragment and its bind params."""
-        clauses: list[str] = []
-        values: list = []
-        if tickers is not None:
-            clauses.append(f'Ticker IN ({", ".join("?" for _ in tickers)})')
-            values.extend(tickers)
-        if start is not None:
-            clauses.append('Date >= ?')
-            values.append(start)
-        if end is not None:
-            clauses.append('Date <= ?')
-            values.append(end)
-        where = (' AND ' + ' AND '.join(clauses)) if clauses else ''
-        return where, values
-
-    selects: list[str] = []
-    params: list = []
-
+    tickers: set[str] = set()
     if _STOCK_CLASS in classes:
-        where, values = _filters()
-        selects.append(f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Price FROM prices WHERE AC IS NOT NULL{where}")
-        params += values
+        rows = con.execute('SELECT DISTINCT Ticker FROM prices WHERE AC IS NOT NULL').fetchall()
+        tickers.update(t for (t,) in rows)
 
     market = [c for c in classes if c in _MARKET_CLASSES]
     if market:
-        where, values = _filters()
-        class_placeholders = ', '.join('?' for _ in market)
-        selects.append(f'SELECT Ticker, Date, AssetClass, C AS Price FROM market_data WHERE AssetClass IN ({class_placeholders}) AND C IS NOT NULL{where}')
-        params += market + values
+        rows = con.execute(
+            'SELECT DISTINCT Ticker FROM market_data WHERE AssetClass = ANY(?) AND C IS NOT NULL', [market]
+        ).fetchall()
+        tickers.update(t for (t,) in rows)
 
-    if not selects:
-        return pd.DataFrame({'Ticker': [], 'Date': [], 'AssetClass': [], 'Price': []})
+    return sorted(tickers)
 
-    sql = ' UNION ALL '.join(selects) + ' ORDER BY Ticker, Date'
-    return con.execute(sql, params).df()
+
+def get_series(
+    con: duckdb.DuckDBPyConnection, tickers: list[str], *, start: str | None = None, end: str | None = None
+) -> pd.DataFrame:
+    """Long frame `[Ticker, Date, AssetClass, Price]` for the given tickers.
+
+    `stocks` tickers are matched against `prices.AC` (split/dividend adjusted); everything else
+    against `market_data.C` (that table has no adjusted close), tagged with its own `AssetClass`.
+    A ticker string resolves to at most one of the two tables. Sorted by Ticker then Date.
+    """
+    clauses = ['Ticker = ANY(?)']
+    values: list = [tickers]
+    if start is not None:
+        clauses.append('Date >= ?')
+        values.append(start)
+    if end is not None:
+        clauses.append('Date <= ?')
+        values.append(end)
+    where = ' AND '.join(clauses)
+
+    stock_sql = f"SELECT Ticker, Date, '{_STOCK_CLASS}' AS AssetClass, AC AS Price FROM prices WHERE AC IS NOT NULL AND {where}"
+    market_sql = f'SELECT Ticker, Date, AssetClass, C AS Price FROM market_data WHERE C IS NOT NULL AND {where}'
+    sql = f'{stock_sql} UNION ALL {market_sql} ORDER BY Ticker, Date'
+    return con.execute(sql, values + values).df()
 
 
 def build_segments(series: pd.DataFrame, *, window_length: int, stride: int) -> tuple[np.ndarray, pd.DataFrame]:
