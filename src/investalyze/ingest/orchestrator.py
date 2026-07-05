@@ -1,6 +1,6 @@
 """The one runner: open the shared DB via storage, then run each provider.
 
-Each provider fetches + saves itself (saving through storage.write). Adding a
+Each provider fetches + stores itself (storing through storage.store). Adding a
 provider = one new folder under providers/ + one entry in PROVIDERS here. This is
 also the one place that touches config — storage stays config-free plumbing.
 """

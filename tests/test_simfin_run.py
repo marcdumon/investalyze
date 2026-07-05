@@ -1,4 +1,4 @@
-"""End-to-end: simfin.run acquires (monkeypatched) then loads tables via storage.write."""
+"""End-to-end: simfin.run acquires (monkeypatched) then stores tables via storage.store."""
 import zipfile
 from pathlib import Path
 
