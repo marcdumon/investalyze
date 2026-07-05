@@ -20,8 +20,8 @@ _SUFFIXED_PATTERN = re.compile(r'^([A-Z]{3})_(I|B|B50)$')
 
 
 @lru_cache
-def _reference() -> dict:
-    """Load `stooq_tickers.toml`, cached for repeated lookups."""
+def _read_reference() -> dict:
+    """Read `stooq_tickers.toml`, cached for repeated lookups."""
     with _REFERENCE_FILE.open('rb') as f:
         return tomllib.load(f)
 
@@ -32,7 +32,7 @@ def describe(ticker: str) -> tuple[str, str | None] | None:
     Returns None for a ticker this cannot identify at all (unknown index, or matching none of the
     bond/currency patterns).
     """
-    ref = _reference()
+    ref = _read_reference()
 
     index = ref['indices'].get(ticker)
     if index is not None:

@@ -32,9 +32,9 @@ def main() -> None:
                         help='ingest TOML giving the DB location (default: ./ingest.toml)')
     args = parser.parse_args()
 
-    cfg = config.load(args.ingest_config)
+    cfg = config.read(args.ingest_config)
     configure_logging(cfg.log_level)
-    fixes = registry.load_fixes(args.config)
+    fixes = registry.read_fixes(args.config)
 
     con = storage.connect(cfg.data_root, cfg.db, read_only=args.command == 'check')
     for fix in fixes:

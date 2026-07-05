@@ -39,13 +39,13 @@ def make_fix(*, tickers: list[str] | None = None, start: date | None = None, end
     return registry.Fix(fix_type='delete_date_range', table='market_data', tickers=tickers, start=start, end=end, reason='test')
 
 
-# --- load_fixes -----------------------------------------------------------------
+# --- read_fixes -----------------------------------------------------------------
 
 
-def test_load_fixes_parses_seed_entry(tmp_path: Path):
+def test_read_fixes_parses_seed_entry(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text(SEED_TOML)
-    fixes = registry.load_fixes(path)
+    fixes = registry.read_fixes(path)
     assert len(fixes) == 1
     fix = fixes[0]
     assert fix.fix_type == 'delete_date_range'
@@ -56,25 +56,25 @@ def test_load_fixes_parses_seed_entry(tmp_path: Path):
     assert fix.reason == 'pre-launch proxy data'
 
 
-def test_load_fixes_rejects_unknown_fix_type(tmp_path: Path):
+def test_read_fixes_rejects_unknown_fix_type(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text("[[frobnicate]]\ntable = 't'\ntickers = ['X']\nreason = 'r'\n")
     with pytest.raises(ValueError, match='unknown fix type'):
-        registry.load_fixes(path)
+        registry.read_fixes(path)
 
 
-def test_load_fixes_rejects_non_array_section(tmp_path: Path):
+def test_read_fixes_rejects_non_array_section(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text("delete_date_range = 'oops'\n")
     with pytest.raises(ValueError, match='array of tables'):
-        registry.load_fixes(path)
+        registry.read_fixes(path)
 
 
-def test_load_fixes_rejects_missing_required_field(tmp_path: Path):
+def test_read_fixes_rejects_missing_required_field(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text("[[delete_date_range]]\ntable = 'market_data'\ntickers = ['^NDX']\n")
     with pytest.raises(ValueError, match='reason'):
-        registry.load_fixes(path)
+        registry.read_fixes(path)
 
 
 # --- delete_date_range ----------------------------------------------------------
