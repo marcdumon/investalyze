@@ -101,7 +101,7 @@ def connect_readonly():
     pd.set_option('display.max_columns', None)
     pd.set_option('display.float_format', fmt_number)
     root = next(p for p in (Path.cwd(), *Path.cwd().parents) if (p / 'ingest.toml').exists())
-    cfg = config.load(root / 'ingest.toml')
+    cfg = config.read(root / 'ingest.toml')
     return storage.connect(root / cfg.data_root, read_only=True)
 
 
@@ -110,7 +110,7 @@ def list_tables(con):
     return {name for (name,) in con.execute('SHOW TABLES').fetchall()}
 
 
-def load_ticker_rows(con, table, ticker):
+def get_ticker_rows(con, table, ticker):
     """All rows for `ticker` in `table` as a DataFrame (empty if the table is absent)."""
     if table not in list_tables(con):
         return pd.DataFrame()
@@ -215,7 +215,7 @@ def fundamentals_stats(df, min_fill):
 def show_timeseries_section(con, table, ticker):
     """A time-series table: date span + per-column stats + head/tail preview."""
     show_section_header(table)
-    df = load_ticker_rows(con, table, ticker).sort_values('Date')
+    df = get_ticker_rows(con, table, ticker).sort_values('Date')
     if df.empty:
         show_note('no rows')
         return
@@ -230,13 +230,13 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
 
     # identity card — one row, transposed
     show_section_header('companies')
-    show_df_or_note(load_ticker_rows(con, 'companies', ticker), transpose=True)
+    show_df_or_note(get_ticker_rows(con, 'companies', ticker), transpose=True)
 
     show_section_header('_yahoo_companies')
-    show_df_or_note(load_ticker_rows(con, '_yahoo_companies', ticker), transpose=True)
+    show_df_or_note(get_ticker_rows(con, '_yahoo_companies', ticker), transpose=True)
 
     show_section_header('company_officers')
-    show_df_or_note(load_ticker_rows(con, 'company_officers', ticker))
+    show_df_or_note(get_ticker_rows(con, 'company_officers', ticker))
 
     show_timeseries_section(con, 'prices', ticker)
     show_timeseries_section(con, 'dividends', ticker)
@@ -245,7 +245,7 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
     # fundamentals — split each statement into as-reported vs restated
     for table in ('income', 'balance', 'cashflow'):
         show_section_header(table)
-        df = load_ticker_rows(con, table, ticker).sort_values(['Fiscal Year', 'Fiscal Period'])
+        df = get_ticker_rows(con, table, ticker).sort_values(['Fiscal Year', 'Fiscal Period'])
         if df.empty:
             show_note('no rows')
             continue
