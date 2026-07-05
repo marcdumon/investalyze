@@ -201,11 +201,11 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             if df.empty:
                 log.warning(f'no data for {statement} — skip')
                 continue
-            storage.write(con, statement, df, key=_KEY_FUND)
+            storage.store(con, statement, df, key=_KEY_FUND)
             log.info(f'{statement}: {len(df)} rows')
         companies = _read_companies(con, raw_dir, tmp)
         if not companies.empty:
-            storage.write(con, '_simfin_companies', companies, key=_KEY_COMPANIES)
+            storage.store(con, '_simfin_companies', companies, key=_KEY_COMPANIES)
             log.info(f'companies: {len(companies)} rows')
     counts = {t: storage.count_rows(con, t) for t in _STATEMENTS + ['_simfin_companies'] if storage.table_exists(con, t)}
     total = sum(counts.values())

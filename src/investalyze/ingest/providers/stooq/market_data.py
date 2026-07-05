@@ -1,6 +1,6 @@
 """Stooq provider — bonds, currencies, indices (OHLCV). Manual bulk/update download.
 
-Owns its whole flow: fetch -> transform -> save (through storage.write). Data dirs
+Owns its whole flow: fetch -> transform -> store (through storage.store). Data dirs
 are scaffolded separately by orchestrator.create_data_dirs (run once up front).
 Split into more files inside this folder if it grows.
 """
@@ -87,7 +87,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict | None =
         log.info('full load from bulk tree')
         _extract_bulk(raw, settings.get('bulk_zip', _BULK_ZIP))
         df = _read_tree(raw / 'data')
-    rows = storage.write(con, _TABLE, df, key=_KEY)
+    rows = storage.store(con, _TABLE, df, key=_KEY)
     log.info(f'done — {rows} rows in {_TABLE}')
     return rows
 

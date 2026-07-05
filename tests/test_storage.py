@@ -1,4 +1,4 @@
-"""Tests for storage.write — the single merge/upsert path into DuckDB."""
+"""Tests for storage.store — the single merge/upsert path into DuckDB."""
 from datetime import date
 
 import duckdb
@@ -17,25 +17,25 @@ def _row(ticker: str, close: float) -> pd.DataFrame:
     })
 
 
-def test_write_creates_table_and_inserts_rows():
+def test_store_creates_table_and_inserts_rows():
     con = duckdb.connect()
-    n = storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    n = storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
     assert n == 1
     assert con.execute('SELECT Ticker, C FROM market_data').fetchall() == [('EURUSD', 1.5)]
 
 
-def test_write_upserts_on_key_without_duplicating():
+def test_store_upserts_on_key_without_duplicating():
     con = duckdb.connect()
-    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
-    n = storage.write(con, 'market_data', _row('EURUSD', 9.9), key=_KEY)   # same (Ticker, Date)
+    storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    n = storage.store(con, 'market_data', _row('EURUSD', 9.9), key=_KEY)   # same (Ticker, Date)
     assert n == 1                                                          # upserted, not appended
     assert con.execute('SELECT C FROM market_data').fetchone()[0] == 9.9   # value updated
 
 
-def test_write_inserts_distinct_keys():
+def test_store_inserts_distinct_keys():
     con = duckdb.connect()
-    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
-    n = storage.write(con, 'market_data', _row('GBPUSD', 1.2), key=_KEY)
+    storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    n = storage.store(con, 'market_data', _row('GBPUSD', 1.2), key=_KEY)
     assert n == 2
 
 
@@ -50,7 +50,7 @@ def test_connect_opens_db_file_at_data_root(tmp_path):
 def test_table_exists_reflects_presence():
     con = duckdb.connect()
     assert storage.table_exists(con, 'market_data') is False
-    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
     assert storage.table_exists(con, 'market_data') is True
 
 
@@ -61,16 +61,16 @@ def test_count_rows_is_zero_for_absent_table():
 
 def test_count_rows_counts_present_rows():
     con = duckdb.connect()
-    storage.write(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
-    storage.write(con, 'market_data', _row('GBPUSD', 1.2), key=_KEY)
+    storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    storage.store(con, 'market_data', _row('GBPUSD', 1.2), key=_KEY)
     assert storage.count_rows(con, 'market_data') == 2
 
 
-def test_write_handles_spaced_column_names():
+def test_store_handles_spaced_column_names():
     con = duckdb.connect()
     key = ['Ticker', 'Fiscal Year']
     df = pd.DataFrame({'Ticker': ['AAPL'], 'Fiscal Year': [2023], 'Revenue': [100.0]})
-    assert storage.write(con, 'income', df, key=key) == 1
+    assert storage.store(con, 'income', df, key=key) == 1
     df2 = pd.DataFrame({'Ticker': ['AAPL'], 'Fiscal Year': [2023], 'Revenue': [200.0]})
-    assert storage.write(con, 'income', df2, key=key) == 1          # upsert, not append
+    assert storage.store(con, 'income', df2, key=key) == 1          # upsert, not append
     assert con.execute('SELECT Revenue FROM income').fetchone()[0] == 200.0

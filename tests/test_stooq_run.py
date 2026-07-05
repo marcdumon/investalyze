@@ -1,4 +1,4 @@
-"""End-to-end: stooq.run reads the input and loads market_data via storage.write."""
+"""End-to-end: stooq.run reads the input and stores market_data via storage.store."""
 from pathlib import Path
 
 import duckdb

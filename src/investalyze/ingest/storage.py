@@ -4,7 +4,7 @@ Pure: takes plain paths/values, knows nothing about config (the orchestrator
 owns that). A few small jobs, deliberately so:
   1. connect       — DuckDB connection (one place, one policy)
   2. introspection — table_exists / count_rows
-  3. write         — the single helper providers save through (DRY DB writes)
+  3. store         — the single helper providers store through (DRY DB writes)
 
 Split this module only if one of these grows enough to earn its own file.
 """
@@ -39,14 +39,14 @@ def count_rows(con: duckdb.DuckDBPyConnection, table: str) -> int:
     return int(con.execute(f'SELECT count(*) FROM {table}').fetchone()[0])  # type: ignore[index]
 
 
-# --- write --------------------------------------------------------------------
-def write(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: list[str]) -> int:
+# --- store --------------------------------------------------------------------
+def store(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: list[str]) -> int:
     """Merge-upsert `df` into `table` on `key`. The one path output reaches the DB.
 
     Creates the table from the frame's schema on first write, then upserts:
     matched keys update their non-key columns, new keys insert. Idempotent —
     re-ingesting full history or a daily update both converge. Providers
-    decide WHAT/WHEN to save; this owns HOW. Returns the table's row count.
+    decide WHAT/WHEN to store; this owns HOW. Returns the table's row count.
     """
     cols = list(df.columns)
     non_key = [c for c in cols if c not in key]
