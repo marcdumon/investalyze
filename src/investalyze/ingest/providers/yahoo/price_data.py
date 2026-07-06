@@ -15,13 +15,12 @@ import pandas as pd
 import yfinance as yf
 
 from investalyze.ingest import storage
+from investalyze.ingest.providers.yahoo import blacklist
 
 log = logging.getLogger('investalyze.ingest.yahoo')
 
 _PRICES, _DIVS, _SPLITS = 'prices', 'dividends', 'splits'
 _KEY = ['Ticker', 'Date']
-_BLACKLIST_COLS = ['ticker', 'market', 'attempts', 'first_blacklisted', 'last_checked']
-_DEAD_COLS = ['ticker', 'attempts', 'first_blacklisted', 'died_on']
 
 
 def _to_prices(ticker: str, frame: pd.DataFrame) -> pd.DataFrame:
@@ -125,20 +124,6 @@ def _get_last_dates(con: duckdb.DuckDBPyConnection) -> dict[str, str]:
     return {t: str(d) for t, d in con.execute('SELECT Ticker, MAX(Date) FROM prices GROUP BY Ticker').fetchall()}
 
 
-def _read_blacklist(path: Path) -> pd.DataFrame:
-    """Blacklist records (empty frame with the right columns if the file is absent)."""
-    if path.exists():
-        return pd.read_csv(path)
-    return pd.DataFrame(columns=_BLACKLIST_COLS)
-
-
-def _read_dead(path: Path) -> pd.DataFrame:
-    """Permanently-dead records (empty frame with the right columns if the file is absent)."""
-    if path.exists():
-        return pd.read_csv(path)
-    return pd.DataFrame(columns=_DEAD_COLS)
-
-
 def _get_events(con: duckdb.DuckDBPyConnection, table: str, value_col: str, ticker: str, idx: pd.DatetimeIndex) -> pd.Series:
     """Stored events for `ticker` from `table`, reindexed to `idx` with 0.0 where absent."""
     if not storage.table_exists(con, table):
@@ -173,9 +158,9 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
     blacklist_file = state_dir / 'price_blacklist.csv'
     dead_file = state_dir / 'price_dead.csv'
-    orig_blacklist_df = _read_blacklist(blacklist_file)
+    orig_blacklist_df = blacklist.read_blacklist(blacklist_file)
     blacklist_tickers = set(orig_blacklist_df['ticker'])
-    dead_tickers = set(_read_dead(dead_file)['ticker'])
+    dead_tickers = set(blacklist.read_dead(dead_file)['ticker'])
     done = _get_existing_tickers(con, _PRICES) if not update else set()
     todo = [s for s in symbols if s not in blacklist_tickers and s not in dead_tickers and s not in done]
 
@@ -288,7 +273,7 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
     dead_file = state_dir / 'price_dead.csv'
     ticker_file = raw_dir / settings['ticker_file']
 
-    blacklist_df = _read_blacklist(blacklist_file)
+    blacklist_df = blacklist.read_blacklist(blacklist_file)
     if blacklist_df.empty:
         return {'rechecked': 0, 'revived': 0, 'died': 0}
 
@@ -322,9 +307,11 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
         if settings['sleep'] and i < len(batches) - 1:
             time.sleep(settings['sleep'])
 
-    pd.DataFrame(still_blacklisted, columns=_BLACKLIST_COLS).to_csv(blacklist_file, index=False)
+    pd.DataFrame(still_blacklisted, columns=blacklist.BLACKLIST_COLS).to_csv(blacklist_file, index=False)
     if died_rows:
-        dead_df = pd.concat([_read_dead(dead_file), pd.DataFrame(died_rows, columns=_DEAD_COLS)], ignore_index=True)
+        dead_df = pd.concat(
+            [blacklist.read_dead(dead_file), pd.DataFrame(died_rows, columns=blacklist.DEAD_COLS)], ignore_index=True
+        )
         dead_df.to_csv(dead_file, index=False)
 
     ticker_df = pd.read_csv(ticker_file)

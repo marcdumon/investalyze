@@ -15,7 +15,7 @@ EXPECTED_CHECKS = [
     'cashflow_identity',
     'date_gap',
     'extreme_return',
-    'fundamentals_sanity',
+    'hard_invariants',
     'income_chain',
     'invalid_split_ratio',
     'negative_revenue',

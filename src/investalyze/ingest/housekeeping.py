@@ -6,6 +6,7 @@ place that opens the DB connection. Adding a task = one new function + one regis
 
 import logging
 from collections.abc import Callable, Sequence
+from pathlib import Path
 
 import duckdb
 
@@ -35,7 +36,7 @@ def ticker_diff(con: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
     return {'simfin_only': simfin_only, 'yahoo_only': yahoo_only}
 
 
-def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root, settings: dict) -> dict[str, int]:
+def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict[str, int]:
     """Rebuild the combined `companies` table from `_yahoo_companies` + `_simfin_companies`.
 
     Full outer join on Ticker; yahoo wins the overlapping columns (Industry, Sector, NrEmployees,
@@ -77,7 +78,7 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root, settings: dict)
     return result
 
 
-def rebuild_market_instruments(con: duckdb.DuckDBPyConnection, data_root, settings: dict) -> dict[str, int]:
+def rebuild_market_instruments(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict[str, int]:
     """Rebuild `market_instruments`: one row per distinct market_data ticker, name + country decoded.
 
     Indices come from the manually curated `[indices]` table in `stooq_tickers.toml`; bonds and
