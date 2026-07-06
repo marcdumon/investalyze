@@ -1,8 +1,9 @@
 # investalyze — Manual
 
 User guide for the `investalyze` repo. Work in progress — built in parts; each part is documented
-here as it lands. **Part 1: ingest** (getting market data into the DB) and **cleaning**
-(persistent manual fixes for bad vendor data).
+here as it lands. **Part 1: ingest** (getting market data into the DB), **cleaning**
+(persistent manual fixes for bad vendor data) and **quality** (anomaly detection over the
+ingested data).
 
 ---
 
@@ -146,3 +147,60 @@ Fix types:
 |------|------|
 | `delete_date_range` | Deletes all rows for the listed tickers within an inclusive date range. |
 
+---
+
+## Quality: anomaly detection
+
+Systematic checks over the ingested data: prices, corporate actions and fundamentals.
+Detect and report only: findings land in the `anomalies` table, source tables are never
+touched, and fixes go through the Cleaning workflow above.
+
+```bash
+# run every check (close notebook kernels first: DuckDB allows one writer)
+python -m investalyze.quality
+
+# run a subset
+python -m investalyze.quality extreme_return stale_run
+```
+
+| Flag | Effect |
+|------|--------|
+| `--ingest-config PATH` | Ingest TOML giving the DB location (default: `./ingest.toml`). |
+
+Each run replaces the selected checks' rows in `anomalies` (delete-then-insert), so re-runs
+are idempotent and a check that goes clean clears its old findings.
+
+`anomalies` columns: `CheckName`, `Severity` (`error` = hard invariant broken, `warn` =
+tunable threshold exceeded), `SrcTable`, `Ticker`, `Date` (prices family; NULL for
+fundamentals), `Key` (`Market|Period|Fiscal Year|Fiscal Period|IsRestated` for
+fundamentals), `Details` (the offending values, human-readable), `DetectedAt`.
+
+Checks (thresholds are module constants in `src/investalyze/quality/`, and kwargs on each
+check function for tuned re-runs from a notebook):
+
+| Check | Sev | Flags |
+|-------|-----|-------|
+| `nonpositive_price` | error | O/H/L/C/AC <= 0 in `prices`; O/H/L/C <= 0 in `market_data` except bonds (yields, negative is fine). |
+| `ohlc_inconsistent` | error | H < L, or O or C outside [L, H]; both tables, all asset classes. |
+| `negative_volume` | error | Volume < 0 (guard, currently clean). |
+| `bond_yield_bound` | warn | Bond abs(C) > 50: likely a price-quoted series misfiled as a yield. |
+| `extreme_return` | warn | Close more than doubles or halves overnight with no same-day split; tagged `(spike-and-revert)` when the next close jumps back. |
+| `stale_run` | warn | 20+ consecutive identical closes; one finding per run, dated at its end. |
+| `date_gap` | warn | More than 30 days between consecutive rows of a ticker. |
+| `nonpositive_dividend` | error | Dividend <= 0 (guard, currently clean). |
+| `oversized_dividend` | warn | Dividend above 25% of the same-day close. |
+| `invalid_split_ratio` | error | Split ratio <= 0 or = 1 (guard, currently clean). |
+| `balance_identity` | warn | Total Liabilities + Total Equity vs Total Assets. |
+| `balance_subtotals` | warn | Current + noncurrent vs total, assets side and liabilities side. |
+| `income_chain` | warn | Revenue → Gross Profit → Operating Income → Pretax Income Adj., link by link. |
+| `cashflow_identity` | warn | Operating + investing + financing (+ FX, disc. ops) vs Net Change in Cash. |
+| `fundamentals_sanity` | error | Shares (Basic/Diluted) <= 0 on any statement; negative Total Assets. |
+| `negative_revenue` | warn | Revenue < 0; legitimate for some financials, review per ticker. |
+| `quarters_vs_fy` | warn | Sum of a year's 4 quarters vs the FY row (Revenue, Net Income, operating cash). |
+
+The identity checks follow SimFin's signed convention (expenses stored negative, so every
+identity is additive) and tolerate `greatest(1% of the total, 100k)` to skip rounding noise.
+
+Review findings in `notebooks/6_data_quality.ipynb`: a per-check summary, then per check the
+worst tickers and sample rows. Confirmed data bug → quirks-log entry → `cleaning.toml` →
+`apply` → re-run the checks.
