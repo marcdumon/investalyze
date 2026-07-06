@@ -13,12 +13,31 @@ from investalyze.ingest.logging import configure_logging
 log = logging.getLogger('investalyze.ingest')
 
 
+def _table(title: str, descriptions: dict[str, str]) -> list[str]:
+    """Render one `title:` section listing each name and its one-line description, sorted."""
+    width = max(len(name) for name in descriptions)
+    lines = [f'{title}:']
+    for name in sorted(descriptions):
+        lines.append(f'  {name:<{width}}  {descriptions[name]}')
+    return lines
+
+
+def _epilog() -> str:
+    """Render the provider and housekeeping-task catalogs shown at the end of `--help`."""
+    lines = _table('providers (-p, default: all)', orchestrator.PROVIDER_DESCRIPTIONS)
+    lines.append('')
+    lines += _table('housekeeping tasks (-t, default: all)', housekeeping.TASK_DESCRIPTIONS)
+    return '\n'.join(lines)
+
+
 def main() -> None:
     """Parse CLI args and run the selected providers."""
     load_dotenv()
     parser = argparse.ArgumentParser(
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
+        epilog=_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         'command',

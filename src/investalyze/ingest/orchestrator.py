@@ -28,6 +28,14 @@ PROVIDERS: dict[str, ProviderRun] = {
     'yahoo-meta': yahoo_meta.run,
     'simfin': simfin.run,
 }
+# name -> one-line description, shown in `--help`; keys must match PROVIDERS exactly
+PROVIDER_DESCRIPTIONS: dict[str, str] = {
+    'stooq': 'bonds, currencies, indices (OHLCV)',
+    'yahoo': 'stock prices, dividends, splits',
+    'yahoo-meta': 'company profile + officers',
+    'simfin': 'fundamentals (income/balance/cashflow) + company metadata',
+}
+
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
 # Providers that reuse another provider's data tree instead of owning one. yahoo-meta
 # reads yahoo's ticker.csv + blacklist and writes its own state alongside them under

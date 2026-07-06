@@ -50,3 +50,7 @@ def test_yahoo_blacklist_is_registered():
 
 def test_yahoo_meta_blacklist_is_registered():
     assert 'yahoo-meta-blacklist' in housekeeping.HOUSEKEEPING_TASKS
+
+
+def test_every_task_has_a_description():
+    assert set(housekeeping.TASK_DESCRIPTIONS) == set(housekeeping.HOUSEKEEPING_TASKS)

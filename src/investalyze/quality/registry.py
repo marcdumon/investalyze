@@ -41,3 +41,24 @@ CHECKS: dict[str, tuple[str, CheckFn]] = {
     'negative_revenue': ('warn', fundamentals_sanity.negative_revenue),
     'quarters_vs_fy': ('warn', fundamentals_qsum.quarters_vs_fy),
 }
+
+# name -> one-line description, shown in `--help`; keys must match CHECKS exactly
+CHECK_DESCRIPTIONS: dict[str, str] = {
+    'nonpositive_price': 'O/H/L/C/AC <= 0 in prices; O/H/L/C <= 0 in market_data (non-bonds)',
+    'ohlc_inconsistent': 'H < L, or O/C outside [L, H]',
+    'negative_volume': 'Volume < 0',
+    'bond_yield_bound': 'bond |C| > 50',
+    'extreme_return': 'close doubles/halves overnight with no same-day split',
+    'stale_run': '20+ consecutive identical closes',
+    'date_gap': 'more than 30 days between consecutive rows',
+    'nonpositive_dividend': 'Dividend <= 0',
+    'oversized_dividend': 'Dividend above 25% of the same-day close',
+    'invalid_split_ratio': 'split ratio <= 0 or = 1',
+    'balance_identity': 'Total Liabilities + Total Equity vs Total Assets',
+    'balance_subtotals': 'current + noncurrent vs total, both sides',
+    'income_chain': 'Revenue -> Gross Profit -> Operating Income -> Pretax, link by link',
+    'cashflow_identity': 'operating + investing + financing (+ FX, disc. ops) vs Net Change in Cash',
+    'hard_invariants': 'Shares <= 0 on any statement; negative Total Assets',
+    'negative_revenue': 'Revenue < 0 (legitimate for some financials)',
+    'quarters_vs_fy': 'sum of 4 quarters vs the FY row',
+}

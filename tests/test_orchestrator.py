@@ -37,3 +37,7 @@ def test_yahoo_is_registered():
 
 def test_simfin_is_registered():
     assert 'simfin' in orchestrator.PROVIDERS
+
+
+def test_every_provider_has_a_description():
+    assert set(orchestrator.PROVIDER_DESCRIPTIONS) == set(orchestrator.PROVIDERS)
