@@ -260,3 +260,51 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
             show_df(head_and_tail(part))
 
     show_timeseries_section(con, 'market_data', ticker)  # populates for non-equity tickers
+
+
+# ======================================================================
+# 6_data_quality: anomalies review
+# ======================================================================
+
+
+def get_anomaly_summary(con):
+    """Per-check summary of the anomalies table: severity, findings, tickers, last run; errors first."""
+    return con.execute("""
+        SELECT CheckName, Severity, count(*) AS Findings, count(DISTINCT Ticker) AS Tickers, max(DetectedAt) AS DetectedAt
+        FROM anomalies
+        GROUP BY CheckName, Severity
+        ORDER BY Severity, count(*) DESC
+    """).df()
+
+
+def get_worst_tickers(con, check_name, limit=20):
+    """Tickers with the most findings for `check_name`, worst first, with their date span."""
+    return con.execute("""
+        SELECT Ticker, count(*) AS Findings, min(Date) AS First, max(Date) AS Last
+        FROM anomalies
+        WHERE CheckName = ?
+        GROUP BY Ticker
+        ORDER BY count(*) DESC, Ticker
+        LIMIT ?
+    """, [check_name, limit]).df()
+
+
+def get_findings(con, check_name, limit=20):
+    """Sample findings for `check_name`; rows with a 'diff=..%' in Details come worst-first."""
+    return con.execute("""
+        SELECT SrcTable, Ticker, Date, Key, Details
+        FROM anomalies
+        WHERE CheckName = ?
+        ORDER BY coalesce(TRY_CAST(regexp_extract(Details, 'diff=([0-9.]+)%', 1) AS DOUBLE), 0) DESC, Ticker, Date
+        LIMIT ?
+    """, [check_name, limit]).df()
+
+
+def show_check(con, check_name, limit=20):
+    """Worst tickers plus sample findings for one check; a single 'clean' note when it has none."""
+    worst = get_worst_tickers(con, check_name, limit)
+    if worst.empty:
+        show_note('clean')
+        return
+    show_df(worst)
+    show_df(get_findings(con, check_name, limit))
