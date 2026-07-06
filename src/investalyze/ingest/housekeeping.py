@@ -111,6 +111,14 @@ HOUSEKEEPING_TASKS: dict[str, tuple[str, HousekeepingTask]] = {
     'market-instruments': ('combined', rebuild_market_instruments),
 }
 
+# name -> one-line description, shown in `--help`; keys must match HOUSEKEEPING_TASKS exactly
+TASK_DESCRIPTIONS: dict[str, str] = {
+    'yahoo-blacklist': 'rechecks failed Yahoo price tickers',
+    'yahoo-meta-blacklist': 'rechecks failed Yahoo metadata tickers',
+    'companies': 'rebuilds the combined companies table (yahoo + simfin)',
+    'market-instruments': 'rebuilds market_instruments (indices, bonds, currencies)',
+}
+
 
 def run_housekeeping(config: Config, tasks: Sequence[str] | None = None) -> dict[str, dict]:
     """Run the selected housekeeping tasks against the shared DB. Returns {task: result}.

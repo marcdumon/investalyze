@@ -74,6 +74,10 @@ def test_registry_severities_are_valid():
         assert severity in ('error', 'warn'), name
 
 
+def test_every_check_has_a_description():
+    assert set(registry.CHECK_DESCRIPTIONS) == set(registry.CHECKS)
+
+
 def test_every_check_runs_end_to_end_through_the_writer(con):
     writer.ensure_table(con)
     for name, (severity, check) in registry.CHECKS.items():

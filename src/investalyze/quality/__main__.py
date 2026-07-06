@@ -16,14 +16,26 @@ from investalyze.quality import registry, writer
 log = logging.getLogger('investalyze.quality')
 
 
+def _epilog() -> str:
+    """Render the check catalog (name, severity, description) shown at the end of `--help`."""
+    width = max(len(name) for name in registry.CHECKS)
+    lines = ['checks (default: all):']
+    for name in sorted(registry.CHECKS):
+        severity, _ = registry.CHECKS[name]
+        lines.append(f'  {name:<{width}}  {severity:<5}  {registry.CHECK_DESCRIPTIONS[name]}')
+    return '\n'.join(lines)
+
+
 def main() -> None:
     """Parse CLI args and run the selected checks (default: all)."""
     parser = argparse.ArgumentParser(
         prog='python -m investalyze.quality',
         description='Detect data anomalies and store findings in the anomalies table.',
+        epilog=_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument('checks', nargs='*', choices=sorted(registry.CHECKS), metavar='check',
-                        help=f'check to run (default: all). known: {", ".join(sorted(registry.CHECKS))}')
+                        help='check to run (default: all); see the list below')
     parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
                         help='ingest TOML giving the DB location (default: ./ingest.toml)')
     args = parser.parse_args()
