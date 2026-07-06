@@ -1,9 +1,9 @@
 """Yahoo provider — company profile + officers, via `yf.Ticker(t).info`.
 
-Independent of `provider.py` (prices/dividends/splits): one HTTP call per ticker (no
+Independent of `price_data.py` (prices/dividends/splits): one HTTP call per ticker (no
 bulk endpoint for `.info`, unlike `yf.download`), so this fetches one ticker at a time
-and paces itself with `sleep` between every call. Reuses `provider.py`'s ticker universe
-and blacklist/dead state helpers — it has no ticker list or CSV-schema helpers of its own.
+and paces itself with `sleep` between every call. Shares `blacklist.py`'s CSV schema and
+readers with `price_data.py`; reads the same `ticker.csv` convention directly.
 """
 
 import logging
@@ -16,8 +16,7 @@ import pandas as pd
 import yfinance as yf
 
 from investalyze.ingest import storage
-from investalyze.ingest.providers.yahoo import columns
-from investalyze.ingest.providers.yahoo import price_data as provider
+from investalyze.ingest.providers.yahoo import blacklist, columns
 
 log = logging.getLogger('investalyze.ingest.yahoo-meta')
 
@@ -94,7 +93,7 @@ def _is_due(fetched_on: date | None, refresh_days: int, today: date) -> bool:
     return fetched_on is None or (today - fetched_on).days >= refresh_days
 
 
-def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
+def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
     """Fetch + store Yahoo company profile + officers for due tickers. Returns the company_profile row count.
 
     `settings` is the `[yahoo-meta]` config (no fallback defaults — a missing key raises). `update`
@@ -111,13 +110,13 @@ def fetch_meta(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, 
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
 
-    price_blacklisted = set(provider._read_blacklist(state_dir / 'price_blacklist.csv')['ticker'])
-    price_dead = set(provider._read_dead(state_dir / 'price_dead.csv')['ticker'])
+    price_blacklisted = set(blacklist.read_blacklist(state_dir / 'price_blacklist.csv')['ticker'])
+    price_dead = set(blacklist.read_dead(state_dir / 'price_dead.csv')['ticker'])
 
     blacklist_file = state_dir / 'meta_blacklist.csv'
-    blacklist_df = provider._read_blacklist(blacklist_file)
+    blacklist_df = blacklist.read_blacklist(blacklist_file)
     meta_blacklisted = set(blacklist_df['ticker'])
-    meta_dead = set(provider._read_dead(state_dir / 'meta_dead.csv')['ticker'])
+    meta_dead = set(blacklist.read_dead(state_dir / 'meta_dead.csv')['ticker'])
 
     today = date.today()
     existing = _get_existing_profile(con)
@@ -159,7 +158,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     task is dispatched with. `settings` is the `[yahoo-meta]` config: uses `sleep`,
     `blacklist_max_attempts` (no fallback — missing raises `KeyError`). Unlike the price provider's
     `recheck_blacklist`, a revived ticker needs no further bookkeeping here — `yahoo-meta` has no
-    ticker list of its own to prune; the next `fetch_meta` run picks a revived ticker up naturally
+    ticker list of its own to prune; the next `run` picks a revived ticker up naturally
     once it's off this blacklist. `meta_blacklist.csv`/`meta_dead.csv` are rewritten after every
     ticker (not just at the end), so stopping mid-run and restarting resumes from the tickers still
     pending instead of rechecking everything from scratch.
@@ -168,7 +167,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     blacklist_file = state_dir / 'meta_blacklist.csv'
     dead_file = state_dir / 'meta_dead.csv'
 
-    blacklist_df = provider._read_blacklist(blacklist_file)
+    blacklist_df = blacklist.read_blacklist(blacklist_file)
     if blacklist_df.empty:
         return {'rechecked': 0, 'revived': 0, 'died': 0}
 
@@ -176,7 +175,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     today = date.today().isoformat()
     tickers = blacklist_df['ticker'].tolist()
     remaining = {r['ticker']: r for r in blacklist_df.to_dict('records')}
-    dead_df = provider._read_dead(dead_file)
+    dead_df = blacklist.read_dead(dead_file)
 
     revived = died = 0
     for n, ticker in enumerate(tickers, start=1):
@@ -196,7 +195,7 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
                 dead_df.to_csv(dead_file, index=False)
             else:
                 remaining[ticker] = record
-        pd.DataFrame(remaining.values(), columns=provider._BLACKLIST_COLS).to_csv(blacklist_file, index=False)
+        pd.DataFrame(remaining.values(), columns=blacklist.BLACKLIST_COLS).to_csv(blacklist_file, index=False)
         if settings['sleep']:
             time.sleep(settings['sleep'])
 

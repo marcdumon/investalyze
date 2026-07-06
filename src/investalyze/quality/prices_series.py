@@ -39,8 +39,8 @@ def extreme_return(con: duckdb.DuckDBPyConnection, *, max_abs_log_return: float 
     """, [max_abs_log_return]).df()
 
 
-def stale_run(con: duckdb.DuckDBPyConnection, *, min_run: int = MIN_STALE_RUN) -> pd.DataFrame:
-    """Runs of at least `min_run` consecutive identical closes; one finding per run, Date = run end."""
+def stale_run(con: duckdb.DuckDBPyConnection, *, min_stale_run: int = MIN_STALE_RUN) -> pd.DataFrame:
+    """Runs of at least `min_stale_run` consecutive identical closes; one finding per run, Date = run end."""
     return con.execute("""
         WITH marks AS (
             SELECT Ticker, Date, C,
@@ -56,7 +56,7 @@ def stale_run(con: duckdb.DuckDBPyConnection, *, min_run: int = MIN_STALE_RUN) -
         FROM runs
         GROUP BY Ticker, run_id
         HAVING count(*) >= ?
-    """, [min_run]).df()
+    """, [min_stale_run]).df()
 
 
 def date_gap(con: duckdb.DuckDBPyConnection, *, max_gap_days: int = MAX_GAP_DAYS) -> pd.DataFrame:

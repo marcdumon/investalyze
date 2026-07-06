@@ -25,7 +25,7 @@ ProviderRun = Callable[..., int]
 PROVIDERS: dict[str, ProviderRun] = {
     'stooq': stooq.run,
     'yahoo': yahoo.run,
-    'yahoo-meta': yahoo_meta.fetch_meta,
+    'yahoo-meta': yahoo_meta.run,
     'simfin': simfin.run,
 }
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')

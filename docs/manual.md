@@ -194,7 +194,7 @@ check function for tuned re-runs from a notebook):
 | `balance_subtotals` | warn | Current + noncurrent vs total, assets side and liabilities side. |
 | `income_chain` | warn | Revenue → Gross Profit → Operating Income → Pretax Income Adj., link by link. |
 | `cashflow_identity` | warn | Operating + investing + financing (+ FX, disc. ops) vs Net Change in Cash. |
-| `fundamentals_sanity` | error | Shares (Basic/Diluted) <= 0 on any statement; negative Total Assets. |
+| `hard_invariants` | error | Shares (Basic/Diluted) <= 0 on any statement; negative Total Assets. |
 | `negative_revenue` | warn | Revenue < 0; legitimate for some financials, review per ticker. |
 | `quarters_vs_fy` | warn | Sum of a year's 4 quarters vs the FY row (Revenue, Net Income, operating cash). |
 

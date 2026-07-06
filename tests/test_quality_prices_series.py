@@ -74,9 +74,9 @@ def test_stale_run_counts_only_consecutive_identical_closes(con):
     assert prices_series.stale_run(con).empty
 
 
-def test_stale_run_min_run_is_tunable(con):
+def test_stale_run_min_stale_run_is_tunable(con):
     seed_series(con, 'S3', [5.0, 5.0, 5.0, 7.0])
-    df = prices_series.stale_run(con, min_run=3)
+    df = prices_series.stale_run(con, min_stale_run=3)
     assert df['Ticker'].tolist() == ['S3']
     assert '3 identical closes' in df['Details'].iloc[0]
 

@@ -37,7 +37,7 @@ CHECKS: dict[str, tuple[str, CheckFn]] = {
     'balance_subtotals': ('warn', fundamentals_identities.balance_subtotals),
     'income_chain': ('warn', fundamentals_identities.income_chain),
     'cashflow_identity': ('warn', fundamentals_identities.cashflow_identity),
-    'fundamentals_sanity': ('error', fundamentals_sanity.hard_invariants),
+    'hard_invariants': ('error', fundamentals_sanity.hard_invariants),
     'negative_revenue': ('warn', fundamentals_sanity.negative_revenue),
     'quarters_vs_fy': ('warn', fundamentals_qsum.quarters_vs_fy),
 }

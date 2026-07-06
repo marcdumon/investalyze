@@ -17,6 +17,7 @@ import math
 import numbers
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 from IPython.display import HTML, Markdown, display
 
@@ -25,7 +26,7 @@ from IPython.display import HTML, Markdown, display
 # ======================================================================
 
 
-def fmt_number(x, sig=4):
+def fmt_number(x: object, sig: int = 4) -> object:
     """Render a number readably: thousands separator for the big, significant figures for the small.
 
     Values >= 1 get a thousands separator and at most 4 decimals (1,234,567 / 593.57); values
@@ -50,7 +51,7 @@ def fmt_number(x, sig=4):
     return s.rstrip('0').rstrip('.') if '.' in s else s
 
 
-def _fmt_cell(x):
+def _fmt_cell(x: object) -> object:
     """Cell formatter: dates as YYYY-MM-DD, numbers via `fmt_number`, everything else untouched."""
     if x is pd.NaT:
         return ''
@@ -59,7 +60,7 @@ def _fmt_cell(x):
     return fmt_number(x)
 
 
-def _is_numeric_col(col):
+def _is_numeric_col(col: pd.Series) -> bool:
     """True if a column holds numbers — including object columns of mixed Int/None (financials)."""
     if pd.api.types.is_numeric_dtype(col):
         return not pd.api.types.is_bool_dtype(col)
@@ -70,7 +71,7 @@ def _is_numeric_col(col):
 MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
 
 
-def show_df(df):
+def show_df(df: pd.DataFrame) -> None:
     """Display a DataFrame: dates as YYYY-MM-DD, numbers formatted + right-aligned, text left-aligned.
 
     Numeric columns (incl. object columns of mixed Int/None) are right-aligned; everything else
@@ -89,7 +90,7 @@ def show_df(df):
     display(styler)
 
 
-def connect_readonly():
+def connect_readonly() -> duckdb.DuckDBPyConnection:
     """Open a read-only DuckDB connection at the configured data root, display defaults applied.
 
     Walks up from the kernel CWD to the repo root (the dir holding `ingest.toml`) so it
@@ -105,36 +106,36 @@ def connect_readonly():
     return storage.connect(root / cfg.data_root, read_only=True)
 
 
-def list_tables(con):
-    """Set of table names present in the DB."""
-    return {name for (name,) in con.execute('SHOW TABLES').fetchall()}
+def list_tables(con: duckdb.DuckDBPyConnection) -> list[str]:
+    """Sorted list of table names present in the DB."""
+    return sorted(name for (name,) in con.execute('SHOW TABLES').fetchall())
 
 
-def get_ticker_rows(con, table, ticker):
+def get_ticker_rows(con: duckdb.DuckDBPyConnection, table: str, ticker: str) -> pd.DataFrame:
     """All rows for `ticker` in `table` as a DataFrame (empty if the table is absent)."""
     if table not in list_tables(con):
         return pd.DataFrame()
     return con.execute(f'SELECT * FROM {table} WHERE Ticker = ?', [ticker]).df()
 
 
-def head_and_tail(df, n=5):
+def head_and_tail(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
     """First `n` + last `n` rows; the whole frame if it has <= 2n rows."""
     if len(df) <= 2 * n:
         return df
     return pd.concat([df.head(n), df.tail(n)])
 
 
-def show_section_header(title, level=2):
+def show_section_header(title: str, level: int = 2) -> None:
     """Render a markdown header at the given level (h2 by default)."""
     display(Markdown(f'{"#" * level} {title}'))
 
 
-def show_note(text):
+def show_note(text: str) -> None:
     """Render an italic one-line note."""
     display(Markdown(f'*{text}*'))
 
 
-def show_df_or_note(df, transpose=False, note='no rows'):
+def show_df_or_note(df: pd.DataFrame, transpose: bool = False, note: str = 'no rows') -> None:
     """Show `df` (optionally transposed), or an italic note when it's empty."""
     if df.empty:
         show_note(note)
@@ -159,13 +160,13 @@ PROVIDER_TABLES = {
 RESTATED_TABLES = {'income', 'balance', 'cashflow'}
 
 
-def sample_rows(con, table, n=15, where=None):
+def sample_rows(con: duckdb.DuckDBPyConnection, table: str, n: int = 15, where: str | None = None) -> pd.DataFrame:
     """`n` random rows from `table` as a DataFrame, optionally filtered by a SQL `where` clause."""
     clause = f' WHERE {where}' if where else ''
     return con.execute(f'SELECT * FROM {table}{clause} ORDER BY random() LIMIT {n}').df()
 
 
-def show_provider_samples(con, provider):
+def show_provider_samples(con: duckdb.DuckDBPyConnection, provider: str) -> None:
     """Display an n-row sample of every table the provider owns; split restated fundamentals."""
     present = list_tables(con)
     for table in PROVIDER_TABLES[provider]:
@@ -186,12 +187,12 @@ def show_provider_samples(con, provider):
 # ======================================================================
 
 
-def timeseries_stats(df):
+def timeseries_stats(df: pd.DataFrame) -> pd.DataFrame:
     """count/min/max/mean/std per numeric column of a time series (Date span shown separately)."""
     return df.select_dtypes('number').describe().T[['count', 'min', 'max', 'mean', 'std']]
 
 
-def fundamentals_coverage(df):
+def fundamentals_coverage(df: pd.DataFrame) -> str:
     """One-line coverage summary for a fundamentals slice."""
     fy = f'{int(df["Fiscal Year"].min())} .. {int(df["Fiscal Year"].max())}'
     periods = ' '.join(f'{p}={n}' for p, n in df['Period'].value_counts().sort_index().items())
@@ -199,7 +200,7 @@ def fundamentals_coverage(df):
     return f'Fiscal Year {fy}  |  {periods}  |  {currency}  |  {len(df)} rows'
 
 
-def fundamentals_stats(df, min_fill):
+def fundamentals_stats(df: pd.DataFrame, min_fill: float) -> pd.DataFrame:
     """count/min/max/mean/std for the well-populated numeric columns of a fundamentals slice.
 
     Importance heuristic: a column's NaN fraction. Columns filled in fewer than `min_fill` of
@@ -212,7 +213,7 @@ def fundamentals_stats(df, min_fill):
     return num[keep].describe().T[['count', 'min', 'max', 'mean', 'std']]
 
 
-def show_timeseries_section(con, table, ticker):
+def show_timeseries_section(con: duckdb.DuckDBPyConnection, table: str, ticker: str) -> None:
     """A time-series table: date span + per-column stats + head/tail preview."""
     show_section_header(table)
     df = get_ticker_rows(con, table, ticker).sort_values('Date')
@@ -224,7 +225,7 @@ def show_timeseries_section(con, table, ticker):
     show_df(head_and_tail(df))
 
 
-def show_ticker_profile(con, ticker, min_fill=0.5):
+def show_ticker_profile(con: duckdb.DuckDBPyConnection, ticker: str, min_fill: float = 0.5) -> None:
     """Everything we hold for `ticker`: metadata + a head/tail preview, table by table."""
     display(Markdown(f'# {ticker}'))
 
@@ -267,7 +268,7 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
 # ======================================================================
 
 
-def get_anomaly_summary(con):
+def get_anomaly_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Per-check summary of the anomalies table: severity, findings, tickers, last run; errors first."""
     return con.execute("""
         SELECT CheckName, Severity, count(*) AS Findings, count(DISTINCT Ticker) AS Tickers, max(DetectedAt) AS DetectedAt
@@ -277,7 +278,7 @@ def get_anomaly_summary(con):
     """).df()
 
 
-def get_worst_tickers(con, check_name, limit=20):
+def get_worst_tickers(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> pd.DataFrame:
     """Tickers with the most findings for `check_name`, worst first, with their date span."""
     return con.execute("""
         SELECT Ticker, count(*) AS Findings, min(Date) AS First, max(Date) AS Last
@@ -289,7 +290,7 @@ def get_worst_tickers(con, check_name, limit=20):
     """, [check_name, limit]).df()
 
 
-def get_findings(con, check_name, limit=20):
+def get_findings(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> pd.DataFrame:
     """Sample findings for `check_name`; rows with a 'diff=..%' in Details come worst-first."""
     return con.execute("""
         SELECT SrcTable, Ticker, Date, Key, Details
@@ -300,7 +301,7 @@ def get_findings(con, check_name, limit=20):
     """, [check_name, limit]).df()
 
 
-def show_check(con, check_name, limit=20):
+def show_check(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> None:
     """Worst tickers plus sample findings for one check; a single 'clean' note when it has none."""
     worst = get_worst_tickers(con, check_name, limit)
     if worst.empty:

@@ -29,11 +29,11 @@ def _info(**overrides) -> dict:
     return base
 
 
-def test_fetch_meta_writes_profile_and_officers(tmp_path, monkeypatch):
+def test_run_writes_profile_and_officers(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('AAA', 'nyse'))
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: _info())
     con = duckdb.connect()
-    n = meta.fetch_meta(con, tmp_path, _SETTINGS)
+    n = meta.run(con, tmp_path, _SETTINGS)
     assert n == 1
     profile = con.execute("SELECT Ticker, Src, City, FullTimeEmployees FROM _yahoo_companies").fetchall()
     assert profile == [('AAA', 'yahoo', 'Cupertino', 100)]
@@ -41,7 +41,7 @@ def test_fetch_meta_writes_profile_and_officers(tmp_path, monkeypatch):
     assert officers == [('AAA', 'Jane Doe', 'CEO')]
 
 
-def test_fetch_meta_skips_ticker_fetched_recently(tmp_path, monkeypatch):
+def test_run_skips_ticker_fetched_recently(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('AAA', 'nyse'))
     calls: list[str] = []
     def fake_info(sym):
@@ -49,13 +49,13 @@ def test_fetch_meta_skips_ticker_fetched_recently(tmp_path, monkeypatch):
         return _info()
     monkeypatch.setattr(meta, '_fetch_info', fake_info)
     con = duckdb.connect()
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     assert calls == ['AAA']
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     assert calls == ['AAA']   # second run: FetchedOn is today, not stale -> skipped
 
 
-def test_fetch_meta_refetches_stale_ticker(tmp_path, monkeypatch):
+def test_run_refetches_stale_ticker(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('AAA', 'nyse'))
     calls: list[str] = []
     def fake_info(sym):
@@ -63,15 +63,15 @@ def test_fetch_meta_refetches_stale_ticker(tmp_path, monkeypatch):
         return _info()
     monkeypatch.setattr(meta, '_fetch_info', fake_info)
     con = duckdb.connect()
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     con.execute("UPDATE _yahoo_companies SET FetchedOn = DATE '2020-01-01' WHERE Ticker = 'AAA'")
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     assert calls == ['AAA', 'AAA']
     row = con.execute("SELECT FetchedOn FROM _yahoo_companies WHERE Ticker = 'AAA'").fetchone()
     assert row[0] == date.today()
 
 
-def test_fetch_meta_skips_price_blacklisted_and_dead_tickers(tmp_path, monkeypatch):
+def test_run_skips_price_blacklisted_and_dead_tickers(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('GOOD', 'nyse'), ('BLACK', 'nyse'), ('DEAD', 'nyse'))
     price_state = tmp_path / 'yahoo' / 'state'
     price_state.mkdir(parents=True)
@@ -83,15 +83,15 @@ def test_fetch_meta_skips_price_blacklisted_and_dead_tickers(tmp_path, monkeypat
     calls: list[str] = []
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: (calls.append(sym) or _info()))
     con = duckdb.connect()
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     assert calls == ['GOOD']
 
 
-def test_fetch_meta_blacklists_ticker_with_no_info(tmp_path, monkeypatch):
+def test_run_blacklists_ticker_with_no_info(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('EMPTY', 'nyse'))
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: {})
     con = duckdb.connect()
-    n = meta.fetch_meta(con, tmp_path, _SETTINGS)
+    n = meta.run(con, tmp_path, _SETTINGS)
     assert n == 0
     blacklist = pd.read_csv(tmp_path / 'yahoo' / 'state' / 'meta_blacklist.csv')
     assert blacklist.loc[0, 'ticker'] == 'EMPTY'
@@ -99,7 +99,7 @@ def test_fetch_meta_blacklists_ticker_with_no_info(tmp_path, monkeypatch):
     assert blacklist.loc[0, 'attempts'] == 1
 
 
-def test_fetch_meta_skips_already_meta_blacklisted_ticker(tmp_path, monkeypatch):
+def test_run_skips_already_meta_blacklisted_ticker(tmp_path, monkeypatch):
     _ticker_csv(tmp_path, ('QUIET', 'nyse'))
     meta_state = tmp_path / 'yahoo' / 'state'
     meta_state.mkdir(parents=True)
@@ -109,5 +109,5 @@ def test_fetch_meta_skips_already_meta_blacklisted_ticker(tmp_path, monkeypatch)
     calls: list[str] = []
     monkeypatch.setattr(meta, '_fetch_info', lambda sym: (calls.append(sym) or _info()))
     con = duckdb.connect()
-    meta.fetch_meta(con, tmp_path, _SETTINGS)
+    meta.run(con, tmp_path, _SETTINGS)
     assert calls == []
