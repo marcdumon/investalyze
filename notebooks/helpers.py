@@ -34,7 +34,7 @@ def fmt_number(x: object, sig: int = 4) -> object:
     rounding to zero. Trailing zeros and bare decimal points are trimmed (603 not 603.0000).
     Bools and non-numbers (strings, dates) pass through untouched — safe on mixed/transposed frames.
     """
-    if pd.isna(x):
+    if pd.isna(x):  # type: ignore[arg-type]
         return ''
     if not isinstance(x, numbers.Number):
         return x
@@ -65,7 +65,7 @@ def _is_numeric_col(col: pd.Series) -> bool:
     if pd.api.types.is_numeric_dtype(col):
         return not pd.api.types.is_bool_dtype(col)
     non_null = col.dropna()
-    return not non_null.empty and non_null.map(type).isin((int, float, complex)).all()
+    return bool(not non_null.empty and non_null.map(type).isin((int, float, complex)).all())
 
 
 MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
@@ -81,12 +81,12 @@ def show_df(df: pd.DataFrame) -> None:
     num_cols = [c for c in df.columns if _is_numeric_col(df[c])]
     styler = (
         df.style
-        .format(_fmt_cell)
-        .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})
+        .format(_fmt_cell)  # type: ignore[arg-type]
+        .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})  # type: ignore[arg-type]
         .set_table_styles([{'selector': '', 'props': [('font-family', MONO_FONT)]}, {'selector': 'th', 'props': [('text-align', 'left')]}])
     )
     if num_cols:
-        styler = styler.set_properties(subset=num_cols, **{'text-align': 'right'})
+        styler = styler.set_properties(subset=num_cols, **{'text-align': 'right'})  # type: ignore[arg-type]
     display(styler)
 
 
@@ -280,25 +280,31 @@ def get_anomaly_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 def get_worst_tickers(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> pd.DataFrame:
     """Tickers with the most findings for `check_name`, worst first, with their date span."""
-    return con.execute("""
+    return con.execute(
+        """
         SELECT Ticker, count(*) AS Findings, min(Date) AS First, max(Date) AS Last
         FROM anomalies
         WHERE CheckName = ?
         GROUP BY Ticker
         ORDER BY count(*) DESC, Ticker
         LIMIT ?
-    """, [check_name, limit]).df()
+    """,
+        [check_name, limit],
+    ).df()
 
 
 def get_findings(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> pd.DataFrame:
     """Sample findings for `check_name`; rows with a 'diff=..%' in Details come worst-first."""
-    return con.execute("""
+    return con.execute(
+        """
         SELECT SrcTable, Ticker, Date, Key, Details
         FROM anomalies
         WHERE CheckName = ?
         ORDER BY coalesce(TRY_CAST(regexp_extract(Details, 'diff=([0-9.]+)%', 1) AS DOUBLE), 0) DESC, Ticker, Date
         LIMIT ?
-    """, [check_name, limit]).df()
+    """,
+        [check_name, limit],
+    ).df()
 
 
 def show_check(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20) -> None:
