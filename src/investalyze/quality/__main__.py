@@ -2,7 +2,7 @@
 
 Each run replaces the selected checks' rows in the `anomalies` table (delete-then-insert),
 so the table always reflects the latest run. Review findings in
-notebooks/6_data_quality.ipynb; fixes stay manual (quirks log -> cleaning.toml -> apply).
+notebooks/3_data_quality.ipynb; fixes stay manual (quirks log -> cleaning.toml -> apply).
 """
 
 import argparse

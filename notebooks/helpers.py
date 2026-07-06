@@ -263,7 +263,7 @@ def show_ticker_profile(con, ticker, min_fill=0.5):
 
 
 # ======================================================================
-# 6_data_quality: anomalies review
+# 3_data_quality: anomalies review
 # ======================================================================
 
 

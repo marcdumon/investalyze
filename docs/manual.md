@@ -201,6 +201,6 @@ check function for tuned re-runs from a notebook):
 The identity checks follow SimFin's signed convention (expenses stored negative, so every
 identity is additive) and tolerate `greatest(1% of the total, 100k)` to skip rounding noise.
 
-Review findings in `notebooks/6_data_quality.ipynb`: a per-check summary, then per check the
+Review findings in `notebooks/3_data_quality.ipynb`: a per-check summary, then per check the
 worst tickers and sample rows. Confirmed data bug → quirks-log entry → `cleaning.toml` →
 `apply` → re-run the checks.
