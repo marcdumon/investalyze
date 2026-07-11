@@ -41,6 +41,19 @@ class RebaseTo100:
         return x / self.base_ * 100.0
 
 
+class RebaseTo1:
+    """Rebase each window to start at 1 (`column / column[0]`)."""
+
+    def fit(self, history: np.ndarray) -> Self:
+        """Learn each window's base: its first-row (earliest) price."""
+        self.base_ = history[[0], :]
+        return self
+
+    def transform(self, x: np.ndarray) -> np.ndarray:
+        """Rebase `x` by the fitted base; a future stays continuous with its history."""
+        return x / self.base_
+
+
 class LogReturns:
     """Per-window log returns (`diff(log(column))` down the rows)."""
 
