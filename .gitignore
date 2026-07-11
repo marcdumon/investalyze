@@ -16,3 +16,9 @@ wheels/
 /data/
 data
 
+# Experiment run artifacts (models, per-run results)
+experiments/**/runs/
+
+# Editor lock files
+.~lock.*#
+
