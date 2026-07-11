@@ -1,13 +1,16 @@
 """Yahoo provider — company profile + officers, via `yf.Ticker(t).info`.
 
-Independent of `price_data.py` (prices/dividends/splits): one HTTP call per ticker (no
-bulk endpoint for `.info`, unlike `yf.download`), so this fetches one ticker at a time
-and paces itself with `sleep` between every call. Shares `blacklist.py`'s CSV schema and
-readers with `price_data.py`; reads the same `ticker.csv` convention directly.
+Independent of `price_data.py` (prices/dividends/splits): no bulk endpoint for `.info`
+(unlike `yf.download`), so tickers are fetched over a small thread pool (`workers`) instead
+of one bulk network call per batch; each worker paces itself with `sleep` between its own
+requests. Shares `blacklist.py`'s CSV schema and readers with `price_data.py`; reads the
+same `ticker.csv` convention directly.
 """
 
+import functools
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -58,6 +61,14 @@ def _fetch_info(symbol: str) -> dict:
     return info if info else {}
 
 
+def _fetch_one(symbol: str, sleep_s: float) -> tuple[str, dict]:
+    """One worker's unit of work: fetch, then pace this thread before it grabs the next ticker."""
+    info = _fetch_info(symbol)
+    if sleep_s:
+        time.sleep(sleep_s)
+    return symbol, info
+
+
 def _to_profile(ticker: str, info: dict, fetched_on: date) -> pd.DataFrame:
     """One ticker's `.info` -> a single `_yahoo_companies` row (canonical PascalCase columns).
 
@@ -104,9 +115,10 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
 
     `settings` is the `[yahoo-meta]` config (no fallback defaults — a missing key raises). `update`
     is accepted for signature parity with every other provider's `run` but unused — there is no
-    incremental mode here, only "due" (no row yet, or `FetchedOn` stale) vs "not due". There is no
-    batching — each ticker is fetched and immediately written (DB row or blacklist entry) one at a
-    time, so stopping mid-run and restarting resumes from the next un-fetched ticker.
+    incremental mode here, only "due" (no row yet, or `FetchedOn` stale) vs "not due". `workers`
+    threads fetch concurrently (no bulk `.info` endpoint to batch through instead); each ticker is
+    still written (DB row or blacklist entry) as soon as its fetch completes, in the main thread, so
+    stopping mid-run and restarting resumes from the tickers still un-fetched.
     """
     price_raw_dir = data_root / 'yahoo' / 'raw'
     state_dir = data_root / 'yahoo' / 'state'
@@ -131,27 +143,26 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     todo = [s for s in candidates if _is_due(existing.get(s), settings['refresh_days_meta'], today)]
 
     saved = blacklisted = 0
-    for n, sym in enumerate(todo, start=1):
-        log.info(f'fetching {sym} ({n}/{len(todo)})')
-        info = _fetch_info(sym)
-        if not info:
-            log.debug(f'{sym} no metadata — blacklisted')
-            today_iso = today.isoformat()
-            new_row = pd.DataFrame([{
-                'ticker': sym, 'market': market_by_ticker.get(sym, ''), 'attempts': 1,
-                'first_blacklisted': today_iso, 'last_checked': today_iso,
-            }])
-            blacklist_df = pd.concat([blacklist_df, new_row], ignore_index=True)
-            blacklist_df.sort_values('ticker').to_csv(blacklist_file, index=False)
-            blacklisted += 1
-        else:
-            storage.store(con, _PROFILE, _to_profile(sym, info, today), key=_PROFILE_KEY)
-            officers = _to_officers(sym, info)
-            if not officers.empty:
-                storage.store(con, _OFFICERS, officers, key=_OFFICERS_KEY)
-            saved += 1
-        if settings['sleep']:
-            time.sleep(settings['sleep'])
+    fetch = functools.partial(_fetch_one, sleep_s=settings['sleep'])
+    with ThreadPoolExecutor(max_workers=settings['workers']) as pool:
+        for n, (sym, info) in enumerate(pool.map(fetch, todo), start=1):
+            log.info(f'fetching {sym} ({n}/{len(todo)})')
+            if not info:
+                log.debug(f'{sym} no metadata — blacklisted')
+                today_iso = today.isoformat()
+                new_row = pd.DataFrame([{
+                    'ticker': sym, 'market': market_by_ticker.get(sym, ''), 'attempts': 1,
+                    'first_blacklisted': today_iso, 'last_checked': today_iso,
+                }])
+                blacklist_df = pd.concat([blacklist_df, new_row], ignore_index=True)
+                blacklist_df.sort_values('ticker').to_csv(blacklist_file, index=False)
+                blacklisted += 1
+            else:
+                storage.store(con, _PROFILE, _to_profile(sym, info, today), key=_PROFILE_KEY)
+                officers = _to_officers(sym, info)
+                if not officers.empty:
+                    storage.store(con, _OFFICERS, officers, key=_OFFICERS_KEY)
+                saved += 1
 
     log.info(f'done — {saved} saved, {blacklisted} blacklisted')
     return storage.count_rows(con, _PROFILE)
@@ -161,13 +172,14 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     """Retry every yahoo-meta-blacklisted ticker; revive successes, age out chronic failures.
 
     `con` is unused — kept so this matches the `(con, data_root, settings)` shape every housekeeping
-    task is dispatched with. `settings` is the `[yahoo-meta]` config: uses `sleep`,
+    task is dispatched with. `settings` is the `[yahoo-meta]` config: uses `sleep`, `workers`,
     `blacklist_max_attempts` (no fallback — missing raises `KeyError`). Unlike the price provider's
     `recheck_blacklist`, a revived ticker needs no further bookkeeping here — `yahoo-meta` has no
     ticker list of its own to prune; the next `run` picks a revived ticker up naturally
     once it's off this blacklist. `meta_blacklist.csv`/`meta_dead.csv` are rewritten after every
-    ticker (not just at the end), so stopping mid-run and restarting resumes from the tickers still
-    pending instead of rechecking everything from scratch.
+    ticker (not just at the end, and still only from the main thread as each fetch completes), so
+    stopping mid-run and restarting resumes from the tickers still pending instead of rechecking
+    everything from scratch.
     """
     state_dir = data_root / 'yahoo' / 'state'
     blacklist_file = state_dir / 'meta_blacklist.csv'
@@ -184,25 +196,24 @@ def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, sett
     dead_df = blacklist.read_dead(dead_file)
 
     revived = died = 0
-    for n, ticker in enumerate(tickers, start=1):
-        log.info(f'fetching {ticker} ({n}/{len(tickers)})')
-        info = _fetch_info(ticker)
-        record = remaining.pop(ticker)
-        if info:
-            revived += 1
-        else:
-            record['attempts'] += 1
-            record['last_checked'] = today
-            if record['attempts'] >= max_attempts:
-                died += 1
-                died_row = {'ticker': ticker, 'attempts': record['attempts'],
-                            'first_blacklisted': record['first_blacklisted'], 'died_on': today}
-                dead_df = pd.concat([dead_df, pd.DataFrame([died_row])], ignore_index=True)
-                dead_df.to_csv(dead_file, index=False)
+    fetch = functools.partial(_fetch_one, sleep_s=settings['sleep'])
+    with ThreadPoolExecutor(max_workers=settings['workers']) as pool:
+        for n, (ticker, info) in enumerate(pool.map(fetch, tickers), start=1):
+            log.info(f'fetching {ticker} ({n}/{len(tickers)})')
+            record = remaining.pop(ticker)
+            if info:
+                revived += 1
             else:
-                remaining[ticker] = record
-        pd.DataFrame(remaining.values(), columns=blacklist.BLACKLIST_COLS).to_csv(blacklist_file, index=False)
-        if settings['sleep']:
-            time.sleep(settings['sleep'])
+                record['attempts'] += 1
+                record['last_checked'] = today
+                if record['attempts'] >= max_attempts:
+                    died += 1
+                    died_row = {'ticker': ticker, 'attempts': record['attempts'],
+                                'first_blacklisted': record['first_blacklisted'], 'died_on': today}
+                    dead_df = pd.concat([dead_df, pd.DataFrame([died_row])], ignore_index=True)
+                    dead_df.to_csv(dead_file, index=False)
+                else:
+                    remaining[ticker] = record
+            pd.DataFrame(remaining.values(), columns=blacklist.BLACKLIST_COLS).to_csv(blacklist_file, index=False)
 
     return {'rechecked': len(tickers), 'revived': revived, 'died': died}
