@@ -59,10 +59,16 @@ def _fetch_info(symbol: str) -> dict:
 
 
 def _to_profile(ticker: str, info: dict, fetched_on: date) -> pd.DataFrame:
-    """One ticker's `.info` -> a single `_yahoo_companies` row (canonical PascalCase columns)."""
-    row: dict[str, str | date] = {'Ticker': ticker, 'Src': 'yahoo'}
+    """One ticker's `.info` -> a single `_yahoo_companies` row (canonical PascalCase columns).
+
+    Missing fields become None (not ''): several (FullTimeEmployees, AuditRisk, ...) are numeric,
+    so an empty-string default breaks the INSERT once the column's DB type is set by an earlier
+    ticker that had a real value; it also defeats the COALESCE(y.col, s.col) fallback in
+    housekeeping.rebuild_companies, which relies on NULL (not '') to mean "no Yahoo value".
+    """
+    row: dict[str, str | date | None] = {'Ticker': ticker, 'Src': 'yahoo'}
     for col in _PROFILE_COLS:
-        row[col] = info.get(col, '')
+        row[col] = info.get(col)
     row['FetchedOn'] = fetched_on
     return pd.DataFrame([row]).rename(columns=columns.COMPANY_PROFILE)
 
