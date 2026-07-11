@@ -167,6 +167,11 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     newly_blacklisted: list[str] = []
     flagged: list[dict] = []
     last_dates = _get_last_dates(con) if update else {}
+    if update:
+        # group by staleness so one batch's fetch window isn't dragged back by a laggard that only
+        # shares the batch because of ticker.csv's file order; never-fetched tickers ('') sort first
+        # and end up batched together too, which is fine — they need `start=None` (full history) anyway.
+        todo = sorted(todo, key=lambda s: last_dates.get(s, ''))
     batches = _chunk(todo, settings['batch_size'])
     # fetch + save one batch at a time so progress commits as we go (an interrupted run resumes).
     for i, batch in enumerate(batches):
