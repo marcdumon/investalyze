@@ -26,7 +26,8 @@ refetch_days = 7                # on update, re-fetch this many days back per ti
 blacklist_max_attempts = 5      # retries (via housekeeping) before a ticker is permanently dropped
 
 [yahoo-meta]
-sleep                  = 0.5   # seconds between per-ticker .info calls (no batching — one at a time)
+workers                = 6     # concurrent .info fetches (no bulk endpoint to batch through instead)
+sleep                  = 0.5   # seconds each worker pauses between its own successive .info calls
 refresh_days_meta      = 14    # re-fetch a ticker's profile once FetchedOn is older than this
 blacklist_max_attempts = 5     # retries (via housekeeping) before a ticker is permanently dropped
 
