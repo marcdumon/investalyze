@@ -19,12 +19,15 @@ app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptio
 
 # Registers each page (dash.register_page at import time) before the layout below reads dash.page_registry.
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401
+from investalyze.apps.screener import page as screener_page  # noqa: E402,F401
 from investalyze.apps.ticker_selector import page as ticker_selector_page  # noqa: E402,F401
+
+_NAV_ICONS = {'/': 'tabler:layout-dashboard', '/tickers': 'tabler:list-search', '/screener': 'tabler:filter'}
 
 
 def nav_link(page: dict) -> dmc.NavLink:
     """One sidebar link for a registered Dash page."""
-    icon = 'tabler:layout-dashboard' if page['path'] == '/' else 'tabler:list-search'
+    icon = _NAV_ICONS.get(page['path'], 'tabler:file')
     return dmc.NavLink(label=page['name'], href=page['path'], leftSection=DashIconify(icon=icon), variant='filled')
 
 
