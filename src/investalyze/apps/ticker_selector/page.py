@@ -5,7 +5,6 @@ Every DB access opens and closes a short-lived read-only connection rather than 
 page never blocks a control-panel job that needs the DB's single writer lock (see control_panel/jobs.py).
 """
 
-import re
 from pathlib import Path
 
 import dash
@@ -18,11 +17,11 @@ from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 
 from investalyze.apps.ticker_selector import metrics
+from investalyze.apps.universes import list_universes, load_universe, save_universe
 from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
-UNIVERSE_DIR = DATA_ROOT / 'universes'
 
 GRID_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'country', 'mcap_bn', 'mcap_bucket', 'last_close',
                'dvol_mn', 'years', 'last_date', 'active', 'n_periods', 'n_anomalies']
@@ -149,28 +148,6 @@ def apply_action(
     else:
         message = ''
     return sorted(sel), sorted(out), message
-
-
-def list_universes() -> list[str]:
-    """Names of every saved universe file."""
-    if not UNIVERSE_DIR.exists():
-        return []
-    return sorted(p.stem for p in UNIVERSE_DIR.glob('*.csv'))
-
-
-def save_universe(name: str, tickers: list[str]) -> str:
-    """Write the selection to data/universes/<name>.csv and return the cleaned name."""
-    clean = re.sub(r'[^A-Za-z0-9_-]+', '_', name.strip()).strip('_')
-    if not clean:
-        raise ValueError('universe name is empty')
-    UNIVERSE_DIR.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame({'Ticker': sorted(tickers)}).to_csv(UNIVERSE_DIR / f'{clean}.csv', index=False)
-    return clean
-
-
-def load_universe(name: str) -> list[str]:
-    """Read a saved universe back as a ticker list."""
-    return pd.read_csv(UNIVERSE_DIR / f'{name}.csv')['Ticker'].tolist()
 
 
 # ---------- detail panel ----------
