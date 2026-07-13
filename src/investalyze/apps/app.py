@@ -16,9 +16,10 @@ app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptio
 
 # Registers each page (dash.register_page at import time) before the layout below reads dash.page_registry.
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401
+from investalyze.apps.data_quality import page as data_quality_page  # noqa: E402,F401
 from investalyze.apps.screener import page as screener_page  # noqa: E402,F401
 
-_NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search'}
+_NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search', '/quality': 'tabler:shield-check'}
 
 
 def nav_link(page: dict) -> dmc.NavLink:
