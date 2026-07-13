@@ -1,159 +1,263 @@
-"""Screener page: rank the universe on factors, filter by percentile, save the result as a universe.
+"""Screener page: metadata + factor-percentile filters over one pool, two-grid curation, saved universes.
 
-Factors are built once on first visit through a short-lived read-only connection and cached at
-module level; Refresh rebuilds. While a job holds the DB's write lock the page shows a busy
-notice instead of a traceback (same pattern as the other pages).
+The pool (metrics metadata + factor columns) is built once on first visit through a short-lived
+read-only connection and cached at module level; Refresh rebuilds it. Factor ranks are recomputed
+over the metadata-filtered candidates, so a percentile always means 'among my current candidates'.
+While a job holds the DB's write lock the page shows a busy notice instead of a traceback.
 """
-
-from pathlib import Path
 
 import dash
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
-import pandas as pd
 from dash import ALL, Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
-from dash_iconify import DashIconify
 
 from investalyze.analysis import factors
-from investalyze.apps.screener.logic import apply_filters, composite_score, compute_ranks
-from investalyze.apps.ticker_selector.page import safe_detail_children
+from investalyze.apps.screener import metrics
+from investalyze.apps.screener.data import clear_cache, get_pool
+from investalyze.apps.screener.detail import safe_detail_children
+from investalyze.apps.screener.logic import apply_filters, apply_metadata_filters, composite_score, compute_ranks
 from investalyze.apps.universes import list_universes, load_universe, save_universe
-from investalyze.ingest import storage
 
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
-
+IDENTITY_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'mcap_bn', 'mcap_bucket']
 IDENTITY_COLUMNS = [
+    {'field': 'sel', 'headerName': '', 'editable': True, 'cellDataType': 'boolean', 'width': 50, 'pinned': 'left'},
     {'field': 'Ticker', 'pinned': 'left', 'width': 95},
     {'field': 'name', 'headerName': 'Company', 'width': 200},
     {'field': 'sector', 'headerName': 'Sector', 'width': 140},
+    {'field': 'industry', 'headerName': 'Industry', 'width': 170},
     {'field': 'mcap_bn', 'headerName': 'MCap $bn', 'width': 100},
+    {'field': 'mcap_bucket', 'headerName': 'Bucket', 'width': 85},
+]
+SEL_FIELDS = ['Ticker', 'name', 'sector', 'mcap_bucket', 'dvol_mn']
+SEL_COLUMNS = [
+    {'field': 'sel', 'headerName': '', 'editable': True, 'cellDataType': 'boolean', 'width': 50},
+    {'field': 'Ticker', 'width': 95},
+    {'field': 'name', 'headerName': 'Company', 'flex': 1},
+    {'field': 'sector', 'headerName': 'Sector', 'width': 140},
+    {'field': 'mcap_bucket', 'headerName': 'Bucket', 'width': 85},
+    {'field': 'dvol_mn', 'headerName': '$Vol mn/d', 'width': 100},
 ]
 
-_FACTORS_CACHE: pd.DataFrame | None = None
+BTN = {'marginRight': '6px', 'marginBottom': '4px'}
+BUSY = 'database busy, a job is currently running, try again once it finishes'
 
 
-def get_factors() -> pd.DataFrame:
-    """Return the per-ticker factor table, building and caching it on first use."""
-    global _FACTORS_CACHE
-    if _FACTORS_CACHE is None:
-        con = storage.connect(DATA_ROOT, read_only=True)
-        try:
-            _FACTORS_CACHE = factors.build_factors(con)
-        finally:
-            con.close()
-    return _FACTORS_CACHE
+def labeled(text: str, component) -> html.Div:
+    """Sidebar row: a small label above its control."""
+    return html.Div([html.Label(text, style={'fontSize': '12px', 'color': '#999'}), component], style={'marginBottom': '10px'})
 
 
-def clear_cache() -> None:
-    """Drop the cached factor table so the next access rebuilds it."""
-    global _FACTORS_CACHE
-    _FACTORS_CACHE = None
-
-
-def filter_row(factor: str) -> dmc.Group:
+def factor_row(factor: str) -> dmc.Group:
     """One sidebar row: factor name with min/max percentile inputs."""
     return dmc.Group([
-        dmc.Text(factor, size='xs', style={'width': '150px'}),
-        dmc.NumberInput(id={'type': 'sc-fmin', 'factor': factor}, placeholder='min', min=0, max=100,
-                        size='xs', style={'width': '80px'}),
-        dmc.NumberInput(id={'type': 'sc-fmax', 'factor': factor}, placeholder='max', min=0, max=100,
-                        size='xs', style={'width': '80px'}),
+        dmc.Text(factor, size='xs', style={'width': '130px'}),
+        dmc.NumberInput(id={'type': 'fmin', 'factor': factor}, placeholder='min', min=0, max=100,
+                        size='xs', style={'width': '75px'}),
+        dmc.NumberInput(id={'type': 'fmax', 'factor': factor}, placeholder='max', min=0, max=100,
+                        size='xs', style={'width': '75px'}),
     ], gap=6)
 
 
-def layout() -> html.Div:
-    """Screener page: top bar, factor filters, composite score picker, results grid, detail."""
-    top = dmc.Group([
-        dmc.Select(id='sc-universe', data=['all'] + list_universes(), value='all', size='xs',
-                   label='Universe', style={'width': '220px'}),
-        dmc.Text(id='sc-count', size='xs', c='dimmed'),
-        dmc.SegmentedControl(id='sc-mode', value='raw', size='xs',
-                             data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
-        dmc.TextInput(id='sc-save-name', placeholder='universe name', size='xs', style={'width': '170px'}),
-        dmc.Button('Save as universe', id='sc-save', size='xs', variant='light'),
-        dmc.Text(id='sc-save-status', size='xs', c='green'),
-        dmc.Button('Refresh factors', id='sc-refresh', size='xs', variant='subtle',
-                   leftSection=DashIconify(icon='tabler:refresh')),
-    ], gap=10, align='flex-end', mb=8)
+def apply_action(
+    action: str, selection: list[str], discarded: list[str], checkbox_events: list[dict],
+    filtered: list[str], universe_name: str | None, detail_ticker: str | None
+) -> tuple[list[str], list[str], str]:
+    """Return the new (selection, discarded, status message) for one user action.
 
-    sidebar = dmc.Stack([
-        dmc.MultiSelect(id='sc-score-factors', data=factors.FACTORS, label='Composite score factors',
-                        size='xs', clearable=True),
+    Every ticker is in exactly one of three groups: undecided (the candidates table),
+    selected (the condensed table) or discarded (hidden until Clear).
+    """
+    sel, out = set(selection), set(discarded)
+    if action == 'grid':
+        for event in checkbox_events:
+            if event.get('colId') != 'sel':
+                continue
+            ticker = event.get('data', {}).get('Ticker') or event.get('rowId')
+            if event.get('value'):
+                sel.add(ticker)
+            else:
+                sel.discard(ticker)
+        message = f'{len(sel)} selected'
+    elif action == 'sel-grid':
+        for event in checkbox_events:
+            if event.get('colId') == 'sel' and not event.get('value'):
+                sel.discard(event.get('data', {}).get('Ticker') or event.get('rowId'))
+        message = f'{len(sel)} selected'
+    elif action == 'btn-add':
+        sel |= set(filtered)
+        message = f'added {len(filtered)} tickers, {len(sel)} selected'
+    elif action == 'btn-remove':
+        out |= set(filtered)
+        message = f'removed {len(filtered)} tickers from the candidates'
+    elif action == 'btn-clear':
+        sel, out = set(), set()
+        message = 'selection and removals cleared'
+    elif action == 'btn-load':
+        if not universe_name:
+            return sorted(sel), sorted(out), 'pick a universe to load first'
+        sel, out = set(load_universe(universe_name)), set()
+        message = f"loaded '{universe_name}' ({len(sel)} tickers)"
+    elif action == 'btn-detail-toggle' and detail_ticker:
+        if detail_ticker in sel:
+            sel.discard(detail_ticker)
+            message = f'{detail_ticker} back in the candidates'
+        else:
+            sel.add(detail_ticker)
+            out.discard(detail_ticker)
+            message = f'{detail_ticker} selected'
+    else:
+        message = ''
+    return sorted(sel), sorted(out), message
+
+
+def layout() -> html.Div:
+    """Build the screener page. The pool is loaded (and cached) on first visit."""
+    try:
+        df = get_pool()
+    except duckdb.Error:
+        return html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '14px', 'padding': '24px'})
+
+    sidebar = html.Div([
+        labeled('Search ticker / company', dcc.Input(id='f-search', type='text', debounce=True, style={'width': '100%'})),
+        labeled('Sector', dcc.Dropdown(id='f-sector', options=sorted(df['sector'].unique()), multi=True)),
+        labeled('Industry', dcc.Dropdown(id='f-industry', multi=True)),
+        labeled('Market-cap bucket', dcc.Checklist(id='f-bucket', options=metrics.MCAP_LABELS, inline=True,
+                                                   style={'fontSize': '13px'})),
+        labeled('Min median $ volume (mn/day)', dcc.Input(id='f-mindvol', type='number', min=0, style={'width': '100%'})),
+        labeled('Min history (years)', dcc.Input(id='f-minyears', type='number', min=0, style={'width': '100%'})),
+        labeled('Listing', dcc.RadioItems(id='f-active', options=['all', 'active', 'delisted'], value='all', inline=True,
+                                          style={'fontSize': '13px'})),
+        labeled('Max anomalies', dcc.Input(id='f-maxanom', type='number', min=0, style={'width': '100%'})),
+        dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
+                        size='xs', clearable=True, mb=8),
         dmc.Accordion([
             dmc.AccordionItem([
                 dmc.AccordionControl(family, py=4),
-                dmc.AccordionPanel(dmc.Stack([filter_row(f) for f in members], gap=4)),
+                dmc.AccordionPanel(dmc.Stack([factor_row(f) for f in members], gap=4)),
             ], value=family)
             for family, members in factors.FAMILIES.items()
         ], multiple=True),
-    ], gap=8, style={'width': '360px', 'flexShrink': 0, 'overflowY': 'auto'})
+        html.Div(id='filter-count', style={'fontSize': '13px', 'fontWeight': 'bold', 'margin': '8px 0'}),
+        html.Div([
+            html.Button('Add filtered', id='btn-add', style=BTN),
+            html.Button('Remove filtered', id='btn-remove', style=BTN),
+        ]),
+        html.Div(id='sel-status', style={'fontSize': '12px', 'color': '#0a7', 'marginTop': '6px'}),
+    ], style={'width': '340px', 'flexShrink': 0, 'padding': '12px', 'overflowY': 'auto', 'borderRight': '1px solid #333'})
 
-    grid = dag.AgGrid(
-        id='sc-grid', columnDefs=[], rowData=[],
-        defaultColDef={'sortable': True, 'resizable': True, 'width': 110},
-        className='ag-theme-alpine-dark',
-        dashGridOptions={'animateRows': False},
-        style={'height': '55vh', 'width': '100%'},
-    )
+    header = html.Div([
+        html.B('Screener', style={'marginRight': '20px'}),
+        html.Span(id='sel-count', style={'marginRight': '20px', 'color': '#4dabf7'}),
+        dmc.SegmentedControl(id='mode', value='raw', size='xs',
+                             data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
+        dcc.Input(id='universe-name', type='text', placeholder='universe name',
+                  style={'width': '160px', 'marginLeft': '12px', 'marginRight': '6px'}),
+        html.Button('Save', id='btn-save', style=BTN),
+        dcc.Dropdown(id='universe-dd', options=list_universes(), placeholder='saved universes',
+                     style={'width': '200px', 'display': 'inline-block', 'verticalAlign': 'middle', 'marginRight': '6px'}),
+        html.Button('Load', id='btn-load', style=BTN),
+        html.Button('Clear', id='btn-clear', style=BTN),
+        html.Button('Refresh', id='btn-refresh', style=BTN),
+        html.Span(id='save-status', style={'fontSize': '12px', 'color': '#0a7', 'marginLeft': '10px'}),
+    ], style={'padding': '8px 12px', 'borderBottom': '1px solid #333', 'display': 'flex', 'alignItems': 'center',
+              'flexWrap': 'wrap'})
+
+    main = html.Div([
+        html.Div(id='notice'),
+        html.Div([
+            dag.AgGrid(
+                id='grid', columnDefs=[], rowData=[],
+                defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 110},
+                dashGridOptions={'singleClickEdit': True, 'animateRows': False},
+                className='ag-theme-alpine-dark',
+                style={'height': '100%', 'flex': 2, 'minWidth': 0},
+            ),
+            html.Div([
+                html.Div('Selected (uncheck to send back to candidates)', style={'fontSize': '12px', 'fontWeight': 'bold',
+                                                                                  'padding': '0 0 4px'}),
+                dag.AgGrid(
+                    id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
+                    defaultColDef={'sortable': True, 'resizable': True},
+                    dashGridOptions={'singleClickEdit': True, 'animateRows': False},
+                    className='ag-theme-alpine-dark',
+                    style={'flex': 1, 'width': '100%', 'minHeight': 0},
+                ),
+            ], style={'flex': 1, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
+        ], style={'display': 'flex', 'gap': '10px', 'height': '52%'}),
+        html.Div([
+            html.Button('select / deselect', id='btn-detail-toggle', disabled=True, style=BTN),
+            html.Span('click a grid row to inspect a ticker', style={'fontSize': '12px', 'color': '#888'}),
+        ], style={'padding': '6px 12px'}),
+        html.Div(id='detail-content', style={'flex': 1, 'overflowY': 'auto', 'padding': '0 12px 12px'}),
+    ], style={'flex': 1, 'display': 'flex', 'flexDirection': 'column', 'minWidth': 0})
 
     return html.Div([
-        html.Div(id='sc-notice'),
-        top,
-        dmc.Group([sidebar, html.Div([grid, html.Div(id='sc-detail')], style={'flex': 1, 'minWidth': 0})],
-                  gap=12, align='flex-start'),
-    ])
+        dcc.Store(id='selection', data=[]),
+        dcc.Store(id='discarded', data=[]),
+        dcc.Store(id='detail-ticker', data=None),
+        header,
+        html.Div([sidebar, main], style={'display': 'flex', 'flex': 1, 'minHeight': 0}),
+    ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)', 'fontFamily': 'sans-serif'})
 
 
 dash.register_page(__name__, path='/screener', name='Screener', layout=layout)
 
 
-def _busy_notice() -> dmc.Alert:
-    """Standard notice shown when a writer holds the DB lock."""
-    return dmc.Alert('database busy, a job is currently running, try again once it finishes',
-                     color='yellow', variant='light')
+@callback(Output('f-industry', 'options'), Input('f-sector', 'value'))
+def industry_options(sectors: list[str] | None) -> list[str]:
+    """Industry choices narrowed to the picked sectors."""
+    try:
+        df = get_pool()
+    except duckdb.Error:
+        return []
+    subset = df if not sectors else df[df['sector'].isin(sectors)]
+    return sorted(subset['industry'].unique())
 
 
 @callback(
-    Output('sc-grid', 'rowData'), Output('sc-grid', 'columnDefs'),
-    Output('sc-count', 'children'), Output('sc-notice', 'children'),
-    Input('sc-universe', 'value'), Input({'type': 'sc-fmin', 'factor': ALL}, 'value'),
-    Input({'type': 'sc-fmax', 'factor': ALL}, 'value'),
-    Input('sc-score-factors', 'value'), Input('sc-mode', 'value'), Input('sc-refresh', 'n_clicks'),
+    Output('grid', 'rowData'), Output('grid', 'columnDefs'), Output('sel-grid', 'rowData'),
+    Output('filter-count', 'children'), Output('sel-count', 'children'), Output('notice', 'children'),
+    Input('f-search', 'value'), Input('f-sector', 'value'), Input('f-industry', 'value'), Input('f-bucket', 'value'),
+    Input('f-mindvol', 'value'), Input('f-minyears', 'value'), Input('f-active', 'value'), Input('f-maxanom', 'value'),
+    Input({'type': 'fmin', 'factor': ALL}, 'value'), Input({'type': 'fmax', 'factor': ALL}, 'value'),
+    Input('score-factors', 'value'), Input('mode', 'value'), Input('btn-refresh', 'n_clicks'),
+    Input('selection', 'data'), Input('discarded', 'data'),
 )
-def update_grid(universe, fmin_values, fmax_values, score_factors, mode, refresh_clicks):
-    """Rebuild the grid for the current universe, filters, score selection and display mode."""
-    if ctx.triggered_id == 'sc-refresh':
+def update_grid(search, sectors, industries, buckets, min_dvol, min_years, active, max_anom,
+                fmin_values, fmax_values, score_factors, mode, refresh_clicks, selection, discarded):
+    """Rebuild both grids for the current filters, score selection, display mode and curation state."""
+    if ctx.triggered_id == 'btn-refresh':
         clear_cache()
     try:
-        pool = get_factors()
+        pool = get_pool()
     except duckdb.Error:
-        return [], [], '', _busy_notice()
+        return [], [], [], '', '', html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '8px 12px'})
 
-    if universe and universe != 'all':
-        tickers = set(load_universe(universe))
-        pool = pool[pool['Ticker'].isin(tickers)]
+    undecided = pool[~pool['Ticker'].isin(set(selection) | set(discarded))]
+    candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
+                                        min_dvol, min_years, active, max_anom)
+    ranked = compute_ranks(candidates)
 
     # pattern-matching inputs arrive in layout order; recover each one's factor from its id
     filters: dict[str, tuple[float | None, float | None]] = {}
-    for spec, value in zip(ctx.inputs_list[1], fmin_values):
+    for spec, value in zip(ctx.inputs_list[8], fmin_values):
         filters[spec['id']['factor']] = (value if value not in (None, '') else None, None)
-    for spec, value in zip(ctx.inputs_list[2], fmax_values):
+    for spec, value in zip(ctx.inputs_list[9], fmax_values):
         lo, _ = filters.get(spec['id']['factor'], (None, None))
         filters[spec['id']['factor']] = (lo, value if value not in (None, '') else None)
+    passed = apply_filters(ranked, filters)
 
-    ranked = compute_ranks(pool)
-    filtered = apply_filters(ranked, filters)
+    chosen = score_factors or []
+    if chosen:
+        passed = passed.copy()
+        passed['score'] = composite_score(passed, chosen)
+        passed = passed.sort_values('score', ascending=False)
 
-    selected = score_factors or []
-    if selected:
-        filtered = filtered.copy()
-        filtered['score'] = composite_score(filtered, selected).round(1)
-        filtered = filtered.sort_values('score', ascending=False)
-
-    display = filtered.copy()
+    display = passed.copy()
+    if chosen:
+        display['score'] = display['score'].round(1)
     if mode == 'rank':
         for factor in factors.FACTORS:
             display[factor] = display[f'rank_{factor}'].round(0)
@@ -161,45 +265,86 @@ def update_grid(universe, fmin_values, fmax_values, score_factors, mode, refresh
         for factor in factors.FACTORS:
             display[factor] = display[factor].round(4)
 
+    fields = IDENTITY_FIELDS + (['score'] if chosen else []) + factors.FACTORS
+    rows = display[fields].copy()
+    rows.insert(0, 'sel', False)
     columns = list(IDENTITY_COLUMNS)
-    if selected:
+    if chosen:
         columns.append({'field': 'score', 'headerName': 'Score', 'width': 90, 'pinned': 'left'})
     columns += [{'field': factor, 'headerName': factor} for factor in factors.FACTORS]
-    fields = [c['field'] for c in columns]
-    count = f'{len(filtered)} of {len(pool)} tickers pass'
-    return display[fields].to_dict('records'), columns, count, None
+
+    sel_rows = pool.loc[pool['Ticker'].isin(selection), SEL_FIELDS].copy()
+    sel_rows.insert(0, 'sel', True)
+    count = f'{len(passed)} of {len(undecided)} candidates match ({len(discarded)} removed)'
+    return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, f'selected: {len(selection)}', None
 
 
 @callback(
-    Output('sc-universe', 'data'), Output('sc-save-status', 'children'),
-    Input('sc-save', 'n_clicks'), State('sc-save-name', 'value'), State('sc-grid', 'rowData'),
+    Output('selection', 'data'), Output('discarded', 'data'), Output('sel-status', 'children'),
+    Input('grid', 'cellValueChanged'), Input('sel-grid', 'cellValueChanged'),
+    Input('btn-add', 'n_clicks'), Input('btn-remove', 'n_clicks'), Input('btn-clear', 'n_clicks'),
+    Input('btn-load', 'n_clicks'), Input('btn-detail-toggle', 'n_clicks'),
+    State('selection', 'data'), State('discarded', 'data'), State('grid', 'rowData'),
+    State('universe-dd', 'value'), State('detail-ticker', 'data'),
     prevent_initial_call=True,
 )
-def save_current(n_clicks, name, row_data):
-    """Save the currently displayed tickers as a named universe."""
-    options = ['all'] + list_universes()
+def update_state(grid_events, sel_events, add, remove, clear, load, toggle, selection, discarded, row_data, universe, detail):
+    """Route one user action (checkbox edit, button click) through apply_action."""
+    action = str(ctx.triggered_id)
+    events = grid_events if action == 'grid' else sel_events if action == 'sel-grid' else None
+    events = events if isinstance(events, list) else [events] if events else []
+    filtered = [row['Ticker'] for row in (row_data or [])]
+    return apply_action(action, selection, discarded, events, filtered, universe, detail)
+
+
+@callback(
+    Output('universe-dd', 'options'), Output('save-status', 'children'),
+    Input('btn-save', 'n_clicks'), State('selection', 'data'), State('universe-name', 'value'),
+    prevent_initial_call=True,
+)
+def save_current(n_clicks, selection, name):
+    """Save the selected tickers as a named universe."""
     if not name or not name.strip():
-        return options, 'enter a universe name first'
-    tickers = [row['Ticker'] for row in (row_data or [])]
-    if not tickers:
-        return options, 'nothing to save'
-    clean = save_universe(name, tickers)
-    return ['all'] + list_universes(), f"saved '{clean}' ({len(tickers)} tickers)"
+        return list_universes(), 'enter a universe name first'
+    if not selection:
+        return list_universes(), 'selection is empty, nothing saved'
+    clean = save_universe(name, selection)
+    return list_universes(), f"saved '{clean}' ({len(selection)} tickers)"
 
 
 @callback(
-    Output('sc-detail', 'children'),
-    Input('sc-grid', 'cellClicked'), State('sc-grid', 'rowData'),
+    Output('detail-content', 'children'), Output('detail-ticker', 'data'),
+    Input('grid', 'cellClicked'), Input('sel-grid', 'cellClicked'),
+    State('grid', 'rowData'), State('sel-grid', 'rowData'),
     prevent_initial_call=True,
 )
-def show_detail(cell, row_data):
-    """Show the read-only ticker detail for the clicked row."""
-    # rowId is AG Grid's auto-assigned id (== original rowData array index) and stays stable
-    # under a client-side column sort; rowIndex is the sorted DISPLAY position and would not.
-    row_id = cell.get('rowId') if cell else None
-    if row_id is None or not row_id.isdigit() or not row_data:
+def show_detail(cell, sel_cell, rows, sel_rows):
+    """Show the detail panel for the clicked row of either grid.
+
+    rowId is AG Grid's auto-assigned id (== original rowData array index) and stays stable under a
+    client-side column sort; rowIndex is the sorted DISPLAY position and would resolve wrongly.
+    """
+    cell, data = (sel_cell, sel_rows) if ctx.triggered_id == 'sel-grid' else (cell, rows)
+    if not cell or cell.get('colId') == 'sel':
         raise PreventUpdate
-    row_index = int(row_id)
-    if row_index >= len(row_data):
+    row_id = cell.get('rowId')
+    if row_id is None or not str(row_id).isdigit() or not data or int(row_id) >= len(data):
         raise PreventUpdate
-    return safe_detail_children(row_data[row_index].get('Ticker'))
+    ticker = data[int(row_id)].get('Ticker')
+    try:
+        pool = get_pool()
+        row = pool.loc[pool['Ticker'] == ticker].iloc[0]
+    except duckdb.Error:
+        return [html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '12px'})], ticker
+    return safe_detail_children(ticker, row), ticker
+
+
+@callback(
+    Output('btn-detail-toggle', 'children'), Output('btn-detail-toggle', 'disabled'),
+    Input('detail-ticker', 'data'), Input('selection', 'data'),
+)
+def toggle_label(detail: str | None, selection: list[str]) -> tuple[str, bool]:
+    """Keep the select/deselect button in sync with the inspected ticker."""
+    if not detail:
+        return 'select / deselect', True
+    return (f'deselect {detail}' if detail in selection else f'select {detail}'), False
