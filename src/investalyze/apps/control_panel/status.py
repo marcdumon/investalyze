@@ -6,12 +6,9 @@ would block a running ingest/cleaning subprocess, which needs the single writer 
 """
 
 from datetime import date
-from pathlib import Path
 
 import duckdb
 import pandas as pd
-
-from investalyze.cleaning import registry as cleaning_registry
 
 _FRESHNESS_SOURCES = [
     ('prices', 'Date'),
@@ -46,15 +43,3 @@ def anomaly_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         SELECT CheckName, Severity, count(*) AS n
         FROM anomalies GROUP BY CheckName, Severity ORDER BY Severity, n DESC
     """).df()
-
-
-def cleaning_pending(con: duckdb.DuckDBPyConnection, config_path: Path = Path('cleaning.toml')) -> pd.DataFrame:
-    """Rows each configured cleaning fix would touch if applied now (0 = already clean)."""
-    fixes = cleaning_registry.read_fixes(config_path)
-    rows = []
-    for fix in fixes:
-        module = cleaning_registry.FIX_TYPES[fix.fix_type]
-        n = module.detect(con, fix)
-        label = f'{fix.fix_type} {fix.table} {fix.tickers} [{fix.start or "..."} .. {fix.end or "..."}]'
-        rows.append({'fix': label, 'reason': fix.reason, 'pending_rows': n})
-    return pd.DataFrame(rows)

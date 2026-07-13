@@ -55,11 +55,6 @@ def build_quality_argv(checks: list[str] | None) -> tuple[str, list[str]]:
     return title, argv
 
 
-def build_cleaning_argv(command: str) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.cleaning check|apply`."""
-    return f'cleaning {command}', ['-m', 'investalyze.cleaning', command]
-
-
 # ---------- status cards ----------
 
 def freshness_card() -> dmc.Card:
@@ -84,15 +79,6 @@ def anomalies_card() -> dmc.Card:
     return dmc.Card(
         [dmc.Text('Anomalies', fw=700, size='sm', mb=6),
          html.Div(id='cp-anomalies-body', style={'maxHeight': '220px', 'overflowY': 'auto'})],
-        withBorder=True, radius='md', padding='sm',
-    )
-
-
-def cleaning_card() -> dmc.Card:
-    """Card listing pending (not-yet-applied) cleaning.toml fixes."""
-    return dmc.Card(
-        [dmc.Text('Cleaning fixes', fw=700, size='sm', mb=6),
-         html.Div(id='cp-cleaning-body', style={'maxHeight': '220px', 'overflowY': 'auto'})],
         withBorder=True, radius='md', padding='sm',
     )
 
@@ -163,19 +149,6 @@ def quality_card() -> dmc.Card:
     ], withBorder=True, radius='md', padding='sm')
 
 
-def cleaning_run_card() -> dmc.Card:
-    """Check (safe) / Apply (destructive, confirmed) buttons for cleaning.toml fixes."""
-    return dmc.Card([
-        dmc.Text('Cleaning', fw=700, size='sm', mb=8),
-        dmc.Group([
-            dmc.Button('Check', id='cp-btn-cleaning-check', size='xs', variant='light',
-                       leftSection=DashIconify(icon='tabler:search')),
-            dmc.Button('Apply', id='cp-btn-cleaning-apply', size='xs', color='red', variant='light',
-                       leftSection=DashIconify(icon='tabler:trash')),
-        ]),
-    ], withBorder=True, radius='md', padding='sm')
-
-
 # ---------- job console ----------
 
 def job_console() -> dmc.Card:
@@ -207,10 +180,10 @@ def job_console() -> dmc.Card:
 def layout() -> html.Div:
     """Build the control panel page: status row, command cards, job console."""
     return html.Div([
-        dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card(), cleaning_card()],
-                       cols={'base': 1, 'md': 2, 'lg': 4}, mb=12),
+        dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card()],
+                       cols={'base': 1, 'md': 3}, mb=12),
         dmc.Grid([
-            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card(), cleaning_run_card()], gap=10), span={'base': 12, 'lg': 5}),
+            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card()], gap=10), span={'base': 12, 'lg': 5}),
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
         dmc.Modal(
@@ -234,34 +207,34 @@ dash.register_page(__name__, path='/', name='Control Panel', layout=layout)
 # ---------- status callbacks ----------
 
 def _read_status():
-    """Open a short-lived read-only connection and run all four monitor queries."""
+    """Open a short-lived read-only connection and run the monitor queries."""
     con = storage.connect(DATA_ROOT, read_only=True)
     try:
-        return status.freshness(con), status.row_counts(con), status.anomaly_summary(con), status.cleaning_pending(con)
+        return status.freshness(con), status.row_counts(con), status.anomaly_summary(con)
     finally:
         con.close()
 
 
 @callback(
     Output('cp-freshness-body', 'children'), Output('cp-rowcounts-body', 'children'),
-    Output('cp-anomalies-body', 'children'), Output('cp-cleaning-body', 'children'),
+    Output('cp-anomalies-body', 'children'),
     Input('cp-poll', 'n_intervals'),
 )
 def refresh_status(_n: int):
-    """Refresh the four status cards; skip the query while the DB is locked by a writer.
+    """Refresh the status cards; skip the query while the DB is locked by a writer.
 
     MANAGER only knows about jobs the panel itself launched, not a CLI run started directly in a
     terminal, so the write lock is detected directly (duckdb.Error) rather than trusting is_running().
     """
     if MANAGER.is_running():
         paused = dmc.Text('paused, job running', size='xs', c='dimmed')
-        return paused, paused, paused, paused
+        return paused, paused, paused
 
     try:
-        fresh, counts, anomalies, cleaning = _read_status()
+        fresh, counts, anomalies = _read_status()
     except duckdb.Error:
         paused = dmc.Text('paused, database busy', size='xs', c='dimmed')
-        return paused, paused, paused, paused
+        return paused, paused, paused
 
     fresh_rows = [dmc.Group([dmc.Text(r.table, size='xs'), days_ago_badge(r.days_ago)], justify='space-between')
                   for r in fresh.itertuples()]
@@ -274,16 +247,7 @@ def refresh_status(_n: int):
                               justify='space-between')
                     for r in anomalies.itertuples()]
 
-    pending = cleaning[cleaning['pending_rows'] > 0]
-    if len(pending) == 0:
-        cleaning_rows = [dmc.Text('all fixes clean', size='xs', c='green')]
-    else:
-        cleaning_rows = [dmc.Group([dmc.Text(r.fix, size='xs', style={'overflow': 'hidden', 'textOverflow': 'ellipsis'}),
-                                    dmc.Badge(str(r.pending_rows), color='orange', variant='light', size='sm')],
-                                   justify='space-between')
-                          for r in pending.itertuples()]
-
-    return html.Div(fresh_rows), html.Div(count_rows), html.Div(anomaly_rows), html.Div(cleaning_rows)
+    return html.Div(fresh_rows), html.Div(count_rows), html.Div(anomaly_rows)
 
 
 # ---------- job callbacks ----------
@@ -291,14 +255,13 @@ def refresh_status(_n: int):
 @callback(
     Output('cp-pending-action', 'data'), Output('cp-confirm-modal', 'opened'), Output('cp-confirm-text', 'children'),
     Input('cp-btn-ingest', 'n_clicks'), Input('cp-btn-housekeeping', 'n_clicks'), Input('cp-btn-quality', 'n_clicks'),
-    Input('cp-btn-cleaning-check', 'n_clicks'), Input('cp-btn-cleaning-apply', 'n_clicks'),
     State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'),
     State('cp-housekeeping-tasks', 'value'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
     prevent_initial_call=True,
 )
-def request_run(ingest_n, housekeeping_n, quality_n, clean_check_n, clean_apply_n,
+def request_run(ingest_n, housekeeping_n, quality_n,
                  providers, mode, tasks, quality_errors, quality_warns):
-    """Build the argv for the clicked Run button. Full ingest and cleaning apply go through a confirm modal."""
+    """Build the argv for the clicked Run button. A full ingest load goes through a confirm modal."""
     trigger = ctx.triggered_id
     if trigger == 'cp-btn-ingest':
         title, argv = build_ingest_argv(providers, update=mode == 'update')
@@ -314,13 +277,6 @@ def request_run(ingest_n, housekeeping_n, quality_n, clean_check_n, clean_apply_
         title, argv = build_quality_argv((quality_errors or []) + (quality_warns or []))
         MANAGER.start(title, argv)
         return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-cleaning-check':
-        title, argv = build_cleaning_argv('check')
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-cleaning-apply':
-        title, argv = build_cleaning_argv('apply')
-        return {'title': title, 'argv': argv}, True, 'Apply cleaning fixes? This permanently deletes the matched rows.'
     raise PreventUpdate
 
 
@@ -340,7 +296,6 @@ def resolve_confirm(yes_n, no_n, pending):
 @callback(
     Output('cp-job-badge', 'children'), Output('cp-job-log', 'children'), Output('cp-job-history', 'children'),
     Output('cp-btn-ingest', 'disabled'), Output('cp-btn-housekeeping', 'disabled'), Output('cp-btn-quality', 'disabled'),
-    Output('cp-btn-cleaning-check', 'disabled'), Output('cp-btn-cleaning-apply', 'disabled'),
     Input('cp-poll', 'n_intervals'),
 )
 def refresh_job(_n: int):
@@ -370,7 +325,7 @@ def refresh_job(_n: int):
     ]
 
     return (badge, log, html.Div(history_rows) if history_rows else dmc.Text('no runs yet', size='xs', c='dimmed'),
-            running, running, running, running, running)
+            running, running, running)
 
 
 @callback(Output('cp-cancel-tick', 'data'), Input('cp-btn-cancel', 'n_clicks'), prevent_initial_call=True)
