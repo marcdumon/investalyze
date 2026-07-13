@@ -50,14 +50,14 @@ def labeled(text: str, component) -> html.Div:
 
 
 def factor_row(factor: str) -> dmc.Group:
-    """One sidebar row: factor name with min/max percentile inputs."""
+    """One sidebar row: factor name with min/max percentile inputs, kept on a single line."""
     return dmc.Group([
-        dmc.Text(factor, size='xs', style={'width': '130px'}),
+        dmc.Text(factor, size='xs', style={'width': '106px'}),
         dmc.NumberInput(id={'type': 'fmin', 'factor': factor}, placeholder='min', min=0, max=100,
-                        size='xs', style={'width': '75px'}),
+                        size='xs', style={'width': '72px'}),
         dmc.NumberInput(id={'type': 'fmax', 'factor': factor}, placeholder='max', min=0, max=100,
-                        size='xs', style={'width': '75px'}),
-    ], gap=6)
+                        size='xs', style={'width': '72px'}),
+    ], gap=6, wrap='nowrap')
 
 
 def apply_action(
