@@ -49,6 +49,14 @@ def labeled(text: str, component) -> html.Div:
     return html.Div([html.Label(text, style={'fontSize': '12px', 'color': '#999'}), component], style={'marginBottom': '10px'})
 
 
+def grid_title(text: str, button_text: str, button_id: str) -> html.Div:
+    """Slim bar above a grid: a bold caption on the left, an action button on the right."""
+    return html.Div([
+        html.Div(text, style={'fontSize': '12px', 'fontWeight': 'bold'}),
+        html.Button(button_text, id=button_id, style=BTN | {'whiteSpace': 'nowrap', 'flexShrink': 0}),
+    ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '0 0 4px'})
+
+
 def factor_row(factor: str) -> dmc.Group:
     """One sidebar row: factor name with min/max percentile inputs, kept on a single line."""
     return dmc.Group([
@@ -61,15 +69,14 @@ def factor_row(factor: str) -> dmc.Group:
 
 
 def apply_action(
-    action: str, selection: list[str], discarded: list[str], checkbox_events: list[dict],
-    filtered: list[str], universe_name: str | None, detail_ticker: str | None
-) -> tuple[list[str], list[str], str]:
-    """Return the new (selection, discarded, status message) for one user action.
+    action: str, selection: list[str], checkbox_events: list[dict],
+    filtered: list[str], universe_name: str | None
+) -> tuple[list[str], str]:
+    """Return the new (selection, status message) for one user action.
 
-    Every ticker is in exactly one of three groups: undecided (the candidates table),
-    selected (the condensed table) or discarded (hidden until Clear).
+    Every ticker is either undecided (the candidates table) or selected (the condensed table).
     """
-    sel, out = set(selection), set(discarded)
+    sel = set(selection)
     if action == 'grid':
         for event in checkbox_events:
             if event.get('colId') != 'sel':
@@ -85,31 +92,20 @@ def apply_action(
             if event.get('colId') == 'sel' and not event.get('value'):
                 sel.discard(event.get('data', {}).get('Ticker') or event.get('rowId'))
         message = f'{len(sel)} selected'
-    elif action == 'btn-add':
+    elif action == 'btn-select-all':
         sel |= set(filtered)
         message = f'added {len(filtered)} tickers, {len(sel)} selected'
-    elif action == 'btn-remove':
-        out |= set(filtered)
-        message = f'removed {len(filtered)} tickers from the candidates'
-    elif action == 'btn-clear':
-        sel, out = set(), set()
-        message = 'selection and removals cleared'
+    elif action == 'btn-deselect-all':
+        sel = set()
+        message = 'selection cleared'
     elif action == 'btn-load':
         if not universe_name:
-            return sorted(sel), sorted(out), 'pick a universe to load first'
-        sel, out = set(load_universe(universe_name)), set()
+            return sorted(sel), 'pick a universe to load first'
+        sel = set(load_universe(universe_name))
         message = f"loaded '{universe_name}' ({len(sel)} tickers)"
-    elif action == 'btn-detail-toggle' and detail_ticker:
-        if detail_ticker in sel:
-            sel.discard(detail_ticker)
-            message = f'{detail_ticker} back in the candidates'
-        else:
-            sel.add(detail_ticker)
-            out.discard(detail_ticker)
-            message = f'{detail_ticker} selected'
     else:
         message = ''
-    return sorted(sel), sorted(out), message
+    return sorted(sel), message
 
 
 def layout() -> html.Div:
@@ -140,10 +136,6 @@ def layout() -> html.Div:
             for family, members in factors.FAMILIES.items()
         ], multiple=True),
         html.Div(id='filter-count', style={'fontSize': '13px', 'fontWeight': 'bold', 'margin': '8px 0'}),
-        html.Div([
-            html.Button('Add filtered', id='btn-add', style=BTN),
-            html.Button('Remove filtered', id='btn-remove', style=BTN),
-        ]),
         html.Div(id='sel-status', style={'fontSize': '12px', 'color': '#0a7', 'marginTop': '6px'}),
     ], style={'width': '340px', 'flexShrink': 0, 'padding': '12px', 'overflowY': 'auto', 'borderRight': '1px solid #333'})
 
@@ -158,7 +150,6 @@ def layout() -> html.Div:
         dcc.Dropdown(id='universe-dd', options=list_universes(), placeholder='saved universes',
                      style={'width': '200px', 'display': 'inline-block', 'verticalAlign': 'middle', 'marginRight': '6px'}),
         html.Button('Load', id='btn-load', style=BTN),
-        html.Button('Clear', id='btn-clear', style=BTN),
         html.Button('Refresh', id='btn-refresh', style=BTN),
         html.Span(id='save-status', style={'fontSize': '12px', 'color': '#0a7', 'marginLeft': '10px'}),
     ], style={'padding': '8px 12px', 'borderBottom': '1px solid #333', 'display': 'flex', 'alignItems': 'center',
@@ -167,16 +158,18 @@ def layout() -> html.Div:
     main = html.Div([
         html.Div(id='notice'),
         html.Div([
-            dag.AgGrid(
-                id='grid', columnDefs=[], rowData=[],
-                defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 110},
-                dashGridOptions={'singleClickEdit': True, 'animateRows': False},
-                className='ag-theme-alpine-dark',
-                style={'height': '100%', 'flex': 2, 'minWidth': 0},
-            ),
             html.Div([
-                html.Div('Selected (uncheck to send back to candidates)', style={'fontSize': '12px', 'fontWeight': 'bold',
-                                                                                  'padding': '0 0 4px'}),
+                grid_title('Candidates', 'select all', 'btn-select-all'),
+                dag.AgGrid(
+                    id='grid', columnDefs=[], rowData=[],
+                    defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 110},
+                    dashGridOptions={'singleClickEdit': True, 'animateRows': False},
+                    className='ag-theme-alpine-dark',
+                    style={'flex': 1, 'width': '100%', 'minHeight': 0},
+                ),
+            ], style={'flex': 2, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
+            html.Div([
+                grid_title('Selected (uncheck to send back to candidates)', 'deselect all', 'btn-deselect-all'),
                 dag.AgGrid(
                     id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
                     defaultColDef={'sortable': True, 'resizable': True},
@@ -186,17 +179,15 @@ def layout() -> html.Div:
                 ),
             ], style={'flex': 1, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
         ], style={'display': 'flex', 'gap': '10px', 'height': '52%'}),
-        html.Div([
-            html.Button('select / deselect', id='btn-detail-toggle', disabled=True, style=BTN),
+        html.Div(
             html.Span('click a grid row to inspect a ticker', style={'fontSize': '12px', 'color': '#888'}),
-        ], style={'padding': '6px 12px'}),
+            style={'padding': '6px 12px'},
+        ),
         html.Div(id='detail-content', style={'flex': 1, 'overflowY': 'auto', 'padding': '0 12px 12px'}),
     ], style={'flex': 1, 'display': 'flex', 'flexDirection': 'column', 'minWidth': 0})
 
     return html.Div([
         dcc.Store(id='selection', data=[]),
-        dcc.Store(id='discarded', data=[]),
-        dcc.Store(id='detail-ticker', data=None),
         header,
         html.Div([sidebar, main], style={'display': 'flex', 'flex': 1, 'minHeight': 0}),
     ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)', 'fontFamily': 'sans-serif'})
@@ -223,10 +214,10 @@ def industry_options(sectors: list[str] | None) -> list[str]:
     Input('f-mindvol', 'value'), Input('f-minyears', 'value'), Input('f-active', 'value'), Input('f-maxanom', 'value'),
     Input({'type': 'fmin', 'factor': ALL}, 'value'), Input({'type': 'fmax', 'factor': ALL}, 'value'),
     Input('score-factors', 'value'), Input('mode', 'value'), Input('btn-refresh', 'n_clicks'),
-    Input('selection', 'data'), Input('discarded', 'data'),
+    Input('selection', 'data'),
 )
 def update_grid(search, sectors, industries, buckets, min_dvol, min_years, active, max_anom,
-                fmin_values, fmax_values, score_factors, mode, refresh_clicks, selection, discarded):
+                fmin_values, fmax_values, score_factors, mode, refresh_clicks, selection):
     """Rebuild both grids for the current filters, score selection, display mode and curation state."""
     if ctx.triggered_id == 'btn-refresh':
         clear_cache()
@@ -235,7 +226,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     except duckdb.Error:
         return [], [], [], '', '', html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '8px 12px'})
 
-    undecided = pool[~pool['Ticker'].isin(set(selection) | set(discarded))]
+    undecided = pool[~pool['Ticker'].isin(selection)]
     candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
                                         min_dvol, min_years, active, max_anom)
     ranked = compute_ranks(candidates)
@@ -275,26 +266,24 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
 
     sel_rows = pool.loc[pool['Ticker'].isin(selection), SEL_FIELDS].copy()
     sel_rows.insert(0, 'sel', True)
-    count = f'{len(passed)} of {len(undecided)} candidates match ({len(discarded)} removed)'
+    count = f'{len(passed)} of {len(undecided)} candidates match'
     return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, f'selected: {len(selection)}', None
 
 
 @callback(
-    Output('selection', 'data'), Output('discarded', 'data'), Output('sel-status', 'children'),
+    Output('selection', 'data'), Output('sel-status', 'children'),
     Input('grid', 'cellValueChanged'), Input('sel-grid', 'cellValueChanged'),
-    Input('btn-add', 'n_clicks'), Input('btn-remove', 'n_clicks'), Input('btn-clear', 'n_clicks'),
-    Input('btn-load', 'n_clicks'), Input('btn-detail-toggle', 'n_clicks'),
-    State('selection', 'data'), State('discarded', 'data'), State('grid', 'rowData'),
-    State('universe-dd', 'value'), State('detail-ticker', 'data'),
+    Input('btn-select-all', 'n_clicks'), Input('btn-deselect-all', 'n_clicks'), Input('btn-load', 'n_clicks'),
+    State('selection', 'data'), State('grid', 'rowData'), State('universe-dd', 'value'),
     prevent_initial_call=True,
 )
-def update_state(grid_events, sel_events, add, remove, clear, load, toggle, selection, discarded, row_data, universe, detail):
+def update_state(grid_events, sel_events, select_all, deselect_all, load, selection, row_data, universe):
     """Route one user action (checkbox edit, button click) through apply_action."""
     action = str(ctx.triggered_id)
     events = grid_events if action == 'grid' else sel_events if action == 'sel-grid' else None
     events = events if isinstance(events, list) else [events] if events else []
     filtered = [row['Ticker'] for row in (row_data or [])]
-    return apply_action(action, selection, discarded, events, filtered, universe, detail)
+    return apply_action(action, selection, events, filtered, universe)
 
 
 @callback(
@@ -313,7 +302,7 @@ def save_current(n_clicks, selection, name):
 
 
 @callback(
-    Output('detail-content', 'children'), Output('detail-ticker', 'data'),
+    Output('detail-content', 'children'),
     Input('grid', 'cellClicked'), Input('sel-grid', 'cellClicked'),
     State('grid', 'rowData'), State('sel-grid', 'rowData'),
     prevent_initial_call=True,
@@ -335,16 +324,5 @@ def show_detail(cell, sel_cell, rows, sel_rows):
         pool = get_pool()
         row = pool.loc[pool['Ticker'] == ticker].iloc[0]
     except duckdb.Error:
-        return [html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '12px'})], ticker
-    return safe_detail_children(ticker, row), ticker
-
-
-@callback(
-    Output('btn-detail-toggle', 'children'), Output('btn-detail-toggle', 'disabled'),
-    Input('detail-ticker', 'data'), Input('selection', 'data'),
-)
-def toggle_label(detail: str | None, selection: list[str]) -> tuple[str, bool]:
-    """Keep the select/deselect button in sync with the inspected ticker."""
-    if not detail:
-        return 'select / deselect', True
-    return (f'deselect {detail}' if detail in selection else f'select {detail}'), False
+        return [html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '12px'})]
+    return safe_detail_children(ticker, row)
