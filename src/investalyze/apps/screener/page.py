@@ -10,7 +10,7 @@ import dash
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
-from dash import ALL, Input, Output, State, callback, ctx, dcc, html
+from dash import ALL, Input, Output, State, callback, clientside_callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from investalyze.analysis import factors
@@ -46,7 +46,8 @@ BUSY = 'database busy, a job is currently running, try again once it finishes'
 
 def labeled(text: str, component) -> html.Div:
     """Sidebar row: a small label above its control."""
-    return html.Div([html.Label(text, style={'fontSize': '12px', 'color': '#999'}), component], style={'marginBottom': '10px'})
+    return html.Div([html.Label(text, style={'fontSize': '12px', 'color': 'var(--mantine-color-dimmed)'}), component],
+                    style={'marginBottom': '10px'})
 
 
 def grid_title(text: str, button_text: str, button_id: str) -> html.Div:
@@ -113,7 +114,7 @@ def layout() -> html.Div:
     try:
         df = get_pool()
     except duckdb.Error:
-        return html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '14px', 'padding': '24px'})
+        return html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '14px', 'padding': '24px'})
 
     sidebar = html.Div([
         labeled('Search ticker / company', dcc.Input(id='f-search', type='text', debounce=True, style={'width': '100%'})),
@@ -137,11 +138,12 @@ def layout() -> html.Div:
         ], multiple=True),
         html.Div(id='filter-count', style={'fontSize': '13px', 'fontWeight': 'bold', 'margin': '8px 0'}),
         html.Div(id='sel-status', style={'fontSize': '12px', 'color': '#0a7', 'marginTop': '6px'}),
-    ], style={'width': '340px', 'flexShrink': 0, 'padding': '12px', 'overflowY': 'auto', 'borderRight': '1px solid #333'})
+    ], style={'width': '340px', 'flexShrink': 0, 'padding': '12px', 'overflowY': 'auto',
+              'borderRight': '1px solid var(--mantine-color-default-border)'})
 
     header = html.Div([
         html.B('Screener', style={'marginRight': '20px'}),
-        html.Span(id='sel-count', style={'marginRight': '20px', 'color': '#4dabf7'}),
+        html.Span(id='sel-count', style={'marginRight': '20px', 'color': 'var(--mantine-color-anchor)'}),
         dmc.SegmentedControl(id='mode', value='raw', size='xs',
                              data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
         dcc.Input(id='universe-name', type='text', placeholder='universe name',
@@ -152,8 +154,8 @@ def layout() -> html.Div:
         html.Button('Load', id='btn-load', style=BTN),
         html.Button('Refresh', id='btn-refresh', style=BTN),
         html.Span(id='save-status', style={'fontSize': '12px', 'color': '#0a7', 'marginLeft': '10px'}),
-    ], style={'padding': '8px 12px', 'borderBottom': '1px solid #333', 'display': 'flex', 'alignItems': 'center',
-              'flexWrap': 'wrap'})
+    ], style={'padding': '8px 12px', 'borderBottom': '1px solid var(--mantine-color-default-border)',
+              'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
 
     main = html.Div([
         html.Div(id='notice'),
@@ -180,7 +182,7 @@ def layout() -> html.Div:
             ], style={'flex': 1, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
         ], style={'display': 'flex', 'gap': '10px', 'height': '52%'}),
         html.Div(
-            html.Span('click a grid row to inspect a ticker', style={'fontSize': '12px', 'color': '#888'}),
+            html.Span('click a grid row to inspect a ticker', style={'fontSize': '12px', 'color': 'var(--mantine-color-dimmed)'}),
             style={'padding': '6px 12px'},
         ),
         html.Div(id='detail-content', style={'flex': 1, 'overflowY': 'auto', 'padding': '0 12px 12px'}),
@@ -194,6 +196,12 @@ def layout() -> html.Div:
 
 
 dash.register_page(__name__, path='/screener', name='Screener', layout=layout)
+
+clientside_callback(
+    "(dark) => dark ? ['ag-theme-alpine-dark', 'ag-theme-alpine-dark'] : ['ag-theme-alpine', 'ag-theme-alpine']",
+    Output('grid', 'className'), Output('sel-grid', 'className'),
+    Input('theme-switch', 'checked'),
+)
 
 
 @callback(Output('f-industry', 'options'), Input('f-sector', 'value'))
@@ -224,7 +232,8 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     try:
         pool = get_pool()
     except duckdb.Error:
-        return [], [], [], '', '', html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '8px 12px'})
+        notice = html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '8px 12px'})
+        return [], [], [], '', '', notice
 
     undecided = pool[~pool['Ticker'].isin(selection)]
     candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
@@ -304,10 +313,10 @@ def save_current(n_clicks, selection, name):
 @callback(
     Output('detail-content', 'children'),
     Input('grid', 'cellClicked'), Input('sel-grid', 'cellClicked'),
-    State('grid', 'rowData'), State('sel-grid', 'rowData'),
+    State('grid', 'rowData'), State('sel-grid', 'rowData'), State('theme-switch', 'checked'),
     prevent_initial_call=True,
 )
-def show_detail(cell, sel_cell, rows, sel_rows):
+def show_detail(cell, sel_cell, rows, sel_rows, dark):
     """Show the detail panel for the clicked row of either grid.
 
     rowId is AG Grid's auto-assigned id (== original rowData array index) and stays stable under a
@@ -324,5 +333,5 @@ def show_detail(cell, sel_cell, rows, sel_rows):
         pool = get_pool()
         row = pool.loc[pool['Ticker'] == ticker].iloc[0]
     except duckdb.Error:
-        return [html.Div(BUSY, style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '12px'})]
-    return safe_detail_children(ticker, row)
+        return [html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '12px'})]
+    return safe_detail_children(ticker, row, bool(dark))

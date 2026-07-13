@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
 
 
-def price_figure(ticker: str) -> go.Figure:
+def price_figure(ticker: str, dark: bool) -> go.Figure:
     """Adjusted close (log) and volume for the full history of one ticker."""
     con = storage.connect(DATA_ROOT, read_only=True)
     try:
@@ -25,7 +25,8 @@ def price_figure(ticker: str) -> go.Figure:
     fig.add_trace(go.Scatter(x=prices['Date'], y=prices['AC'], name='AC', line={'width': 1}), row=1, col=1)
     fig.add_trace(go.Bar(x=prices['Date'], y=prices['V'], name='Volume', marker={'line': {'width': 0}}), row=2, col=1)
     fig.update_yaxes(type='log', row=1, col=1)
-    fig.update_layout(height=420, margin={'l': 40, 'r': 10, 't': 30, 'b': 20}, showlegend=False,
+    fig.update_layout(template='plotly_dark' if dark else 'plotly_white',
+                      height=420, margin={'l': 40, 'r': 10, 't': 30, 'b': 20}, showlegend=False,
                       title={'text': f'{ticker} adjusted close (log) and volume', 'font': {'size': 14}})
     return fig
 
@@ -40,12 +41,13 @@ def fmt_money(value: object) -> str:
 def two_col_table(rows: list[tuple[str, object]]) -> html.Table:
     """Small label/value table used for the stats and fundamentals blocks."""
     return html.Table(
-        [html.Tr([html.Td(label, style={'color': '#999', 'paddingRight': '12px'}), html.Td(str(value))]) for label, value in rows],
+        [html.Tr([html.Td(label, style={'color': 'var(--mantine-color-dimmed)', 'paddingRight': '12px'}),
+                  html.Td(str(value))]) for label, value in rows],
         style={'fontSize': '13px', 'borderSpacing': '0 2px'},
     )
 
 
-def detail_children(ticker: str, row: pd.Series) -> list:
+def detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
     """Stats, latest fundamentals, anomalies and the price chart for one ticker (row = its pool row)."""
     stats = two_col_table([
         ('Company', row['name']), ('Sector', row['sector']), ('Industry', row['industry']),
@@ -79,7 +81,7 @@ def detail_children(ticker: str, row: pd.Series) -> list:
             ('Shares (basic)', fmt_money(f['Shares (Basic)'])),
         ])
     else:
-        fundamentals_block = html.Div('no fundamentals in DB', style={'color': '#888', 'fontSize': '13px'})
+        fundamentals_block = html.Div('no fundamentals in DB', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})
 
     if len(anomalies):
         shown = anomalies.head(15)
@@ -93,7 +95,7 @@ def detail_children(ticker: str, row: pd.Series) -> list:
             html.Table(anomaly_rows, style={'fontSize': '12px'}),
         ])
     else:
-        anomalies_block = html.Div('no anomalies recorded', style={'color': '#888', 'fontSize': '13px'})
+        anomalies_block = html.Div('no anomalies recorded', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})
 
     left = html.Div(
         [html.H4(ticker, style={'margin': '0 0 6px'}), stats,
@@ -101,14 +103,14 @@ def detail_children(ticker: str, row: pd.Series) -> list:
          html.H4('Anomalies', style={'margin': '10px 0 4px', 'fontSize': '14px'}), anomalies_block],
         style={'width': '440px', 'flexShrink': 0, 'overflowY': 'auto'},
     )
-    chart = html.Div(dcc.Graph(figure=price_figure(ticker)), style={'flex': 1, 'minWidth': 0})
+    chart = html.Div(dcc.Graph(figure=price_figure(ticker, dark)), style={'flex': 1, 'minWidth': 0})
     return [html.Div([left, chart], style={'display': 'flex', 'gap': '16px'})]
 
 
-def safe_detail_children(ticker: str, row: pd.Series) -> list:
+def safe_detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
     """detail_children, but a locked DB (a control-panel job writing) shows a notice instead of a traceback."""
     try:
-        return detail_children(ticker, row)
+        return detail_children(ticker, row, dark)
     except duckdb.Error:
         return [html.Div('database busy, a job is currently running, try again once it finishes',
-                         style={'color': '#e8a33d', 'fontSize': '13px', 'padding': '12px'})]
+                         style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '12px'})]

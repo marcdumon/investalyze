@@ -1,15 +1,12 @@
-"""Multi-page Dash app: control panel + screener, one server, shared dark shell.
+"""Multi-page Dash app: control panel + screener, one server, shared shell with a light/dark toggle.
 
 Run with:  .venv/bin/python -m investalyze.apps  then open http://127.0.0.1:8050
 """
 
 import dash
 import dash_mantine_components as dmc
-import plotly.io as pio
-from dash import Dash, dcc, html
+from dash import Dash, Input, Output, clientside_callback, dcc, html
 from dash_iconify import DashIconify
-
-pio.templates.default = 'plotly_dark'
 
 # suppress_callback_exceptions: without it, Dash eagerly builds every registered page's layout
 # (not just the requested one) on the first request, to validate callback IDs. Since the screener's
@@ -30,15 +27,22 @@ def nav_link(page: dict) -> dmc.NavLink:
     return dmc.NavLink(label=page['name'], href=page['path'], leftSection=DashIconify(icon=icon), variant='filled')
 
 
+theme_switch = dmc.Switch(
+    id='theme-switch', checked=True, persistence=True, size='md',
+    onLabel=DashIconify(icon='tabler:moon', width=14), offLabel=DashIconify(icon='tabler:sun', width=14),
+    style={'marginTop': 'auto'},
+)
+
 app.layout = dmc.MantineProvider(
+    id='mantine-provider',
     forceColorScheme='dark',
     children=html.Div([
         dcc.Location(id='url'),
         dmc.AppShell(
             [
                 dmc.AppShellNavbar(
-                    [nav_link(p) for p in dash.page_registry.values()],
-                    p='sm',
+                    [nav_link(p) for p in dash.page_registry.values()] + [theme_switch],
+                    p='sm', style={'display': 'flex', 'flexDirection': 'column'},
                 ),
                 dmc.AppShellMain(dash.page_container),
             ],
@@ -46,6 +50,12 @@ app.layout = dmc.MantineProvider(
             padding='md',
         ),
     ], style={'height': '100vh'}),
+)
+
+clientside_callback(
+    "(dark) => dark ? 'dark' : 'light'",
+    Output('mantine-provider', 'forceColorScheme'),
+    Input('theme-switch', 'checked'),
 )
 
 if __name__ == '__main__':
