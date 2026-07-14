@@ -7,7 +7,7 @@ import pandas as pd
 
 from investalyze.ingest.providers.yahoo import meta_data as meta
 
-_SETTINGS = {'sleep': 0, 'refresh_days_meta': 90, 'blacklist_max_attempts': 3}
+_SETTINGS = {'sleep': 0, 'workers': 1, 'refresh_days_meta': 90, 'blacklist_max_attempts': 3}
 
 
 def _ticker_csv(tmp_path: Path, *rows: tuple[str, str]) -> None:

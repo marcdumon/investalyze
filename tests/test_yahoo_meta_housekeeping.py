@@ -7,7 +7,7 @@ import pandas as pd
 
 from investalyze.ingest.providers.yahoo import meta_data as meta
 
-_SETTINGS = {'sleep': 0, 'blacklist_max_attempts': 3}
+_SETTINGS = {'sleep': 0, 'workers': 1, 'blacklist_max_attempts': 3}
 
 
 def _state(tmp_path: Path, blacklist_rows: list[dict]) -> None:
