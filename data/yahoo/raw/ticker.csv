@@ -310,7 +310,6 @@ ALDX,nasdaq
 ALEC,nasdaq
 ALF,nasdaq
 ALFUU,nasdaq
-ALFUW,nasdaq
 ALG,nyse
 ALGM,nasdaq
 ALGN,nasdaq
@@ -625,7 +624,6 @@ ATLC,nasdaq
 ATLCL,nasdaq
 ATLCP,nasdaq
 ATLCZ,nasdaq
-ATLN,nasdaq
 ATLO,nasdaq
 ATLX,nasdaq
 ATMU,nyse
@@ -1259,7 +1257,6 @@ CACC,nasdaq
 CACI,nyse
 CADL,nasdaq
 CAE,nyse
-CAEP,nasdaq
 CAF,nyse
 CAFX,nyse
 CAG,nyse
@@ -1430,7 +1427,6 @@ CGABL,nasdaq
 CGAU,nyse
 CGBD,nasdaq
 CGC,nasdaq
-CGCT,nasdaq
 CGCTU,nasdaq
 CGCTW,nasdaq
 CGCV,nyse
@@ -1868,7 +1864,6 @@ CUBB,nyse
 CUBE,nyse
 CUBI,nyse
 CUBWU,nasdaq
-CUBWW,nasdaq
 CUE,nasdaq
 CULP,nasdaq
 CUPR,nasdaq
@@ -1906,7 +1901,6 @@ CWBC,nasdaq
 CWCO,nasdaq
 CWD,nasdaq
 CWEN,nyse
-CWEN-A,nyse
 CWH,nyse
 CWK,nyse
 CWST,nasdaq
@@ -2000,7 +1994,6 @@ DELL,nyse
 DEO,nyse
 DERM,nasdaq
 DETX,nasdaq
-DEVS,nasdaq
 DEXC,nyse
 DFDV,nasdaq
 DFDVW,nasdaq
@@ -2203,7 +2196,6 @@ DYNC,nasdaq
 DYNCU,nasdaq
 DYOR,nasdaq
 DYORU,nasdaq
-DYORW,nasdaq
 E,nyse
 EA,nasdaq
 EAD,nysemkt
@@ -2229,8 +2221,6 @@ ECC-PD,nyse
 ECCC,nyse
 ECCU,nyse
 ECCV,nyse
-ECCW,nyse
-ECCX,nyse
 ECF,nysemkt
 ECF-PA,nysemkt
 ECG,nyse
@@ -2240,7 +2230,6 @@ ECOR,nasdaq
 ECPG,nasdaq
 ECVT,nyse
 ECX,nasdaq
-ECXWW,nasdaq
 ED,nyse
 EDAP,nasdaq
 EDBL,nasdaq
@@ -2359,7 +2348,6 @@ EMPD,nasdaq
 EMR,nyse
 ENB,nyse
 ENGN,nasdaq
-ENGNW,nasdaq
 ENGS,nasdaq
 ENHA,nyse
 ENHI,nasdaq
@@ -2666,7 +2654,6 @@ FHDG,nyse
 FHEQ,nyse
 FHI,nyse
 FHN,nyse
-FHN-PC,nyse
 FHN-PE,nyse
 FHN-PF,nyse
 FHTX,nasdaq
@@ -3190,7 +3177,6 @@ GSBD,nyse
 GSGO,nasdaq
 GSHD,nasdaq
 GSHR,nasdaq
-GSHRW,nasdaq
 GSIT,nasdaq
 GSIW,nasdaq
 GSK,nyse
@@ -3206,7 +3192,6 @@ GTBP,nasdaq
 GTE,nysemkt
 GTEC,nasdaq
 GTEN,nasdaq
-GTENW,nasdaq
 GTERA,nasdaq
 GTERW,nasdaq
 GTES,nyse
@@ -3392,7 +3377,6 @@ HON,nasdaq
 HOOD,nasdaq
 HOOY,nyse
 HOPE,nasdaq
-HOTH,nasdaq
 HOUR,nasdaq
 HOV,nyse
 HOVNP,nasdaq
@@ -3402,7 +3386,6 @@ HOWL,nasdaq
 HOYY,nasdaq
 HP,nyse
 HPAI,nasdaq
-HPAIW,nasdaq
 HPE,nyse
 HPE-PC,nyse
 HPF,nyse
@@ -3434,7 +3417,6 @@ HSDT,nasdaq
 HSHP,nyse
 HSIC,nasdaq
 HSLV,nysemkt
-HSPT,nasdaq
 HSPTU,nasdaq
 HST,nasdaq
 HSTM,nasdaq
@@ -4033,7 +4015,6 @@ KOS,nyse
 KOSS,nasdaq
 KOYN,nasdaq
 KOYNU,nasdaq
-KOYNW,nasdaq
 KPLT,nasdaq
 KPRX,nasdaq
 KPTI,nasdaq
@@ -4070,7 +4051,6 @@ KTH,nyse
 KTN,nyse
 KTOS,nasdaq
 KTTA,nasdaq
-KTTAW,nasdaq
 KTWO,nasdaq
 KTWOU,nasdaq
 KULR,nysemkt
@@ -4117,7 +4097,6 @@ LASE,nasdaq
 LASR,nasdaq
 LATA,nasdaq
 LATAU,nasdaq
-LATAW,nasdaq
 LAUR,nasdaq
 LAW,nyse
 LAZ,nyse
@@ -4266,7 +4245,6 @@ LOCO,nasdaq
 LODE,nysemkt
 LODI,nyse
 LOGI,nasdaq
-LOKV,nasdaq
 LOKVW,nasdaq
 LOMA,nyse
 LONA,nasdaq
@@ -4274,7 +4252,6 @@ LOOP,nasdaq
 LOPE,nasdaq
 LOT,nasdaq
 LOTI,nasdaq
-LOTWW,nasdaq
 LOVE,nasdaq
 LOW,nyse
 LPA,nysemkt
@@ -4376,7 +4353,6 @@ MAA-PI,nyse
 MAAS,nasdaq
 MAAY,nasdaq
 MAC,nyse
-MACIW,nasdaq
 MADE,nyse
 MAGC,nyse
 MAGN,nyse
@@ -4417,7 +4393,6 @@ MAZE,nasdaq
 MB,nasdaq
 MBAI,nasdaq
 MBAV,nasdaq
-MBAVW,nasdaq
 MBBC,nasdaq
 MBC,nyse
 MBI,nyse
@@ -4434,7 +4409,6 @@ MBSX,nyse
 MBUU,nasdaq
 MBVI,nasdaq
 MBVIU,nasdaq
-MBVIW,nasdaq
 MBWM,nasdaq
 MBX,nasdaq
 MC,nyse
@@ -4584,7 +4558,6 @@ MIY,nyse
 MKC,nyse
 MKC-V,nyse
 MKDW,nasdaq
-MKDWW,nasdaq
 MKL,nyse
 MKLY,nasdaq
 MKLYU,nasdaq
@@ -4920,7 +4893,6 @@ NEO,nasdaq
 NEOG,nasdaq
 NEON,nasdaq
 NEOV,nasdaq
-NEOVW,nasdaq
 NEPH,nasdaq
 NERV,nasdaq
 NESR,nasdaq
@@ -5074,7 +5046,6 @@ NRK,nyse
 NRO,nysemkt
 NRP,nyse
 NRSN,nasdaq
-NRSNW,nasdaq
 NRT,nyse
 NRUC,nyse
 NRXP,nasdaq
@@ -5360,7 +5331,6 @@ ORC,nyse
 ORCL,nyse
 ORCS,nasdaq
 ORCU,nasdaq
-ORGN,nasdaq
 ORGNW,nasdaq
 ORGO,nasdaq
 ORI,nyse
@@ -5484,7 +5454,6 @@ PBI-PB,nyse
 PBJL,nyse
 PBJN,nyse
 PBM,nasdaq
-PBMWW,nasdaq
 PBMY,nyse
 PBNV,nyse
 PBOC,nyse
@@ -5633,7 +5602,6 @@ PKBK,nasdaq
 PKE,nyse
 PKG,nyse
 PKOH,nasdaq
-PKST,nyse
 PKX,nyse
 PL,nyse
 PLAB,nasdaq
@@ -5927,7 +5895,6 @@ QXO,nyse
 R,nyse
 RA,nyse
 RAAA,nyse
-RAAQ,nasdaq
 RAAQW,nasdaq
 RAAR,nyse
 RAC,nyse
@@ -5979,7 +5946,6 @@ RCTR,nyse
 RCUS,nyse
 RDAC,nasdaq
 RDAG,nasdaq
-RDAGW,nasdaq
 RDCM,nasdaq
 RDDT,nyse
 RDGT,nasdaq
@@ -6121,7 +6087,6 @@ RMBS,nasdaq
 RMCA,nyse
 RMCF,nasdaq
 RMCO,nasdaq
-RMCOW,nasdaq
 RMD,nyse
 RMI,nyse
 RMIX,nasdaq
@@ -6282,7 +6247,6 @@ SAH,nyse
 SAIA,nasdaq
 SAIC,nasdaq
 SAIH,nasdaq
-SAIHW,nasdaq
 SAIL,nasdaq
 SAJ,nyse
 SAM,nyse
@@ -6393,7 +6357,6 @@ SEGG,nasdaq
 SEI,nyse
 SEIC,nasdaq
 SELF,nasdaq
-SELX,nasdaq
 SEM,nyse
 SEMY,nasdaq
 SENEA,nasdaq
@@ -6451,7 +6414,6 @@ SHEH,nyse
 SHEL,nyse
 SHEN,nasdaq
 SHFS,nasdaq
-SHFSW,nasdaq
 SHG,nyse
 SHIM,nasdaq
 SHIP,nasdaq
@@ -6483,7 +6445,6 @@ SILA,nyse
 SILC,nasdaq
 SILO,nasdaq
 SIMA,nasdaq
-SIMAW,nasdaq
 SIMO,nasdaq
 SINT,nasdaq
 SION,nasdaq
@@ -6501,7 +6462,6 @@ SKE,nyse
 SKIL,nyse
 SKIN,nasdaq
 SKK,nasdaq
-SKLZ,nyse
 SKM,nyse
 SKT,nyse
 SKWD,nasdaq
@@ -6605,7 +6565,6 @@ SNOA,nasdaq
 SNOW,nyse
 SNOY,nyse
 SNPS,nasdaq
-SNSE,nasdaq
 SNT,nasdaq
 SNTG,nasdaq
 SNTH,nyse
@@ -6697,7 +6656,6 @@ SPTX,nasdaq
 SPUT,nyse
 SPWH,nasdaq
 SPWR,nasdaq
-SPWRW,nasdaq
 SPXC,nyse
 SPXX,nyse
 SPYM,nyse
@@ -6796,8 +6754,6 @@ STRS,nasdaq
 STRT,nasdaq
 STRW,nysemkt
 STRZ,nasdaq
-STSS,nasdaq
-STSSW,nasdaq
 STT,nyse
 STT-PG,nyse
 STTK,nasdaq
@@ -6911,7 +6867,6 @@ TBH,nasdaq
 TBHC,nasdaq
 TBI,nyse
 TBLA,nasdaq
-TBLAW,nasdaq
 TBLD,nasdaq
 TBLU,nyse
 TBN,nyse
@@ -7107,7 +7062,6 @@ TNK,nyse
 TNL,nyse
 TNMG,nasdaq
 TNON,nasdaq
-TNONW,nasdaq
 TNUK,nyse
 TNXP,nasdaq
 TNXT,nasdaq
@@ -7330,7 +7284,6 @@ UFPT,nasdaq
 UG,nasdaq
 UGI,nyse
 UGP,nyse
-UGRO,nasdaq
 UHAL,nyse
 UHAL-B,nyse
 UHG,nasdaq
@@ -7349,7 +7302,6 @@ ULS,nyse
 ULTA,nasdaq
 ULTI,nasdaq
 ULVM,nasdaq
-ULYX,nasdaq
 UMAC,nysemkt
 UMBF,nasdaq
 UMBFO,nasdaq
@@ -7403,7 +7355,6 @@ USB-PR,nyse
 USB-PS,nyse
 USCB,nasdaq
 USEA,nasdaq
-USEG,nasdaq
 USFD,nyse
 USFE,nyse
 USGG,nasdaq
@@ -7444,7 +7395,6 @@ UZF,nyse
 V,nyse
 VABK,nasdaq
 VAC,nyse
-VACH,nasdaq
 VACHW,nasdaq
 VACI,nyse
 VAIE,nyse
@@ -7479,7 +7429,6 @@ VCX,nyse
 VCYT,nasdaq
 VECO,nasdaq
 VEEA,nasdaq
-VEEAW,nasdaq
 VEEE,nasdaq
 VEEV,nyse
 VEFA,nasdaq
@@ -7555,7 +7504,6 @@ VNDA,nasdaq
 VNET,nasdaq
 VNME,nasdaq
 VNMEU,nasdaq
-VNMEW,nasdaq
 VNO,nyse
 VNO-PL,nyse
 VNO-PM,nyse
@@ -7593,12 +7541,10 @@ VRTX,nasdaq
 VS,nasdaq
 VSA,nasdaq
 VSAT,nasdaq
-VSCO,nyse
 VSDM,nyse
 VSEC,nasdaq
 VSECU,nasdaq
 VSEE,nasdaq
-VSEEW,nasdaq
 VSH,nyse
 VSME,nasdaq
 VSNT,nasdaq
@@ -7730,7 +7676,6 @@ WIMA,nasdaq
 WIMI,nasdaq
 WINA,nasdaq
 WING,nasdaq
-WISD,nyse
 WIT,nyse
 WIW,nyse
 WIX,nasdaq
@@ -7804,7 +7749,6 @@ WTIB,nyse
 WTID,nyse
 WTIU,nyse
 WTM,nyse
-WTO,nasdaq
 WTRG,nyse
 WTS,nyse
 WTTR,nyse
@@ -7832,7 +7776,6 @@ XBFR,nyse
 XBIO,nasdaq
 XBIT,nasdaq
 XBP,nasdaq
-XBPEW,nasdaq
 XCH,nasdaq
 XCHG,nyse
 XCUR,nasdaq
@@ -8024,17 +7967,10 @@ ZWS,nyse
 ZYBT,nasdaq
 ZYME,nasdaq
 ABNY,nyse
-ABVE,nasdaq
-ABVEW,nasdaq
 ACAA,nasdaq
 ACAAU,nasdaq
 AEVAW,nasdaq
-AGAE,nasdaq
-AGH,nasdaq
-ALCY,nasdaq
-ALCYW,nasdaq
 ALDFU,nasdaq
-ALDFW,nasdaq
 ALISU,nasdaq
 ALOV,nasdaq
 ALRG,nyse
@@ -8051,8 +7987,6 @@ BBCQU,nasdaq
 BCGS,nyse
 BCGWW,nasdaq
 BCKT,nyse
-BDCIW,nasdaq
-BDMDW,nasdaq
 BEAGU,nasdaq
 BFAP,nyse
 BFXU,nyse
@@ -8062,8 +7996,6 @@ BLUWU,nasdaq
 BLZRW,nasdaq
 BPAC,nasdaq
 BREZU,nasdaq
-BTM,nasdaq
-BTMWW,nasdaq
 BU,nasdaq
 CCLDO,nasdaq
 CHECU,nasdaq
@@ -8071,8 +8003,6 @@ CMIIU,nasdaq
 CMU,nyse
 CRACU,nasdaq
 CRACW,nasdaq
-CTRA,nyse
-CUK,nyse
 DBSC,nasdaq
 DNMXU,nasdaq
 DTSTW,nasdaq
@@ -8085,7 +8015,6 @@ GOCO,nasdaq
 GOVM,nyse
 GPACU,nasdaq
 GPATU,nasdaq
-GPATW,nasdaq
 GSHRU,nasdaq
 GSRFR,nasdaq
 GSRVU,nasdaq
@@ -8097,18 +8026,14 @@ HBRD,nyse
 HCACU,nasdaq
 HCHL,nasdaq
 HVIIU,nasdaq
-IAC,nasdaq
 IACOU,nasdaq
 IEAGU,nasdaq
 IGACR,nasdaq
 IGCB,nyse
-IINN,nasdaq
 IINNW,nasdaq
 ILLUU,nasdaq
 INACU,nasdaq
 INHD,nasdaq
-IPOD,nasdaq
-IPODW,nasdaq
 IRS-WS,nyse
 JDZG,nasdaq
 JENA,nyse
@@ -8116,8 +8041,6 @@ JIDE,nyse
 KALV,nasdaq
 KFS,nyse
 KPLTW,nasdaq
-KZR,nasdaq
-LGCB,nasdaq
 LIFT,nyse
 LIMI,nyse
 LIMNW,nasdaq
@@ -8126,7 +8049,6 @@ MACI,nasdaq
 MACIU,nasdaq
 MASI,nasdaq
 MEVOU,nasdaq
-MLAC,nasdaq
 NEWTO,nasdaq
 NHICU,nasdaq
 NHIVU,nasdaq
@@ -8138,9 +8060,7 @@ NOEMU,nasdaq
 NOTV,nasdaq
 NPACW,nasdaq
 NRXPW,nasdaq
-NVAWW,nasdaq
 NXPLW,nasdaq
-OTH,nysemkt
 OUSTZ,nasdaq
 OYSER,nasdaq
 PAAC,nasdaq
@@ -8154,12 +8074,10 @@ PMJA,nyse
 PMTRU,nasdaq
 POLEW,nasdaq
 PONO,nasdaq
-PRTC,nasdaq
 PTORU,nasdaq
 QADRU,nasdaq
 QFHD,nyse
 QFRD,nyse
-QHUOD,nasdaq
 QSEAU,nasdaq
 QSIAW,nasdaq
 QUMS,nasdaq
@@ -8176,42 +8094,33 @@ SCLS,nasdaq
 SCLXW,nasdaq
 SCUB,nyse
 SCVL,nasdaq
-SGMO,nasdaq
 SIM,nysemkt
 SIMAU,nasdaq
-SKBL,nasdaq
 SLNO,nasdaq
 SMAP,nyse
 SNCY,nasdaq
 SOCAW,nasdaq
-SOPA,nasdaq
 SRTAW,nasdaq
 SRZNW,nasdaq
 SUMAU,nasdaq
-SUUN,nasdaq
 SVCC,nasdaq
 SVCCW,nasdaq
 SVIVU,nasdaq
 SZZLU,nasdaq
 TLNCU,nasdaq
 TROT,nyse
-UDMY,nasdaq
 USGOW,nasdaq
 VACHU,nasdaq
 VHCPU,nasdaq
-VLN-WS,nyse
 WENNU,nasdaq
 WENNW,nasdaq
-WLAC,nasdaq
 WLACU,nasdaq
 WLACW,nasdaq
 WSO-B,nyse
 XCBE,nasdaq
 XCBEU,nasdaq
-XWIN,nasdaq
 YHNA,nasdaq
 YHNAU,nasdaq
-ZBAI,nasdaq
 ZCBC,nyse
 ZKP,nasdaq
 ZKPU,nasdaq
