@@ -25,8 +25,8 @@ def sample_tickers(
     return sorted(all_tickers[i] for i in idx)
 
 
-def load_universe(name: str, data_root: str | Path = '../../../data') -> list[str]:
-    """Load a ticker universe saved by apps/ticker_selector as a list of tickers.
+def load_universe(name: str, data_root: str | Path = '../../data') -> list[str]:
+    """Load a ticker universe saved by apps/screener as a list of tickers.
 
     The default data_root matches running a notebook inside an experiment directory.
     """
@@ -58,6 +58,15 @@ def get_ohlcv_series(
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
     sql = f'SELECT Ticker, Date, O, H, L, C, V, AC FROM prices {where} ORDER BY Ticker, Date'
     return con.execute(sql, values).df()
+
+
+def get_ticker_labels(con: duckdb.DuckDBPyConnection, column: str) -> pd.DataFrame:
+    """Ticker -> `column` ('Sector' or 'Industry') from the companies table, blank/missing labels dropped."""
+    return con.execute(f"""
+        SELECT Ticker, "{column}" AS label
+        FROM companies
+        WHERE "{column}" IS NOT NULL AND trim("{column}") != ''
+    """).df()
 
 
 def build_windows(series: pd.DataFrame, *, window_length: int, stride: int) -> tuple[dict[str, np.ndarray], pd.DataFrame]:
@@ -98,6 +107,16 @@ def build_windows(series: pd.DataFrame, *, window_length: int, stride: int) -> t
 
     channels = {c: np.column_stack(cols) for c, cols in columns.items()}
     return channels, pd.DataFrame(meta_records)
+
+
+def attach_labels(
+    channels: dict[str, np.ndarray], meta: pd.DataFrame, labels: pd.DataFrame
+) -> tuple[dict[str, np.ndarray], pd.DataFrame]:
+    """Join a Ticker -> label frame onto meta/channels, dropping windows whose ticker has no label."""
+    keep = meta['Ticker'].isin(labels['Ticker']).to_numpy()
+    meta = meta.loc[keep].merge(labels, on='Ticker', how='left').reset_index(drop=True)
+    channels = {c: arr[:, keep] for c, arr in channels.items()}
+    return channels, meta
 
 
 def _label_values(
@@ -310,11 +329,12 @@ def encode_windows_flat(channels: dict[str, np.ndarray], encoder_factory: Callab
     return flat
 
 
-def encode_labels(meta: pd.DataFrame, train_mask: np.ndarray) -> tuple[np.ndarray, list[str]]:
-    tickers_sorted = sorted(meta.loc[train_mask, 'Ticker'].unique())
-    ticker_to_idx = {t: i for i, t in enumerate(tickers_sorted)}
-    labels = meta['Ticker'].map(ticker_to_idx).fillna(-1).astype(np.int64).to_numpy()
-    return labels, tickers_sorted
+def encode_labels(meta: pd.DataFrame, train_mask: np.ndarray, label_col: str = 'Ticker') -> tuple[np.ndarray, list[str]]:
+    """Map `meta[label_col]` to contiguous class indices, with the class set fit only on train_mask rows."""
+    classes_sorted = sorted(meta.loc[train_mask, label_col].unique())
+    class_to_idx = {c: i for i, c in enumerate(classes_sorted)}
+    labels = meta[label_col].map(class_to_idx).fillna(-1).astype(np.int64).to_numpy()
+    return labels, classes_sorted
 
 
 def class_weights(labels: np.ndarray, n_classes: int) -> np.ndarray:
