@@ -22,3 +22,6 @@ experiments/**/runs/
 # Editor lock files
 .~lock.*#
 
+# Isolated git worktrees for subagent-driven development
+.worktrees/
+
