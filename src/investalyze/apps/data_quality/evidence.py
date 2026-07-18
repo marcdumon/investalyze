@@ -12,10 +12,11 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 from dash import dcc, html
 from plotly.subplots import make_subplots
 
-from investalyze.apps.data_quality import actions
+from investalyze.apps.data_quality import actions, edgar
 from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -40,6 +41,32 @@ def _flag_date(row: dict) -> date | None:
         return value
     text = str(value).strip()
     return date.fromisoformat(text[:10]) if text and text.lower() not in ('nat', 'none') else None
+
+
+def _yahoo_finance_link(ticker: str) -> html.A:
+    """Small link to the ticker's Yahoo Finance quote page."""
+    return html.A(ticker, href=f'https://finance.yahoo.com/quote/{ticker}', target='_blank',
+                  style={'color': 'var(--mantine-color-blue-5)'})
+
+
+def _edgar_filing_url(cik: int | None, fiscal_period: str, report_date) -> str | None:
+    """Direct EDGAR document URL for the filing covering this period, or None without a CIK or match."""
+    if cik is None or pd.isna(report_date):
+        return None
+    try:
+        return edgar.filing_url(cik, pd.Timestamp(report_date).strftime('%Y-%m-%d'), fiscal_period)
+    except requests.RequestException:
+        return None
+
+
+def _edgar_restated_url(cik: int | None, restated_date) -> str | None:
+    """Direct EDGAR document URL for the filing that published these restated figures, or None."""
+    if cik is None or pd.isna(restated_date):
+        return None
+    try:
+        return edgar.restated_filing_url(cik, pd.Timestamp(restated_date).strftime('%Y-%m-%d'))
+    except requests.RequestException:
+        return None
 
 
 def price_evidence(row: dict, dark: bool) -> list:
@@ -75,7 +102,8 @@ def price_evidence(row: dict, dark: bool) -> list:
     fig.update_layout(template='plotly_dark' if dark else 'plotly_white', height=420, showlegend=False,
                       margin={'l': 40, 'r': 10, 't': 30, 'b': 20}, xaxis_rangeslider_visible=False,
                       title={'text': f'{ticker} {table} around {on_date or "full history"}', 'font': {'size': 14}})
-    return [dcc.Graph(figure=fig)]
+    return [html.Div(_yahoo_finance_link(ticker), style={'fontSize': '13px', 'marginBottom': '4px'}),
+            dcc.Graph(figure=fig)]
 
 
 def fundamentals_evidence(row: dict, dark: bool) -> list:
@@ -85,8 +113,10 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     con = storage.connect(DATA_ROOT, read_only=True)
     try:
         statement = con.execute(f'SELECT * FROM {table} WHERE Ticker = ? ORDER BY "Report Date"', [ticker]).df()
+        cik_row = con.execute('SELECT CIK FROM companies WHERE Ticker = ?', [ticker]).fetchone()
     finally:
         con.close()
+    cik = int(cik_row[0]) if cik_row and cik_row[0] is not None else None
 
     if statement.empty:
         return [html.Div(f'no {table} rows for {ticker}', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})]
@@ -103,6 +133,13 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
                      + [html.Th(label, style={'padding': '0 8px', 'textAlign': 'right',
                                               'color': 'var(--mantine-color-orange-6)' if label == flagged_label else None})
                         for label in window_labels])
+    filing_cells = [html.Td('SEC filing', style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
+    for _, srow in window.iterrows():
+        url = (_edgar_restated_url(cik, srow['Restated Date']) if srow['IsRestated']
+              else _edgar_filing_url(cik, srow['Fiscal Period'], srow['Report Date']))
+        cell = html.A('EDGAR', href=url, target='_blank') if url else '-'
+        filing_cells.append(html.Td(cell, style={'padding': '0 8px', 'textAlign': 'right'}))
+    filing_row = html.Tr(filing_cells)
     body = []
     for item in line_items:
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
@@ -112,10 +149,18 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
             cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right',
                                               'fontWeight': 'bold' if label == flagged_label else None}))
         body.append(html.Tr(cells))
-    caption = f'{ticker} {table}: {row.get("Details", "")}'
+    for item in ('Report Date', 'Publish Date', 'Restated Date'):
+        cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
+        for label, (_, srow) in zip(window_labels, window.iterrows()):
+            value = srow[item]
+            text = '' if pd.isna(value) else pd.Timestamp(value).strftime('%Y-%m-%d')
+            cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right',
+                                              'fontWeight': 'bold' if label == flagged_label else None}))
+        body.append(html.Tr(cells))
+    caption = [_yahoo_finance_link(ticker), html.Span(f' {table}: {row.get("Details", "")}')]
     return [
         html.Div(caption, style={'fontSize': '13px', 'marginBottom': '6px'}),
-        html.Div(html.Table([header] + body, style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
+        html.Div(html.Table([header, filing_row] + body, style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
                  style={'overflowX': 'auto'}),
     ]
 
