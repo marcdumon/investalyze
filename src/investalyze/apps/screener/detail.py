@@ -98,7 +98,9 @@ def detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
         anomalies_block = html.Div('no anomalies recorded', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})
 
     left = html.Div(
-        [html.H4(ticker, style={'margin': '0 0 6px'}), stats,
+        [html.H4([ticker, dcc.Link('full analysis', href=f'/ticker?symbol={ticker}',
+                                   style={'fontSize': '12px', 'marginLeft': '10px', 'fontWeight': 'normal'})],
+                 style={'margin': '0 0 6px'}), stats,
          html.H4('Fundamentals', style={'margin': '10px 0 4px', 'fontSize': '14px'}), fundamentals_block,
          html.H4('Anomalies', style={'margin': '10px 0 4px', 'fontSize': '14px'}), anomalies_block],
         style={'width': '440px', 'flexShrink': 0, 'overflowY': 'auto'},

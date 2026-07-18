@@ -18,8 +18,10 @@ app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptio
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401
 from investalyze.apps.data_quality import page as data_quality_page  # noqa: E402,F401
 from investalyze.apps.screener import page as screener_page  # noqa: E402,F401
+from investalyze.apps.ticker import page as ticker_page  # noqa: E402,F401
 
-_NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search', '/quality': 'tabler:shield-check'}
+_NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search', '/quality': 'tabler:shield-check',
+              '/ticker': 'tabler:chart-candle'}
 
 
 def nav_link(page: dict) -> dmc.NavLink:
