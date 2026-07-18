@@ -42,3 +42,40 @@ def test_log_fields_round_trip_through_log_parser():
     assert entry.tag == 'investigate'
     assert entry.comment == "it's odd"
     assert entry.date == date(2015, 7, 10)
+
+# ---------- Details number formatting ----------
+
+
+def test_format_details_numbers_adds_separators():
+    text = 'gp+opex: lhs=-1414514 rhs=-1141514 diff=23.92%'
+    assert actions.format_details_numbers(text) == 'gp+opex: lhs=-1,414,514 rhs=-1,141,514 diff=23.92%'
+
+
+def test_format_details_numbers_keeps_short_numbers_dates_and_decimals():
+    assert actions.format_details_numbers('Revenue: Q1..Q4=15844000000 FY=14198000000 diff=11.59%') \
+        == 'Revenue: Q1..Q4=15,844,000,000 FY=14,198,000,000 diff=11.59%'
+    assert actions.format_details_numbers('gap 12 days (2003-11-10 to 2003-11-22)') \
+        == 'gap 12 days (2003-11-10 to 2003-11-22)'
+    assert actions.format_details_numbers('C=12345.67') == 'C=12,345.67'
+
+
+# ---------- involved line items per check ----------
+
+
+def test_involved_items_identity_checks_use_details_prefix():
+    assert actions.involved_items('balance_identity', 'liab+equity: lhs=1 rhs=2 diff=50%') \
+        == {'Total Liabilities', 'Total Equity', 'Total Assets'}
+    assert actions.involved_items('income_chain', 'gp+opex: lhs=1 rhs=2') \
+        == {'Gross Profit', 'Operating Expenses', 'Other Operating Income', 'Operating Income (Loss)'}
+
+
+def test_involved_items_qsum_names_its_column():
+    assert actions.involved_items('quarters_vs_fy', 'Net Income: Q1..Q4=1 FY=2 diff=50%') == {'Net Income'}
+
+
+def test_involved_items_sanity_and_unknown_checks():
+    assert actions.involved_items('hard_invariants', 'Shares (Basic)=0 Shares (Diluted)=null') \
+        == {'Shares (Basic)', 'Shares (Diluted)'}
+    assert actions.involved_items('hard_invariants', 'Total Assets=-5') == {'Total Assets'}
+    assert actions.involved_items('negative_revenue', 'Revenue=-3') == {'Revenue'}
+    assert actions.involved_items('some_future_check', 'whatever') == set()

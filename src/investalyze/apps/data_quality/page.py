@@ -77,6 +77,8 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
             con.unregister('logged_raw')
     frame['Date'] = frame['Date'].apply(lambda value: None if value is None or str(value) == 'NaT' else str(value)[:10])
     frame['Key'] = frame['Key'].where(frame['Key'].notna(), None)
+    frame['Details'] = frame['Details'].apply(
+        lambda value: actions.format_details_numbers(value) if isinstance(value, str) else value)
     return frame.to_dict('records'), total, all_checks
 
 
