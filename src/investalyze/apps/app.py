@@ -6,13 +6,17 @@ Run with:  .venv/bin/python -m investalyze.apps  then open http://127.0.0.1:8050
 import dash
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, clientside_callback, dcc, html
+from dash_ag_grid import themes as ag_grid_themes
 from dash_iconify import DashIconify
 
 # suppress_callback_exceptions: without it, Dash eagerly builds every registered page's layout
 # (not just the requested one) on the first request, to validate callback IDs. Since the screener's
 # layout hits the DB, that would make the control panel's first load fail whenever the DB happens
 # to be locked by a running job: exactly when the panel most needs to still come up.
-app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptions=True)
+# dash_ag_grid ships no CSS of its own (AG Grid's newer Theming API replaces it); the legacy
+# ag-theme-alpine[-dark] classes used across the grids need this stylesheet to render at all.
+app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptions=True,
+          external_stylesheets=[ag_grid_themes.BASE, ag_grid_themes.ALPINE])
 
 # Registers each page (dash.register_page at import time) before the layout below reads dash.page_registry.
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401

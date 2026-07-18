@@ -126,7 +126,7 @@ def layout() -> html.Div:
     grid = dag.AgGrid(
         id='dq-grid', columnDefs=ANOMALY_COLUMNS, rowData=[],
         defaultColDef={'sortable': True, 'filter': True, 'resizable': True},
-        dashGridOptions={'animateRows': False},
+        dashGridOptions={'animateRows': False, 'theme': 'legacy'},
         className='ag-theme-alpine-dark', style={'height': '70vh', 'width': '100%'},
     )
 

@@ -165,7 +165,7 @@ def layout() -> html.Div:
                 dag.AgGrid(
                     id='grid', columnDefs=[], rowData=[],
                     defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 110},
-                    dashGridOptions={'singleClickEdit': True, 'animateRows': False},
+                    dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
                     className='ag-theme-alpine-dark',
                     style={'flex': 1, 'width': '100%', 'minHeight': 0},
                 ),
@@ -175,7 +175,7 @@ def layout() -> html.Div:
                 dag.AgGrid(
                     id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
                     defaultColDef={'sortable': True, 'resizable': True},
-                    dashGridOptions={'singleClickEdit': True, 'animateRows': False},
+                    dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
                     className='ag-theme-alpine-dark',
                     style={'flex': 1, 'width': '100%', 'minHeight': 0},
                 ),
