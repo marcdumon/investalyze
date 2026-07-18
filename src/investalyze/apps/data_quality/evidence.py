@@ -140,22 +140,33 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
         cell = html.A('EDGAR', href=url, target='_blank') if url else '-'
         filing_cells.append(html.Td(cell, style={'padding': '0 8px', 'textAlign': 'right'}))
     filing_row = html.Tr(filing_cells)
+    check = str(row.get('CheckName', ''))
+    involved = actions.involved_items(check, str(row.get('Details', '')))
+    used_columns = []
+    for label, (_, srow) in zip(window_labels, window.iterrows()):
+        if label == flagged_label:
+            used_columns.append(True)
+        elif check == 'quarters_vs_fy' and parsed is not None:
+            same_vintage = srow['Period'] == 'Q' and str(srow['IsRestated']).lower() == parsed['is_restated']
+            used_columns.append(same_vintage and srow['Fiscal Year'] == parsed['fiscal_year'])
+        else:
+            used_columns.append(False)
+
     body = []
     for item in line_items:
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
-        for label, (_, srow) in zip(window_labels, window.iterrows()):
+        for used, (_, srow) in zip(used_columns, window.iterrows()):
             value = srow[item]
             text = '' if pd.isna(value) else (f'{value:,.0f}' if isinstance(value, (int, float)) else str(value))
             cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right',
-                                              'fontWeight': 'bold' if label == flagged_label else None}))
+                                              'fontWeight': 'bold' if used and item in involved else None}))
         body.append(html.Tr(cells))
     for item in ('Report Date', 'Publish Date', 'Restated Date'):
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
-        for label, (_, srow) in zip(window_labels, window.iterrows()):
+        for _, srow in window.iterrows():
             value = srow[item]
             text = '' if pd.isna(value) else pd.Timestamp(value).strftime('%Y-%m-%d')
-            cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right',
-                                              'fontWeight': 'bold' if label == flagged_label else None}))
+            cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right'}))
         body.append(html.Tr(cells))
     caption = [_yahoo_finance_link(ticker), html.Span(f' {table}: {row.get("Details", "")}')]
     return [
@@ -171,7 +182,8 @@ def _flagged_position(statement: pd.DataFrame, parsed: dict | None) -> int:
         return len(statement) - 1
     match = statement[(statement['Fiscal Year'].astype('Int64') == parsed['fiscal_year'])
                       & (statement['Fiscal Period'] == parsed['fiscal_period'])
-                      & (statement['Period'] == parsed['period'])]
+                      & (statement['Period'] == parsed['period'])
+                      & (statement['IsRestated'].astype(str).str.lower() == parsed['is_restated'])]
     return int(statement.index.get_loc(match.index[0])) if len(match) else len(statement) - 1
 
 
