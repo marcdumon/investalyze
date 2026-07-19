@@ -1,10 +1,13 @@
-"""Data Quality page: review open anomalies with evidence and log each one to build understanding.
+"""Data Quality page: review open anomalies with evidence, log them, or stage cleaning fixes.
 
 The grid shows anomalies that have not yet been logged (an anti-join against quality_log.toml through
 a short-lived read-only connection), so you always work the unseen findings. Clicking a row shows
-evidence (price candlestick or transposed fundamentals). Logging a finding appends a `[[log]]` entry
-(tag + comment) to quality_log.toml and the row drops off the list. Nothing here modifies the raw
-tables or the anomalies table; the log is a non-destructive triage overlay.
+evidence (price candlestick or transposed fundamentals); checkboxes select multiple rows for bulk
+action. Logging appends `[[log]]` entries (tag + comment) to quality_log.toml and the rows drop off
+the list. Staging a fix appends entries to cleaning.toml for the selected rows and logs those rows
+as fix-staged, so they drop off the list too; the fixes wait there until run from Control Panel ->
+Cleaning (Preview / Apply). Everything on this page writes only the two TOML files; the database
+changes when apply is run from the control panel.
 """
 
 from pathlib import Path
@@ -19,11 +22,13 @@ from dash_iconify import DashIconify
 
 from investalyze.apps.data_quality import actions, evidence, quality_log, toml_io
 from investalyze.apps.screener.data import get_pool
+from investalyze.cleaning import registry
 from investalyze.ingest import storage
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = REPO_ROOT / 'data'
 LOG_PATH = REPO_ROOT / 'quality_log.toml'
+CLEANING_PATH = REPO_ROOT / 'cleaning.toml'
 ROW_LIMIT = 1000
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
@@ -32,12 +37,10 @@ PREVIEW_STYLE = {'background': 'var(--mantine-color-default-hover)', 'padding': 
 PICK_PROMPT = dmc.Text('select an anomaly to inspect', size='sm', c='dimmed')
 
 ANOMALY_COLUMNS = [
-    {'field': 'Severity', 'width': 90},
+    {'field': 'Severity', 'width': 120, 'checkboxSelection': True,
+     'headerCheckboxSelection': True, 'headerCheckboxSelectionFilteredOnly': True},
     {'field': 'CheckName', 'headerName': 'Check', 'width': 175},
-    # filter: False: the sidebar's dq-filter-table already filters this field server-side, before the
-    # grid's row cap; a second, page-local column filter here would look equivalent but silently
-    # search a different, arbitrary subset (the exact bug this replaced).
-    {'field': 'SrcTable', 'headerName': 'Table', 'width': 105, 'filter': False},
+    {'field': 'SrcTable', 'headerName': 'Table', 'width': 105},
     {'field': 'Ticker', 'width': 85, 'cellRenderer': 'TickerLinkIfStock'},
     {'field': 'Date', 'width': 105},
     {'field': 'Key', 'width': 150},
@@ -50,9 +53,8 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
                         limit: int) -> tuple[list[dict], int, list[str], list[str]]:
     """Return (capped open rows, total open, distinct checks, distinct tables): anomalies not yet in the log, filtered.
 
-    `tables` filters server-side, before the limit is applied; the grid's own Table column filter
-    only searches the already-loaded page, so without this a table with few anomalies relative to
-    others (which sort ahead of it) could be entirely capped out before that column filter ever sees it.
+    Every filter applies before the limit, so rows matching a filter are found and counted even when
+    the unfiltered sort order would have capped them out.
     """
     clauses: list[str] = []
     params: list = []
@@ -102,21 +104,56 @@ def _labeled(label: str, component) -> html.Div:
     return html.Div([dmc.Text(label, size='xs', c='dimmed', mb=2), component], style={'marginBottom': '8px'})
 
 
+def _target_rows(selected: list | None, clicked: dict | None) -> list[dict]:
+    """The rows an action applies to: the checked rows, or the clicked row when none are checked."""
+    if selected:
+        return selected
+    return [clicked] if clicked else []
+
+
+def _number(value: object) -> float | None:
+    """A NumberInput's value as a number; a cleared input reports '' and becomes None."""
+    return value if isinstance(value, (int, float)) else None
+
+
 def _log_panel() -> dmc.Card:
-    """Evidence panel plus the log form for the selected finding."""
+    """Evidence panel plus the log form and the fix-staging form.
+
+    Both forms act on the checked rows, falling back to the clicked row when none are checked.
+    """
     return dmc.Card([
         html.Div(id='dq-evidence', children=PICK_PROMPT),
-        dmc.Divider(my=10, label='Log this finding', labelPosition='center'),
+        dmc.Divider(my=10, label='Log finding(s)', labelPosition='center'),
         _labeled('tag', dmc.Select(id='dq-log-tag', data=quality_log.STANDARD_TAGS, value=quality_log.STANDARD_TAGS[0],
                                    size='xs')),
         _labeled('comment', dmc.Textarea(id='dq-log-comment', autosize=True, minRows=2, size='xs',
                                          placeholder='what you observed / what to check later')),
         html.Pre(id='dq-log-preview', style=PREVIEW_STYLE),
         dmc.Group([
-            dmc.Button('Log finding', id='dq-btn-log', size='xs', color='blue',
+            dmc.Button('Log finding(s)', id='dq-btn-log', size='xs', color='blue',
                        leftSection=DashIconify(icon='tabler:notebook')),
             dmc.Text(id='dq-log-status', size='xs', c='dimmed'),
         ], mt=8, gap=10),
+        dmc.Divider(my=10, label='Stage cleaning fix', labelPosition='center'),
+        _labeled('action', dmc.Select(id='dq-fix-action', size='xs', clearable=True,
+                                      placeholder='what apply should do with the selected rows',
+                                      data=[{'value': key, 'label': label} for key, label in actions.FIX_ACTIONS.items()])),
+        dmc.Group([
+            html.Div(_labeled('column', dmc.Select(id='dq-fix-column', data=[], size='xs', searchable=True,
+                                                   clearable=True, placeholder='column')), style={'flex': 1}),
+            html.Div(_labeled('new value', dmc.NumberInput(id='dq-fix-value', size='xs', hideControls=True)),
+                     style={'flex': 1}),
+        ], gap=10),
+        _labeled('reason', dmc.Textarea(id='dq-fix-reason', autosize=True, minRows=2, size='xs',
+                                        placeholder='why this correction is right (stored in cleaning.toml)')),
+        html.Pre(id='dq-fix-preview', style=PREVIEW_STYLE),
+        dmc.Group([
+            dmc.Button('Stage fix', id='dq-btn-stage', size='xs', color='blue',
+                       leftSection=DashIconify(icon='tabler:playlist-add')),
+            dmc.Text(id='dq-fix-status', size='xs', c='dimmed'),
+        ], mt=8, gap=10),
+        dmc.Text('staging logs the rows as fix-staged (they drop off the list) and queues the fix in cleaning.toml '
+                 'until you run it from Control Panel -> Cleaning', size='xs', c='dimmed', mt=4),
     ], withBorder=True, radius='md', padding='sm')
 
 
@@ -124,7 +161,7 @@ def layout() -> html.Div:
     """Build the data-quality page: filter bar + open-anomaly grid on the left, evidence + log on the right."""
     header = dmc.Group([
         dmc.Text('Data Quality', fw=700, size='lg'),
-        dmc.Text('review and log problems; logged findings drop off the list', size='xs', c='dimmed'),
+        dmc.Text('log problems or stage cleaning fixes; logged findings drop off the list', size='xs', c='dimmed'),
         dmc.Button('Refresh', id='dq-btn-refresh', size='xs', variant='subtle',
                    leftSection=DashIconify(icon='tabler:reload')),
     ], mb=10, gap=12)
@@ -140,11 +177,14 @@ def layout() -> html.Div:
         dmc.TextInput(id='dq-filter-ticker', placeholder='ticker', size='xs', style={'width': '130px'}),
     ], mb=8, gap=10, wrap='nowrap')
 
+    # column filters stay off: they would search only the ROW_LIMIT-capped page, silently missing rows
+    # the cap dropped; all filtering goes through the filter bar, which filters server-side before the cap.
     grid = dag.AgGrid(
         id='dq-grid', columnDefs=ANOMALY_COLUMNS, rowData=[],
-        defaultColDef={'sortable': True, 'filter': True, 'resizable': True},
-        dashGridOptions={'animateRows': False, 'theme': 'legacy'},
-        className='ag-theme-alpine-dark', style={'height': '70vh', 'width': '100%'},
+        defaultColDef={'sortable': True, 'resizable': True},
+        dashGridOptions={'animateRows': False, 'theme': 'legacy', 'rowSelection': 'multiple',
+                         'suppressRowClickSelection': True},
+        className='ag-theme-alpine-dark', style={'height': '70vh', 'width': '100%', '--ag-cell-horizontal-padding': '2px'},
     )
 
     return html.Div([
@@ -205,27 +245,117 @@ def select_row(cell, rows, dark):
 
 @callback(
     Output('dq-log-preview', 'children'),
-    Input('dq-selected', 'data'), Input('dq-log-tag', 'value'), Input('dq-log-comment', 'value'),
+    Input('dq-selected', 'data'), Input('dq-grid', 'selectedRows'),
+    Input('dq-log-tag', 'value'), Input('dq-log-comment', 'value'),
 )
-def log_preview(row, tag, comment):
-    """Render the quality_log.toml block the Log button would append."""
-    if not row:
-        return 'select an anomaly first'
-    return toml_io.serialize_block('log', actions.log_fields(row, tag or quality_log.STANDARD_TAGS[0], comment or ''))
+def log_preview(clicked, selected, tag, comment):
+    """Render the quality_log.toml blocks the Log button would append (first three, plus a count)."""
+    rows = _target_rows(selected, clicked)
+    if not rows:
+        return 'check or click an anomaly first'
+    blocks = [toml_io.serialize_block('log', actions.log_fields(row, tag or quality_log.STANDARD_TAGS[0], comment or ''))
+              for row in rows[:3]]
+    more = f'... and {len(rows) - 3} more entries\n' if len(rows) > 3 else ''
+    return '\n'.join(blocks) + more
 
 
 @callback(
     Output('dq-log-tick', 'data'), Output('dq-log-status', 'children'),
     Output('dq-selected', 'data', allow_duplicate=True), Output('dq-evidence', 'children', allow_duplicate=True),
+    Output('dq-grid', 'selectedRows', allow_duplicate=True),
     Input('dq-btn-log', 'n_clicks'),
-    State('dq-selected', 'data'), State('dq-log-tag', 'value'), State('dq-log-comment', 'value'),
+    State('dq-selected', 'data'), State('dq-grid', 'selectedRows'),
+    State('dq-log-tag', 'value'), State('dq-log-comment', 'value'),
     State('dq-log-tick', 'data'),
     prevent_initial_call=True,
 )
-def do_log(_n, row, tag, comment, tick):
-    """Append the selected finding to quality_log.toml, then drop it from the grid and clear the panel."""
-    if not row:
-        return dash.no_update, 'select a finding first', dash.no_update, dash.no_update
-    block = toml_io.serialize_block('log', actions.log_fields(row, tag or quality_log.STANDARD_TAGS[0], comment or ''))
-    quality_log.append_log(LOG_PATH, block)
-    return (tick or 0) + 1, f"logged {row['CheckName']} for {row['Ticker']}", None, PICK_PROMPT
+def do_log(_n, clicked, selected, tag, comment, tick):
+    """Append the targeted findings to quality_log.toml, then drop them from the grid and clear the panel."""
+    rows = _target_rows(selected, clicked)
+    if not rows:
+        return dash.no_update, 'check or click a finding first', dash.no_update, dash.no_update, dash.no_update
+    blocks = [toml_io.serialize_block('log', actions.log_fields(row, tag or quality_log.STANDARD_TAGS[0], comment or ''))
+              for row in rows]
+    quality_log.append_log(LOG_PATH, '\n'.join(blocks))
+    return (tick or 0) + 1, f'logged {len(rows)} finding(s)', None, PICK_PROMPT, []
+
+
+@callback(
+    Output('dq-fix-column', 'data'),
+    Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'),
+)
+def column_options(selected, clicked):
+    """Offer the value columns of the one table the targeted rows come from."""
+    rows = _target_rows(selected, clicked)
+    tables = sorted({row.get('SrcTable') for row in rows if row.get('SrcTable')})
+    if len(tables) != 1:
+        return []
+    try:
+        con = storage.connect(DATA_ROOT, read_only=True)
+        try:
+            described = con.execute(f'SELECT * FROM {tables[0]} LIMIT 0').description
+        finally:
+            con.close()
+    except duckdb.Error:
+        return []
+    return [name for name, *_ in described if name not in ('Ticker', 'Date')]
+
+
+@callback(
+    Output('dq-fix-reason', 'value'),
+    Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'),
+)
+def default_reason(selected, clicked):
+    """Prefill the fix reason from the targeted issue's check and details; editable afterwards."""
+    rows = _target_rows(selected, clicked)
+    if not rows:
+        return ''
+    check = str(rows[0].get('CheckName') or '').strip()
+    details = str(rows[0].get('Details') or '').strip()
+    base = f'{check}: {details}' if details else check
+    return base + (f' (+{len(rows) - 1} more rows)' if len(rows) > 1 else '')
+
+
+@callback(
+    Output('dq-fix-preview', 'children'),
+    Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'), Input('dq-fix-action', 'value'),
+    Input('dq-fix-column', 'value'), Input('dq-fix-value', 'value'), Input('dq-fix-reason', 'value'),
+)
+def fix_preview(selected, clicked, action, column, value, reason):
+    """Render the cleaning.toml blocks the Stage button would append, or the reason it can't."""
+    if not action:
+        return 'choose an action'
+    try:
+        entries = actions.fix_entries(action, _target_rows(selected, clicked), column, _number(value), reason or '')
+    except ValueError as err:
+        return str(err)
+    return '\n'.join(toml_io.serialize_block(section, fields) for section, fields in entries)
+
+
+@callback(
+    Output('dq-fix-status', 'children'), Output('dq-log-tick', 'data', allow_duplicate=True),
+    Output('dq-selected', 'data', allow_duplicate=True), Output('dq-evidence', 'children', allow_duplicate=True),
+    Output('dq-grid', 'selectedRows', allow_duplicate=True),
+    Input('dq-btn-stage', 'n_clicks'),
+    State('dq-grid', 'selectedRows'), State('dq-selected', 'data'), State('dq-fix-action', 'value'),
+    State('dq-fix-column', 'value'), State('dq-fix-value', 'value'), State('dq-fix-reason', 'value'),
+    State('dq-log-tick', 'data'),
+    prevent_initial_call=True,
+)
+def stage_fix(_n, selected, clicked, action, column, value, reason, tick):
+    """Append the previewed fix entries to cleaning.toml and log the rows as fix-staged, dropping them."""
+    keep = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
+    if not action:
+        return 'choose an action first', *keep
+    rows = _target_rows(selected, clicked)
+    try:
+        entries = actions.fix_entries(action, rows, column, _number(value), reason or '')
+    except ValueError as err:
+        return str(err), *keep
+    block = '\n'.join(toml_io.serialize_block(section, fields) for section, fields in entries)
+    toml_io.append_block(CLEANING_PATH, block, registry.parse_fixes)
+    log_blocks = [toml_io.serialize_block('log', actions.log_fields(row, 'fix-staged', (reason or '').strip()))
+                  for row in rows]
+    quality_log.append_log(LOG_PATH, '\n'.join(log_blocks))
+    status = f'staged {len(entries)} entr{"y" if len(entries) == 1 else "ies"}; apply from Control Panel -> Cleaning'
+    return status, (tick or 0) + 1, None, PICK_PROMPT, []

@@ -105,6 +105,98 @@ def involved_items(check: str, details: str) -> set[str]:
     return set()
 
 
+# tables keyed by (Ticker, Date), where date-scoped fixes and set_value can address a row
+DATE_KEYED_TABLES = ('prices', 'market_data', 'dividends')
+
+FIX_ACTIONS = {
+    'delete_rows': 'delete rows (each selected date)',
+    'delete_span': 'delete date range (selection span)',
+    'delete_ticker': 'delete entire ticker history',
+    'set_value': 'correct a value',
+    'clear_value': 'clear a value (set NULL)',
+    'rebuild_adjusted_close': 'rebuild adjusted close',
+}
+
+_DATE_SCOPED = ('delete_rows', 'delete_span', 'set_value', 'clear_value')
+
+
+def fix_entries(action: str, rows: list[dict], column: str | None, value: float | None,
+                reason: str) -> list[tuple[str, dict]]:
+    """Build the (section, fields) cleaning.toml entries `action` produces for the selected anomaly rows.
+
+    Rows are grouped so each entry covers as many rows as the fix type allows (tickers merged per
+    table/date, spans merged per ticker). Raises ValueError with a user-facing message when the
+    selection or inputs cannot express the action.
+    """
+    if action not in FIX_ACTIONS:
+        raise ValueError('choose an action')
+    if not rows:
+        raise ValueError('check or click at least one anomaly row first')
+    reason = reason.strip()
+    if not reason:
+        raise ValueError('a reason is required (it is stored with the fix)')
+
+    tables = sorted({str(row.get('SrcTable') or '') for row in rows})
+    if '' in tables:
+        raise ValueError('every selected row needs a source table')
+
+    if action in _DATE_SCOPED:
+        off_key = [table for table in tables if table not in DATE_KEYED_TABLES]
+        if off_key:
+            raise ValueError(f"{FIX_ACTIONS[action]} needs date-keyed tables {', '.join(DATE_KEYED_TABLES)}; "
+                             f"selection includes {', '.join(off_key)}")
+        if any(_to_date(row.get('Date')) is None for row in rows):
+            raise ValueError('every selected row needs a date for this action')
+    if action in ('set_value', 'clear_value') and not column:
+        raise ValueError('pick the column to change')
+    if action == 'set_value':
+        if len(rows) != 1:
+            raise ValueError('correct a value works on exactly one selected row')
+        if value is None:
+            raise ValueError('enter the corrected value')
+    if action == 'rebuild_adjusted_close' and tables != ['prices']:
+        raise ValueError('rebuild adjusted close works on prices rows only')
+
+    entries: list[tuple[str, dict]] = []
+
+    if action == 'delete_rows' or action == 'clear_value':
+        grouped: dict[tuple[str, date], set[str]] = {}
+        for row in rows:
+            key = (row['SrcTable'], _to_date(row['Date']))
+            grouped.setdefault(key, set()).add(row['Ticker'])
+        for (table, day), tickers in sorted(grouped.items()):
+            if action == 'delete_rows':
+                entries.append(('delete_date_range', {'table': table, 'tickers': sorted(tickers),
+                                                      'start': day, 'end': day, 'reason': reason}))
+            else:
+                entries.append(('set_value', {'table': table, 'tickers': sorted(tickers), 'start': day,
+                                              'end': day, 'column': column, 'reason': reason}))
+
+    elif action == 'delete_span':
+        spans: dict[tuple[str, str], list[date]] = {}
+        for row in rows:
+            spans.setdefault((row['SrcTable'], row['Ticker']), []).append(_to_date(row['Date']))
+        for (table, ticker), days in sorted(spans.items()):
+            entries.append(('delete_date_range', {'table': table, 'tickers': [ticker],
+                                                  'start': min(days), 'end': max(days), 'reason': reason}))
+
+    elif action == 'delete_ticker' or action == 'rebuild_adjusted_close':
+        by_table: dict[str, set[str]] = {}
+        for row in rows:
+            by_table.setdefault(row['SrcTable'], set()).add(row['Ticker'])
+        section = 'delete_date_range' if action == 'delete_ticker' else 'rebuild_adjusted_close'
+        for table, tickers in sorted(by_table.items()):
+            entries.append((section, {'table': table, 'tickers': sorted(tickers), 'reason': reason}))
+
+    elif action == 'set_value':
+        row = rows[0]
+        day = _to_date(row['Date'])
+        entries.append(('set_value', {'table': row['SrcTable'], 'tickers': [row['Ticker']],
+                                      'start': day, 'end': day, 'column': column, 'value': value, 'reason': reason}))
+
+    return entries
+
+
 def log_fields(row: dict, tag: str, comment: str) -> dict:
     """Ordered field dict for a quality_log.toml [[log]] block from an anomaly row."""
     return {

@@ -88,3 +88,17 @@ reason = 'vendor bars with no recorded open (0) while H/L/C/AC are intact, mostl
 table = 'prices'
 tickers = ['VHI', 'VATE', 'CBIO', 'SAFE', 'DEC']
 reason = 'negative AC prefix per ticker: one recorded distribution at or above the previous close flips the back-adjustment sign; rebuild AC excluding those events'
+
+[[delete_date_range]]
+table = 'prices'
+tickers = ['PCG-PB', 'PCG-PE', 'PCG-PH']
+start = 2024-06-14
+end = 2024-06-14
+reason = 'O=0.0 H=0.0 L=0.0 C=0.0 AC=0.0'
+
+[[delete_date_range]]
+table = 'prices'
+tickers = ['PCG-PB', 'PCG-PE', 'PCG-PH']
+start = 2024-06-14
+end = 2024-06-14
+reason = 'nonpositive_price: O=0.0 H=0.0 L=0.0 C=0.0 AC=0.0 (+2 more rows)'

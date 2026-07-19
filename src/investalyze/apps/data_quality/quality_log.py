@@ -18,7 +18,7 @@ import pandas as pd
 from investalyze.apps.data_quality import toml_io
 
 # canned classifications offered in the GUI; a free-text comment always accompanies the choice
-STANDARD_TAGS = ['real-problem', 'false-alarm', 'investigate', 'known']
+STANDARD_TAGS = ['real-problem', 'false-alarm', 'investigate', 'known', 'fix-staged']
 
 _REQUIRED = ('check', 'ticker', 'tag')
 
