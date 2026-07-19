@@ -52,7 +52,8 @@ def stale_run(con: duckdb.DuckDBPyConnection, *, min_stale_run: int = MIN_STALE_
             FROM marks
         )
         SELECT 'prices' AS SrcTable, Ticker, max(Date) AS Date, NULL::VARCHAR AS Key,
-               count(*) || ' identical closes ' || min(Date) || ' .. ' || max(Date) || ' (C=' || min(C) || ')' AS Details
+               count(*) || ' identical closes ' || min(Date) || ' .. ' || max(Date)
+               || ' (C=' || ROUND(min(C), 4) || ')' AS Details
         FROM runs
         GROUP BY Ticker, run_id
         HAVING count(*) >= ?
