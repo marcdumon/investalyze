@@ -171,7 +171,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     caption = [_yahoo_finance_link(ticker), html.Span(f' {table}: {row.get("Details", "")}')]
     return [
         html.Div(caption, style={'fontSize': '13px', 'marginBottom': '6px'}),
-        html.Div(html.Table([header, filing_row] + body, style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
+        html.Div(html.Table(html.Tbody([header, filing_row] + body), style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
                  style={'overflowX': 'auto'}),
     ]
 
