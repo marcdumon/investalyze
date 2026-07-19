@@ -9,11 +9,14 @@ kind of problem is one new module plus a `FIX_TYPES` line.
 import tomllib
 from pathlib import Path
 
-from investalyze.cleaning import delete_date_range
+from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, repair_zero_low, repair_zero_open
 from investalyze.cleaning.fix import Fix
 
 FIX_TYPES = {
     'delete_date_range': delete_date_range,
+    'rebuild_adjusted_close': rebuild_adjusted_close,
+    'repair_zero_low': repair_zero_low,
+    'repair_zero_open': repair_zero_open,
 }
 
 _REQUIRED = ('table', 'tickers', 'reason')
