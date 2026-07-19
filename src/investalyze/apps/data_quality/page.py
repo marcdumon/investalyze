@@ -33,7 +33,10 @@ PICK_PROMPT = dmc.Text('select an anomaly to inspect', size='sm', c='dimmed')
 ANOMALY_COLUMNS = [
     {'field': 'Severity', 'width': 90},
     {'field': 'CheckName', 'headerName': 'Check', 'width': 175},
-    {'field': 'SrcTable', 'headerName': 'Table', 'width': 105},
+    # filter: False: the sidebar's dq-filter-table already filters this field server-side, before the
+    # grid's row cap; a second, page-local column filter here would look equivalent but silently
+    # search a different, arbitrary subset (the exact bug this replaced).
+    {'field': 'SrcTable', 'headerName': 'Table', 'width': 105, 'filter': False},
     {'field': 'Ticker', 'width': 85},
     {'field': 'Date', 'width': 105},
     {'field': 'Key', 'width': 150},
@@ -42,8 +45,14 @@ ANOMALY_COLUMNS = [
 
 
 def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, checks: list[str] | None,
-                        severity: str, ticker: str | None, limit: int) -> tuple[list[dict], int, list[str]]:
-    """Return (capped open rows, total open, distinct checks): anomalies not yet in the log, filtered."""
+                        severity: str, ticker: str | None, tables: list[str] | None,
+                        limit: int) -> tuple[list[dict], int, list[str], list[str]]:
+    """Return (capped open rows, total open, distinct checks, distinct tables): anomalies not yet in the log, filtered.
+
+    `tables` filters server-side, before the limit is applied; the grid's own Table column filter
+    only searches the already-loaded page, so without this a table with few anomalies relative to
+    others (which sort ahead of it) could be entirely capped out before that column filter ever sees it.
+    """
     clauses: list[str] = []
     params: list = []
     if checks:
@@ -55,6 +64,9 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     if ticker:
         clauses.append('Ticker ILIKE ?')
         params.append(f'%{ticker.strip()}%')
+    if tables:
+        clauses.append(f"SrcTable IN ({', '.join('?' for _ in tables)})")
+        params += tables
     if log_entries:
         clauses.append(
             'NOT EXISTS (SELECT 1 FROM logged_raw l WHERE l.check_name = anomalies.CheckName '
@@ -72,6 +84,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
             f'ORDER BY Severity, CheckName, Ticker LIMIT {limit}', params,
         ).df()
         all_checks = [row[0] for row in con.execute('SELECT DISTINCT CheckName FROM anomalies ORDER BY CheckName').fetchall()]
+        all_tables = [row[0] for row in con.execute('SELECT DISTINCT SrcTable FROM anomalies ORDER BY SrcTable').fetchall()]
     finally:
         if log_entries:
             con.unregister('logged_raw')
@@ -79,7 +92,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     frame['Key'] = frame['Key'].where(frame['Key'].notna(), None)
     frame['Details'] = frame['Details'].apply(
         lambda value: actions.format_details_numbers(value) if isinstance(value, str) else value)
-    return frame.to_dict('records'), total, all_checks
+    return frame.to_dict('records'), total, all_checks, all_tables
 
 
 def _labeled(label: str, component) -> html.Div:
@@ -117,6 +130,8 @@ def layout() -> html.Div:
     filters = dmc.Group([
         dmc.MultiSelect(id='dq-filter-check', data=[], placeholder='checks', clearable=True, size='xs',
                         style={'flex': 1, 'minWidth': 0}),
+        dmc.MultiSelect(id='dq-filter-table', data=[], placeholder='tables', clearable=True, size='xs',
+                        style={'width': '160px'}),
         dmc.SegmentedControl(id='dq-filter-severity', value='all', size='xs',
                              data=[{'label': 'All', 'value': 'all'}, {'label': 'Error', 'value': 'error'},
                                    {'label': 'Warn', 'value': 'warn'}]),
@@ -152,23 +167,24 @@ clientside_callback(
 
 @callback(
     Output('dq-grid', 'rowData'), Output('dq-count', 'children'), Output('dq-filter-check', 'data'),
-    Output('dq-notice', 'children'),
+    Output('dq-filter-table', 'data'), Output('dq-notice', 'children'),
     Input('dq-btn-refresh', 'n_clicks'), Input('dq-filter-check', 'value'), Input('dq-filter-severity', 'value'),
-    Input('dq-filter-ticker', 'value'), Input('dq-log-tick', 'data'),
+    Input('dq-filter-ticker', 'value'), Input('dq-filter-table', 'value'), Input('dq-log-tick', 'data'),
 )
-def refresh_grid(_refresh, checks, severity, ticker, _tick):
+def refresh_grid(_refresh, checks, severity, ticker, tables, _tick):
     """Reload the open-anomaly grid for the current filters and the latest log state."""
     log_entries = quality_log.read_log(LOG_PATH)
     con = storage.connect(DATA_ROOT, read_only=True)
     try:
-        rows, total, all_checks = read_open_anomalies(con, log_entries, checks, severity, ticker, ROW_LIMIT)
+        rows, total, all_checks, all_tables = read_open_anomalies(
+            con, log_entries, checks, severity, ticker, tables, ROW_LIMIT)
     except duckdb.Error:
-        return dash.no_update, dash.no_update, dash.no_update, dmc.Text(BUSY, size='xs', c='dimmed')
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dmc.Text(BUSY, size='xs', c='dimmed')
     finally:
         con.close()
     shown = (f'showing {len(rows)} of {total:,} open' + (' (filter to see more)' if total > len(rows) else '')
              + f' | {len(log_entries)} logged')
-    return rows, shown, all_checks, None
+    return rows, shown, all_checks, all_tables, None
 
 
 @callback(
