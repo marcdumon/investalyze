@@ -1,6 +1,6 @@
 """CLI entry: `python -m investalyze.cleaning`. Check or apply the fixes in `cleaning.toml`.
 
-`check` reports what each fix would touch (read-only); `apply` deletes the matching rows.
+`check` reports what each fix would touch (read-only); `apply` executes the fixes.
 Both are safe to re-run: a clean fix matches 0 rows and is skipped. `detect` confirms the
 target rows *exist*, not that the underlying quirk still *holds*: if a vendor ever replaces
 bogus rows with real data, re-evaluate the entry by hand (each fix's `reason` points at the
@@ -25,7 +25,7 @@ def main() -> None:
         description='Apply persistent manual data corrections to the DuckDB.',
     )
     parser.add_argument('command', choices=('check', 'apply'),
-                        help="'check' reports what each fix would touch, 'apply' deletes the matching rows")
+                        help="'check' reports what each fix would touch, 'apply' executes the fixes")
     parser.add_argument('--config', type=Path, default=Path('cleaning.toml'),
                         help='fixes TOML (default: ./cleaning.toml)')
     parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
@@ -46,11 +46,11 @@ def main() -> None:
             state = 'clean' if n == 0 else 'pending'
             log.info(f'{label}: {n} rows ({state})')
         else:
-            deleted = module.apply(con, fix)
-            if deleted == 0:
+            changed = module.apply(con, fix)
+            if changed == 0:
                 log.info(f'{label}: clean, skipped')
             else:
-                log.info(f'{label}: deleted {deleted} rows')
+                log.info(f'{label}: changed {changed} rows')
 
 
 if __name__ == '__main__':

@@ -73,3 +73,18 @@ table = 'market_data'
 tickers = ['^PSEI']
 end = 1990-02-27
 reason = 'predates PSEi official base (1990-02-28); no documented official predecessor found, see notebooks/9999_data_quirks.ipynb'
+
+[[repair_zero_low]]
+table = 'prices'
+tickers = []
+reason = 'vendor bars where only L is 0 while O/H/C/AC are intact; the true low is bounded by min(O, C), see quality nonpositive_price findings'
+
+[[repair_zero_open]]
+table = 'prices'
+tickers = []
+reason = 'vendor bars with no recorded open (0) while H/L/C/AC are intact, mostly CXE/CMU/CXH muni CEFs; O = C keeps bars self-consistent'
+
+[[rebuild_adjusted_close]]
+table = 'prices'
+tickers = ['VHI', 'VATE', 'CBIO', 'SAFE', 'DEC']
+reason = 'negative AC prefix per ticker: one recorded distribution at or above the previous close flips the back-adjustment sign; rebuild AC excluding those events'
