@@ -142,27 +142,65 @@ def _usd_tick(exponent: int) -> str:
     return f'${10 ** (exponent % 3)}{unit}'
 
 
+def _fence_range(values: pd.Series, own: float | None) -> tuple[float, float] | None:
+    """Robust axis fences: 1.5 IQR beyond the quartiles, trimmed to the data and widened to include the ticker."""
+    if values.empty:
+        return None
+    q1, q3 = float(values.quantile(0.25)), float(values.quantile(0.75))
+    iqr = q3 - q1
+    lo = max(float(values.min()), q1 - 1.5 * iqr)
+    hi = min(float(values.max()), q3 + 1.5 * iqr)
+    if own is not None and pd.notna(own):
+        lo, hi = min(lo, float(own)), max(hi, float(own))
+    if hi <= lo:
+        return None
+    return lo, hi
+
+
+def _stacked_offsets(values: pd.Series) -> pd.Series:
+    """Vertical offsets that stack pinned extremes in value order, highest at the top."""
+    if len(values) == 1:
+        return pd.Series([0.0], index=values.index)
+    rank = values.rank(method='first')
+    return -0.55 + (rank - 1) / (len(values) - 1) * 1.1
+
+
 def _blend(start: tuple[int, int, int], end: tuple[int, int, int], t: float) -> tuple[int, int, int]:
     """Linear RGB blend at t in [0, 1]."""
     return tuple(round(s + (e - s) * t) for s, e in zip(start, end))
 
 
-def _verdict_rgb(score: float) -> tuple[int, int, int]:
-    """Red through gray to green RGB for a 0-100 goodness score."""
-    red, gray, green = (227, 73, 72), (137, 135, 129), (25, 158, 112)
-    if score <= 50:
-        return _blend(red, gray, score / 50)
-    return _blend(gray, green, (score - 50) / 50)
+# Status poles from the dataviz reference palette, validated for CVD separation and 3:1 contrast
+# on both chart surfaces; the diverging midpoint is the neutral context gray.
+_VERDICT_BAD = (208, 59, 59)     # #d03b3b
+_VERDICT_GOOD = (12, 163, 12)    # #0ca30c
+_VERDICT_GRAY = (137, 135, 129)  # #898781
+
+
+def _verdict_rgb(score: float) -> tuple[int, int, int] | None:
+    """RGB for an oriented 0-100 percentile in five verdict bins; the middle bin is neutral (None)."""
+    if score >= 80:
+        return _VERDICT_GOOD
+    if score >= 60:
+        return _blend(_VERDICT_GOOD, _VERDICT_GRAY, 0.5)
+    if score > 40:
+        return None
+    if score > 20:
+        return _blend(_VERDICT_BAD, _VERDICT_GRAY, 0.5)
+    return _VERDICT_BAD
 
 
 def peer_violin_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, str, str]], dark: bool) -> go.Figure:
     """Violin small multiples with inner quartile box and outlier dots; the ticker wears an accent needle plus diamond.
 
-    Each violin is tinted red through gray to green by the ticker's oriented percentile in that
-    metric (HIGHER_IS_BETTER decides the direction; unoriented metrics stay gray), with a P-tag
-    showing the raw percentile. Dollar rows build the violin over log10 values so the shape
-    reflects orders of magnitude, and label the axis in dollars. Axes span the full data range
-    so outliers stay visible.
+    Each oriented metric shows the ticker's peer percentile (P-tag, 100 = best per
+    HIGHER_IS_BETTER) and tints the violin in one of five verdict bins from red (weak) through
+    neutral gray to green (strong), so the number and the color always agree; metrics without an
+    orientation stay gray, their P-tag a plain rank in the group. Dollar rows build the violin
+    over log10 values so the shape reflects orders of magnitude, and label the axis in dollars.
+    Other rows clamp the axis to robust IQR fences (widened to include the ticker) and pin values
+    beyond them at the edge as outward triangles, so extremes stay visible without squeezing the
+    body of the distribution.
     """
     theme = _theme(dark)
     fig = make_subplots(rows=len(spec), cols=1, vertical_spacing=min(0.5 / max(len(spec) - 1, 1), 0.14),
@@ -192,16 +230,34 @@ def peer_violin_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, s
         if own is not None and len(valid):
             pct = float((valid[column] <= own).mean() * 100)
             if column in HIGHER_IS_BETTER:
-                r, g, b = _verdict_rgb(pct if HIGHER_IS_BETTER[column] else 100 - pct)
-                edge, fill = f'rgb({r}, {g}, {b})', f'rgba({r}, {g}, {b}, 0.3)'
-        if len(valid):
+                pct = pct if HIGHER_IS_BETTER[column] else 100 - pct
+                verdict = _verdict_rgb(pct)
+                if verdict is not None:
+                    r, g, b = verdict
+                    edge, fill = f'rgb({r}, {g}, {b})', f'rgba({r}, {g}, {b}, 0.3)'
+        fences = _fence_range(x, own_x) if fmt != 'usd' and len(valid) else None
+        inside = (x >= fences[0]) & (x <= fences[1]) if fences is not None else pd.Series(True, index=valid.index)
+        if inside.any():
             fig.add_trace(go.Violin(
-                x=x, y0=0.0, orientation='h', width=1.6, spanmode='hard',
+                x=x[inside], y0=0.0, orientation='h', width=1.6, spanmode='hard',
                 points='outliers', jitter=0.25, pointpos=0, marker=point_style,
                 box={'visible': True, 'width': 0.2, 'fillcolor': 'rgba(0, 0, 0, 0)',
                      'line': {'color': edge, 'width': 1}},
-                text=valid['Ticker'], customdata=customdata, hoveron='points', hovertemplate=point_hover,
+                text=valid['Ticker'][inside], customdata=customdata[inside] if customdata is not None else None,
+                hoveron='points', hovertemplate=point_hover,
                 line={'color': edge, 'width': 1}, fillcolor=fill,
+                showlegend=False), row=i, col=1)
+        if fences is not None and (~inside).any():
+            extremes = x[~inside]
+            sides = [extremes[extremes < fences[0]], extremes[extremes > fences[1]]]
+            offsets = pd.concat([_stacked_offsets(side) for side in sides if len(side)]).reindex(extremes.index)
+            fig.add_trace(go.Scatter(
+                x=extremes.clip(fences[0], fences[1]), y=offsets,
+                mode='markers', text=valid['Ticker'][~inside], customdata=extremes,
+                marker={'size': 8, 'color': theme['context'], 'opacity': 0.9,
+                        'symbol': ['triangle-right' if value > fences[1] else 'triangle-left' for value in extremes],
+                        'line': {'width': 1, 'color': theme['ring']}},
+                hovertemplate='%{text}: %{customdata:.2f} (beyond axis)<extra></extra>',
                 showlegend=False), row=i, col=1)
         if pct is not None:
             fig.add_annotation(text=f'P{pct:.0f}', x=1, y=1, xref='x domain', yref='y domain',
@@ -223,8 +279,12 @@ def peer_violin_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, s
                 lo, hi = int(np.floor(min(exponents))), int(np.ceil(max(exponents)))
                 fig.update_xaxes(tickvals=list(range(lo, hi + 1)),
                                  ticktext=[_usd_tick(k) for k in range(lo, hi + 1)], row=i, col=1)
-        elif fmt == 'pct':
-            fig.update_xaxes(tickformat='.0%', row=i, col=1)
+        else:
+            if fences is not None:
+                pad = (fences[1] - fences[0]) * 0.05
+                fig.update_xaxes(range=[fences[0] - pad, fences[1] + pad], row=i, col=1)
+            if fmt == 'pct':
+                fig.update_xaxes(tickformat='.0%', row=i, col=1)
     return _style(fig, dark, 108 * len(spec) + 40)
 
 
@@ -239,8 +299,7 @@ def fundamentals_figure(ttm: pd.DataFrame, dark: bool) -> go.Figure:
     for annotation in fig.layout.annotations:   # only the subplot titles exist at this point
         annotation.update(font={'size': 12, 'color': theme['context']})
 
-    fig.add_trace(go.Scatter(x=dates, y=ttm['revenue'], line={'width': 2, 'color': slots[0]},
-                             fill='tozeroy', showlegend=False,
+    fig.add_trace(go.Scatter(x=dates, y=ttm['revenue'], line={'width': 2, 'color': slots[0]}, showlegend=False,
                              hovertemplate='%{y:,.3s}<extra>revenue</extra>'), row=1, col=1)
 
     margin_series = [('gross_margin', 'gross', slots[0]), ('op_margin', 'op', slots[1]), ('net_margin', 'net', slots[2])]

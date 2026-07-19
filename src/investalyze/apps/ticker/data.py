@@ -18,12 +18,9 @@ from investalyze.ingest import storage
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
 MARKET_TICKER = '^SPX'
-MIN_PEERS = 5
-MAX_PEERS = 15
-MAX_UNIVERSE_PEERS = 100   # keeps the strip charts and peer list responsive for large universes
-MAX_LOG_GAP = 2.5   # a peer must be within ~300x of the ticker's market cap
+MAX_UNIVERSE_PEERS = 100   # caps the factor-profile comparison group for very large peer sets
 TRAILING_WINDOWS = {'1m': 21, '3m': 63, '6m': 126, '1y': 252, '3y': 756, '5y': 1260}
-RANGE_SESSIONS = {'1y': 252, '3y': 756, '5y': 1260, '10y': 2520, 'max': None}
+RANGE_SESSIONS = {'3m': 63, '1y': 252, '3y': 756, '5y': 1260, '10y': 2520, 'max': None}
 
 _INCOME_ITEMS = ['Revenue', 'Gross Profit', 'Operating Income (Loss)', 'Net Income (Common)', 'Shares (Diluted)']
 _CASHFLOW_ITEMS = ['Net Cash from Operating Activities', 'Change in Fixed Assets & Intangibles']
@@ -35,32 +32,19 @@ def _mcap_gap(peers: pd.DataFrame, mcap: float) -> pd.Series:
     return (np.log10(peers['mcap'].where(peers['mcap'] > 0)) - np.log10(mcap)).abs()
 
 
-def peer_group(pool: pd.DataFrame, ticker: str) -> pd.DataFrame:
-    """The ticker's comparison group: itself (first row) plus size-comparable industry mates.
-
-    A peer must be within MAX_LOG_GAP orders of magnitude in market cap; fewer than MIN_PEERS
-    such industry mates widens to the sector. The group is capped to the MAX_PEERS closest by
-    market cap. A ticker without its own market cap falls back to plain industry/sector mates.
-    """
+def scope_peer_group(pool: pd.DataFrame, ticker: str, scope: str,
+                     cap: int | None = MAX_UNIVERSE_PEERS) -> pd.DataFrame:
+    """The ticker's comparison group: itself (first row) plus every pool row sharing its `scope`
+    ('industry' or 'sector') value, capped to the `cap` closest by market cap (None keeps them all).
+    An 'unknown' scope value yields the ticker alone."""
     me = pool[pool['Ticker'] == ticker]
     if me.empty:
         return me
-    industry, sector, mcap = me.iloc[0]['industry'], me.iloc[0]['sector'], me.iloc[0]['mcap']
-    if industry != 'unknown':
-        candidates = pool[(pool['industry'] == industry) & (pool['Ticker'] != ticker)]
-    else:
-        candidates = pool.iloc[0:0]
-    if pd.isna(mcap) or mcap <= 0:
-        if len(candidates) < MIN_PEERS and sector != 'unknown':
-            candidates = pool[(pool['sector'] == sector) & (pool['Ticker'] != ticker)]
-        return pd.concat([me, candidates.head(MAX_PEERS)], ignore_index=True)
-    gap = _mcap_gap(candidates, mcap)
-    if (gap <= MAX_LOG_GAP).sum() < MIN_PEERS and sector != 'unknown':
-        candidates = pool[(pool['sector'] == sector) & (pool['Ticker'] != ticker)]
-        gap = _mcap_gap(candidates, mcap)
-    within = gap <= MAX_LOG_GAP
-    peers = candidates[within].loc[gap[within].sort_values().index].head(MAX_PEERS)
-    return pd.concat([me, peers], ignore_index=True)
+    value = me.iloc[0][scope]
+    if value == 'unknown':
+        return me.reset_index(drop=True)
+    members = pool.loc[pool[scope] == value, 'Ticker'].tolist()
+    return universe_peer_group(pool, ticker, members, cap)
 
 
 def universe_peer_group(pool: pd.DataFrame, ticker: str, members: list[str],
