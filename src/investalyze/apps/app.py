@@ -3,6 +3,8 @@
 Run with:  .venv/bin/python -m investalyze.apps  then open http://127.0.0.1:8050
 """
 
+import logging
+
 import dash
 import dash_mantine_components as dmc
 from dash import Dash, Input, Output, clientside_callback, dcc, html
@@ -15,8 +17,10 @@ from dash_iconify import DashIconify
 # to be locked by a running job: exactly when the panel most needs to still come up.
 # dash_ag_grid ships no CSS of its own (AG Grid's newer Theming API replaces it); the legacy
 # ag-theme-alpine[-dark] classes used across the grids need this stylesheet to render at all.
+# update_title=None: the control panel polls every second to drive its live job log, which would
+# otherwise flash the browser tab title to 'Updating...' on every tick.
 app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptions=True,
-          external_stylesheets=[ag_grid_themes.BASE, ag_grid_themes.ALPINE])
+          external_stylesheets=[ag_grid_themes.BASE, ag_grid_themes.ALPINE], update_title=None)
 
 # Registers each page (dash.register_page at import time) before the layout below reads dash.page_registry.
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401
@@ -65,5 +69,21 @@ clientside_callback(
     Input('theme-switch', 'checked'),
 )
 
+class _QuietSuccessfulRequests(logging.Filter):
+    """Drop werkzeug's access log line for successful requests; errors and startup messages still show.
+
+    The control panel's 1s poll would otherwise print a request line every second, burying anything
+    else in the terminal.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        parts = record.getMessage().rsplit(' ', 2)
+        return not (len(parts) == 3 and parts[1] in ('200', '304'))
+
+
+# Set up here, not behind `if __name__ == '__main__'`: `python -m investalyze.apps` runs this
+# module's __main__.py, which imports `app` from here and calls app.run() itself.
+logging.getLogger('werkzeug').addFilter(_QuietSuccessfulRequests())
+
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(debug=True, dev_tools_silence_routes_logging=False)
