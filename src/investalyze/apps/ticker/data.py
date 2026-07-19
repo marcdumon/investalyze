@@ -20,6 +20,7 @@ DATA_ROOT = ROOT / 'data'
 MARKET_TICKER = '^SPX'
 MIN_PEERS = 5
 MAX_PEERS = 15
+MAX_UNIVERSE_PEERS = 100   # keeps the strip charts and peer list responsive for large universes
 MAX_LOG_GAP = 2.5   # a peer must be within ~300x of the ticker's market cap
 TRAILING_WINDOWS = {'1m': 21, '3m': 63, '6m': 126, '1y': 252, '3y': 756, '5y': 1260}
 RANGE_SESSIONS = {'1y': 252, '3y': 756, '5y': 1260, '10y': 2520, 'max': None}
@@ -60,6 +61,22 @@ def peer_group(pool: pd.DataFrame, ticker: str) -> pd.DataFrame:
     within = gap <= MAX_LOG_GAP
     peers = candidates[within].loc[gap[within].sort_values().index].head(MAX_PEERS)
     return pd.concat([me, peers], ignore_index=True)
+
+
+def universe_peer_group(pool: pd.DataFrame, ticker: str, members: list[str],
+                        cap: int | None = MAX_UNIVERSE_PEERS) -> pd.DataFrame:
+    """The ticker's comparison group from an explicit member list: itself (first row) plus the members
+    found in the pool, capped to the `cap` closest by market cap (None keeps them all)."""
+    me = pool[pool['Ticker'] == ticker]
+    if me.empty:
+        return me
+    mates = pool[pool['Ticker'].isin(set(members) - {ticker})]
+    if cap is not None and len(mates) > cap:
+        mcap = me.iloc[0]['mcap']
+        if pd.notna(mcap) and mcap > 0:
+            mates = mates.loc[_mcap_gap(mates, mcap).sort_values().index]
+        mates = mates.head(cap)
+    return pd.concat([me, mates], ignore_index=True)
 
 
 def price_history(ticker: str) -> pd.DataFrame:

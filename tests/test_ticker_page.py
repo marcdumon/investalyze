@@ -5,7 +5,8 @@ import pytest
 
 from investalyze.analysis.factors import FACTORS
 from investalyze.apps.ticker.data import (
-    MAX_PEERS, drawdown, peer_group, peer_percentiles, rebased, trailing_returns, ttm_history,
+    MAX_PEERS, MAX_UNIVERSE_PEERS, drawdown, peer_group, peer_percentiles, rebased, trailing_returns, ttm_history,
+    universe_peer_group,
 )
 
 POOL = pd.DataFrame({
@@ -62,6 +63,37 @@ def test_peer_group_caps_by_mcap_proximity():
 
 def test_peer_group_unknown_ticker_empty():
     assert peer_group(POOL, 'NOPE').empty
+
+
+def test_universe_peer_group_ticker_first_and_deduped():
+    group = universe_peer_group(POOL, 'ME', ['ME', 'A', 'S1'])
+    assert group.iloc[0]['Ticker'] == 'ME'
+    assert group['Ticker'].tolist().count('ME') == 1
+    assert set(group['Ticker']) == {'ME', 'A', 'S1'}
+
+
+def test_universe_peer_group_keeps_members_found_in_pool():
+    group = universe_peer_group(POOL, 'ME', ['A', 'GONE', 'S2'])
+    # no size filter or cap: the list is taken as curated
+    assert set(group['Ticker']) == {'ME', 'A', 'S2'}
+
+
+def test_universe_peer_group_unknown_ticker_empty():
+    assert universe_peer_group(POOL, 'NOPE', ['A', 'B']).empty
+
+
+def test_universe_peer_group_caps_by_mcap_proximity():
+    n = MAX_UNIVERSE_PEERS + 20
+    pool = pd.DataFrame({
+        'Ticker': ['ME'] + [f'P{i}' for i in range(n)],
+        'industry': ['Soft'] * (n + 1), 'sector': ['Tech'] * (n + 1),
+        'mcap': [10e9] + [10e9 * (1.1 ** i) for i in range(n)],
+    })
+    group = universe_peer_group(pool, 'ME', pool['Ticker'].tolist())
+    assert len(group) == MAX_UNIVERSE_PEERS + 1
+    assert group.iloc[0]['Ticker'] == 'ME'
+    assert f'P{n - 1}' not in set(group['Ticker'])   # farthest by log-mcap is dropped
+    assert len(universe_peer_group(pool, 'ME', pool['Ticker'].tolist(), cap=None)) == n + 1
 
 
 def test_drawdown():

@@ -6,11 +6,12 @@ five categorical slots in fixed order. Every builder takes prepared frames plus 
 returns a themed go.Figure with transparent backgrounds so it sits on the Mantine card.
 """
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from investalyze.analysis.factors import FAMILIES
+from investalyze.analysis.factors import FAMILIES, HIGHER_IS_BETTER
 from investalyze.apps.ticker.data import drawdown
 
 _COLORS = {
@@ -135,57 +136,96 @@ def factor_profile_figure(families: pd.Series, ranks: pd.Series, dark: bool) -> 
     return _style(fig, dark, 620)
 
 
-def _strip_range(values: pd.Series, own: float | None) -> list[float] | None:
-    """Robust linear axis range: peer values inside the boxplot fences, widened to include the ticker.
+def _usd_tick(exponent: int) -> str:
+    """Dollar tick label for 10**exponent, matching plotly's ~s suffixes."""
+    unit = {1: 'k', 2: 'M', 3: 'G', 4: 'T'}.get(exponent // 3, '')
+    return f'${10 ** (exponent % 3)}{unit}'
 
-    Extreme peer outliers would otherwise stretch the axis until every other dot collapses into
-    one clump; quantiles alone cannot help at 15 peers, so classic 1.5 IQR fences trim instead.
+
+def _blend(start: tuple[int, int, int], end: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    """Linear RGB blend at t in [0, 1]."""
+    return tuple(round(s + (e - s) * t) for s, e in zip(start, end))
+
+
+def _verdict_rgb(score: float) -> tuple[int, int, int]:
+    """Red through gray to green RGB for a 0-100 goodness score."""
+    red, gray, green = (227, 73, 72), (137, 135, 129), (25, 158, 112)
+    if score <= 50:
+        return _blend(red, gray, score / 50)
+    return _blend(gray, green, (score - 50) / 50)
+
+
+def peer_violin_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, str, str]], dark: bool) -> go.Figure:
+    """Violin small multiples with inner quartile box and outlier dots; the ticker wears an accent needle plus diamond.
+
+    Each violin is tinted red through gray to green by the ticker's oriented percentile in that
+    metric (HIGHER_IS_BETTER decides the direction; unoriented metrics stay gray), with a P-tag
+    showing the raw percentile. Dollar rows build the violin over log10 values so the shape
+    reflects orders of magnitude, and label the axis in dollars. Axes span the full data range
+    so outliers stay visible.
     """
-    if values.empty:
-        return None
-    q1, q3 = float(values.quantile(0.25)), float(values.quantile(0.75))
-    iqr = q3 - q1
-    lo = max(float(values.min()), q1 - 1.5 * iqr)
-    hi = min(float(values.max()), q3 + 1.5 * iqr)
-    if own is not None and pd.notna(own):
-        lo, hi = min(lo, float(own)), max(hi, float(own))
-    pad = (hi - lo) * 0.08 or max(abs(hi), 1.0) * 0.08
-    return [lo - pad, hi + pad]
-
-
-def peer_strip_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, str, str]], dark: bool) -> go.Figure:
-    """Dot-strip small multiples: one row per metric, peers as gray dots, the ticker as accent diamond."""
     theme = _theme(dark)
     fig = make_subplots(rows=len(spec), cols=1, vertical_spacing=min(0.5 / max(len(spec) - 1, 1), 0.14),
                         subplot_titles=[label for _, label, _ in spec])
+    for annotation in fig.layout.annotations:   # only the subplot titles exist at this point
+        annotation.update(x=0, xanchor='left', font={'size': 11, 'color': theme['context']})
     others = peers[peers['Ticker'] != ticker]
     me = peers[peers['Ticker'] == ticker]
+    point_style = {'size': 7, 'color': theme['context'], 'opacity': 0.8, 'line': {'width': 1, 'color': theme['ring']}}
     for i, (column, _label, fmt) in enumerate(spec, start=1):
-        valid = others[others[column].notna()]
         own = float(me.iloc[0][column]) if len(me) and pd.notna(me.iloc[0][column]) else None
-        fig.add_trace(go.Scatter(
-            x=valid[column], y=[0] * len(valid), mode='markers', text=valid['Ticker'],
-            marker={'size': 9, 'color': theme['context'], 'opacity': 0.7,
-                    'line': {'width': 2, 'color': theme['ring']}},
-            hovertemplate='%{text}: %{x:' + (',.3s' if fmt == 'usd' else '.2f') + '}<extra></extra>',
-            showlegend=False), row=i, col=1)
-        if own is not None:
+        if fmt == 'usd':
+            valid = others[others[column].notna() & (others[column] > 0)]
+            x = np.log10(valid[column])
+            own_x = np.log10(own) if own is not None and own > 0 else None
+            customdata = valid[column]
+            point_hover = '%{text}: %{customdata:,.3s}<extra></extra>'
+            own_hover = '%{text}: %{customdata:,.3s}<extra></extra>'
+        else:
+            valid = others[others[column].notna()]
+            x = valid[column]
+            own_x = own
+            customdata = None
+            point_hover = '%{text}: %{x:.2f}<extra></extra>'
+            own_hover = '%{text}: %{x:.2f}<extra></extra>'
+        pct, edge, fill = None, theme['context'], 'rgba(137, 135, 129, 0.35)'
+        if own is not None and len(valid):
+            pct = float((valid[column] <= own).mean() * 100)
+            if column in HIGHER_IS_BETTER:
+                r, g, b = _verdict_rgb(pct if HIGHER_IS_BETTER[column] else 100 - pct)
+                edge, fill = f'rgb({r}, {g}, {b})', f'rgba({r}, {g}, {b}, 0.3)'
+        if len(valid):
+            fig.add_trace(go.Violin(
+                x=x, y0=0.0, orientation='h', width=1.6, spanmode='hard',
+                points='outliers', jitter=0.25, pointpos=0, marker=point_style,
+                box={'visible': True, 'width': 0.2, 'fillcolor': 'rgba(0, 0, 0, 0)',
+                     'line': {'color': edge, 'width': 1}},
+                text=valid['Ticker'], customdata=customdata, hoveron='points', hovertemplate=point_hover,
+                line={'color': edge, 'width': 1}, fillcolor=fill,
+                showlegend=False), row=i, col=1)
+        if pct is not None:
+            fig.add_annotation(text=f'P{pct:.0f}', x=1, y=1, xref='x domain', yref='y domain',
+                               xanchor='right', yanchor='top', showarrow=False,
+                               font={'size': 11, 'color': edge}, row=i, col=1)
+        if own_x is not None:
             fig.add_trace(go.Scatter(
-                x=[own], y=[0], mode='markers', text=[ticker], marker={
+                x=[own_x, own_x], y=[-0.8, 0.8], mode='lines', line={'color': theme['accent'], 'width': 2},
+                hoverinfo='skip', showlegend=False), row=i, col=1)
+            fig.add_trace(go.Scatter(
+                x=[own_x], y=[0], mode='markers', text=[ticker], customdata=[own], marker={
                     'size': 14, 'symbol': 'diamond', 'color': theme['accent'],
                     'line': {'width': 2, 'color': theme['ring']}},
-                hovertemplate='%{text}: %{x:' + (',.3s' if fmt == 'usd' else '.2f') + '}<extra></extra>',
-                showlegend=False), row=i, col=1)
+                hovertemplate=own_hover, showlegend=False), row=i, col=1)
         fig.update_yaxes(visible=False, range=[-1, 1], row=i, col=1)
         if fmt == 'usd':
-            fig.update_xaxes(type='log', dtick=1, tickformat='~s', tickprefix='$', row=i, col=1)
-        else:
-            fig.update_xaxes(range=_strip_range(valid[column], own), row=i, col=1)
-            if fmt == 'pct':
-                fig.update_xaxes(tickformat='.0%', row=i, col=1)
-    for annotation in fig.layout.annotations:
-        annotation.update(x=0, xanchor='left', font={'size': 11, 'color': theme['context']})
-    return _style(fig, dark, 76 * len(spec) + 40)
+            exponents = list(x) + ([own_x] if own_x is not None else [])
+            if exponents:
+                lo, hi = int(np.floor(min(exponents))), int(np.ceil(max(exponents)))
+                fig.update_xaxes(tickvals=list(range(lo, hi + 1)),
+                                 ticktext=[_usd_tick(k) for k in range(lo, hi + 1)], row=i, col=1)
+        elif fmt == 'pct':
+            fig.update_xaxes(tickformat='.0%', row=i, col=1)
+    return _style(fig, dark, 108 * len(spec) + 40)
 
 
 def fundamentals_figure(ttm: pd.DataFrame, dark: bool) -> go.Figure:
