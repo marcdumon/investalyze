@@ -91,6 +91,7 @@ def _hero(ticker: str, row: pd.Series, ttm: pd.DataFrame, returns: pd.DataFrame 
         dmc.Text(row['name'], size='lg'),
         dmc.Text(f"{row['sector']} / {row['industry']}", size='sm', c='dimmed'),
         *badges,
+        dmc.Anchor('Yahoo Finance', href=f'https://finance.yahoo.com/quote/{ticker}', target='_blank', size='xs'),
     ], gap=10)
 
     latest = ttm.iloc[-1] if len(ttm) else None
@@ -293,7 +294,7 @@ def layout(symbol: str | None = None, **_query) -> html.Div:
     ], style={'padding': '4px'})
 
 
-dash.register_page(__name__, path='/ticker', name='Ticker', layout=layout)
+dash.register_page(__name__, path='/ticker', name='Stock', layout=layout)
 
 # Scrolls to the clicked section clientside; href="#..." anchors would make the Dash router
 # rebuild the whole page on the hash change.

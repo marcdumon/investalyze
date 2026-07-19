@@ -15,3 +15,22 @@ dagcomponentfuncs.TickerLink = function (props) {
         props.value
     );
 };
+
+// Same link, but only when the ticker is actually a stock (IsStock flag set server-side from the
+// screener pool); anomalies on bonds/indices/currencies or fundamentals-only tickers have nothing
+// to show on the stock page, so those render as plain text.
+dagcomponentfuncs.TickerLinkIfStock = function (props) {
+    if (!props.data.IsStock) {
+        return props.value;
+    }
+    return React.createElement(
+        'a',
+        {
+            href: '/ticker?symbol=' + props.value,
+            target: '_blank',
+            rel: 'noopener',
+            style: {color: 'var(--mantine-color-anchor)', textDecoration: 'none'},
+        },
+        props.value
+    );
+};

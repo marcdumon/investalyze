@@ -18,6 +18,7 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from investalyze.apps.data_quality import actions, evidence, quality_log, toml_io
+from investalyze.apps.screener.data import get_pool
 from investalyze.ingest import storage
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -37,7 +38,7 @@ ANOMALY_COLUMNS = [
     # grid's row cap; a second, page-local column filter here would look equivalent but silently
     # search a different, arbitrary subset (the exact bug this replaced).
     {'field': 'SrcTable', 'headerName': 'Table', 'width': 105, 'filter': False},
-    {'field': 'Ticker', 'width': 85},
+    {'field': 'Ticker', 'width': 85, 'cellRenderer': 'TickerLinkIfStock'},
     {'field': 'Date', 'width': 105},
     {'field': 'Key', 'width': 150},
     {'field': 'Details', 'flex': 1, 'minWidth': 200},
@@ -92,6 +93,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     frame['Key'] = frame['Key'].where(frame['Key'].notna(), None)
     frame['Details'] = frame['Details'].apply(
         lambda value: actions.format_details_numbers(value) if isinstance(value, str) else value)
+    frame['IsStock'] = frame['Ticker'].isin(set(get_pool()['Ticker']))
     return frame.to_dict('records'), total, all_checks, all_tables
 
 
