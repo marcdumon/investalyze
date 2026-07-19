@@ -13,6 +13,7 @@ import pandas as pd
 
 from investalyze.analysis.factors import FACTORS, FAMILIES
 from investalyze.apps.screener.logic import compute_ranks
+from investalyze.apps.ticker import statements
 from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -101,6 +102,32 @@ def trailing_returns(history: pd.DataFrame) -> pd.DataFrame:
         else:
             rows.append({'window': label, 'ticker': np.nan, 'market': np.nan})
     return pd.DataFrame(rows)
+
+
+STATEMENT_TABLES = ('income', 'balance', 'cashflow')
+
+
+def statement_history(ticker: str, statement: str, period: str, restated: bool = True) -> pd.DataFrame:
+    """One statement table's rows for the ticker and period ('A'/'Q'), restated or as filed,
+    one row per fiscal period (the latest available), oldest first."""
+    if statement not in STATEMENT_TABLES:
+        raise ValueError(f'unknown statement {statement!r}')
+    con = storage.connect(DATA_ROOT, read_only=True)
+    try:
+        frame = con.execute(f'SELECT * FROM {statement} WHERE Ticker = ? AND Period = ? AND IsRestated = ?',
+                            [ticker, period, restated]).df()
+    finally:
+        con.close()
+    return statements.latest_restated(frame) if len(frame) else frame
+
+
+def matched_revenue(frame: pd.DataFrame, ticker: str, period: str, restated: bool = True) -> pd.Series:
+    """Income-statement Revenue aligned to `frame`'s fiscal periods, the common-size base for cashflow."""
+    income = statement_history(ticker, 'income', period, restated)
+    lookup = {(fy, fp): revenue for fy, fp, revenue
+              in zip(income['Fiscal Year'], income['Fiscal Period'], income['Revenue'])}
+    values = [lookup.get((fy, fp), np.nan) for fy, fp in zip(frame['Fiscal Year'], frame['Fiscal Period'])]
+    return pd.Series(values, index=frame.index, dtype=float)
 
 
 def fundamentals_history(ticker: str) -> pd.DataFrame:

@@ -9,6 +9,7 @@ degrades to a dimmed note when its inputs are missing; a locked DB shows the sha
 """
 
 import dash
+import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
 import pandas as pd
@@ -17,7 +18,7 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from investalyze.apps.screener.data import get_pool
-from investalyze.apps.ticker import charts, data
+from investalyze.apps.ticker import charts, data, statements
 from investalyze.apps.universes import list_universes, load_universe
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
@@ -177,6 +178,65 @@ def _risk_section(peers: pd.DataFrame, violin_peers: pd.DataFrame, ticker: str, 
                     anchor='sec-risk')
 
 
+def _statement_table(ticker: str, statement: str, period: str, depth: str, view: str,
+                     basis: str = 'restated') -> tuple[list[dict], list[dict]]:
+    """(columnDefs, rowData) for one statement/period/depth/view/basis combination."""
+    restated = basis != 'filed'
+    frame = data.statement_history(ticker, statement, period, restated)
+    if frame.empty:
+        return [], []
+    needs_revenue = statement == 'cashflow' and view == 'common'
+    revenue = data.matched_revenue(frame, ticker, period, restated) if needs_revenue else None
+    filed = filed_revenue = None
+    if basis == 'diff':
+        filed = data.statement_history(ticker, statement, period, restated=False)
+        if needs_revenue:
+            filed_revenue = data.matched_revenue(filed, ticker, period, restated=False)
+    return statements.table_data(frame, statement, depth, view, revenue,
+                                 last=10 if period == 'A' else 12, filed=filed, filed_revenue=filed_revenue)
+
+
+def _statements_section(ticker: str, dark: bool) -> dmc.Card:
+    """Statement table with statement/period/depth/view controls and a click-to-chart item history."""
+    columns, rows = _statement_table(ticker, 'income', 'A', 'summary', 'usd')
+    if not rows:
+        return _section('Financial statements', [_no_data(f'no fundamental statements for {ticker}')],
+                        anchor='sec-statements')
+    controls = dmc.Group([
+        dmc.SegmentedControl(id='tk-st-statement', value='income', size='xs',
+                             data=[{'label': label, 'value': value}
+                                   for value, label in statements.STATEMENT_LABELS.items()]),
+        dmc.SegmentedControl(id='tk-st-period', value='A', size='xs',
+                             data=[{'label': 'Annual', 'value': 'A'}, {'label': 'Quarterly', 'value': 'Q'}]),
+        dmc.SegmentedControl(id='tk-st-basis', value='restated', size='xs',
+                             data=[{'label': 'Restated', 'value': 'restated'}, {'label': 'As filed', 'value': 'filed'},
+                                   {'label': 'Diff', 'value': 'diff'}]),
+        dmc.SegmentedControl(id='tk-st-depth', value='summary', size='xs',
+                             data=[{'label': 'Summary', 'value': 'summary'}, {'label': 'Detail', 'value': 'detail'}]),
+        dmc.SegmentedControl(id='tk-st-view', value='usd', size='xs',
+                             data=[{'label': '$', 'value': 'usd'}, {'label': 'YoY %', 'value': 'yoy'},
+                                   {'label': 'Common %', 'value': 'common'}, {'label': 'Per share', 'value': 'ps'}]),
+    ], gap=10, mb=8)
+    grid = dag.AgGrid(
+        id='tk-st-grid', columnDefs=columns, rowData=rows,
+        defaultColDef={'sortable': False, 'resizable': True, 'suppressMovable': True},
+        dashGridOptions={'animateRows': False, 'theme': 'legacy', 'domLayout': 'autoHeight',
+                         'suppressCellFocus': True},
+        getRowStyle={'styleConditions': [
+            {'condition': 'params.data.level === 0',
+             'style': {'fontWeight': 600, 'borderTop': '1px solid rgba(137,135,129,0.45)'}},
+            {'condition': 'params.data.level === 2', 'style': {'color': 'var(--mantine-color-dimmed)'}},
+        ]},
+        className='ag-theme-alpine-dark' if dark else 'ag-theme-alpine', style={'width': '100%'},
+    )
+    chart = html.Div(id='tk-st-chart',
+                     children=dmc.Text('click a line item to chart its full history', size='xs', c='dimmed', mt=8))
+    return _section('Financial statements', [controls, grid, chart],
+                    caption='newest period first; Detail shows every reported line; '
+                            'Diff = restated minus as filed, only changed cells shown',
+                    anchor='sec-statements')
+
+
 def build_sections(ticker: str, dark: bool, basis: str | None) -> list:
     """Assemble every section for one ticker; pool row missing yields a single note."""
     pool = get_pool()
@@ -210,6 +270,7 @@ def build_sections(ticker: str, dark: bool, basis: str | None) -> list:
     else:
         sections.append(_section('Fundamentals history', [_no_data(f'no quarterly fundamentals for {ticker}')],
                                  anchor='sec-fundamentals'))
+    sections.append(_statements_section(ticker, dark))
     if len(peers) >= 3:
         families, ranks = data.peer_percentiles(peers, ticker)
         profile = dmc.Grid([
@@ -267,7 +328,7 @@ def layout(symbol: str | None = None, **_query) -> html.Div:
     section_nav = dmc.Group([
         html.Span(label, id=f'tk-nav-{anchor}', style=nav_link_style)
         for label, anchor in (('performance', 'sec-performance'), ('fundamentals', 'sec-fundamentals'),
-                              ('peers', 'sec-peers'), ('risk', 'sec-risk'))
+                              ('statements', 'sec-statements'), ('peers', 'sec-peers'), ('risk', 'sec-risk'))
     ], gap=14, style={'marginLeft': 'auto'})
 
     control_bar = html.Div(
@@ -310,7 +371,8 @@ clientside_callback(
     """,
     Output('tk-nav-scroll', 'data'),
     Input('tk-nav-sec-performance', 'n_clicks'), Input('tk-nav-sec-fundamentals', 'n_clicks'),
-    Input('tk-nav-sec-peers', 'n_clicks'), Input('tk-nav-sec-risk', 'n_clicks'),
+    Input('tk-nav-sec-statements', 'n_clicks'), Input('tk-nav-sec-peers', 'n_clicks'),
+    Input('tk-nav-sec-risk', 'n_clicks'),
     prevent_initial_call=True,
 )
 
@@ -385,3 +447,42 @@ def update_range(range_key, ticker, dark):
         raise PreventUpdate
     window = data.rebased(history, data.RANGE_SESSIONS.get(range_key))
     return charts.performance_figure(window, ticker, bool(dark))
+
+
+@callback(Output('tk-st-grid', 'columnDefs'), Output('tk-st-grid', 'rowData'),
+          Input('tk-st-statement', 'value'), Input('tk-st-period', 'value'), Input('tk-st-basis', 'value'),
+          Input('tk-st-depth', 'value'), Input('tk-st-view', 'value'),
+          State('tk-select', 'value'), prevent_initial_call=True)
+def update_statements(statement, period, basis, depth, view, ticker):
+    """Re-render only the statements grid for a new statement/period/basis/depth/view."""
+    if not ticker:
+        raise PreventUpdate
+    try:
+        return _statement_table(ticker, statement, period, depth, view, basis or 'restated')
+    except duckdb.Error:
+        raise PreventUpdate
+
+
+@callback(Output('tk-st-chart', 'children'),
+          Input('tk-st-grid', 'cellClicked'),
+          State('tk-st-grid', 'rowData'), State('tk-st-statement', 'value'), State('tk-st-period', 'value'),
+          State('tk-st-basis', 'value'), State('tk-select', 'value'), State('theme-switch', 'checked'),
+          prevent_initial_call=True)
+def chart_line_item(cell, rows, statement, period, basis, ticker, dark):
+    """Chart the clicked line item's full reported history below the table; Diff overlays both bases."""
+    row_id = (cell or {}).get('rowId')
+    if not ticker or row_id is None or not str(row_id).isdigit() or not rows or int(row_id) >= len(rows):
+        raise PreventUpdate
+    item = rows[int(row_id)]['item']
+    statement, period, basis = statement or 'income', period or 'A', basis or 'restated'
+    try:
+        frame = data.statement_history(ticker, statement, period, restated=basis != 'filed')
+        filed_frame = data.statement_history(ticker, statement, period, restated=False) if basis == 'diff' else None
+    except duckdb.Error:
+        raise PreventUpdate
+    if frame.empty or item not in frame.columns:
+        raise PreventUpdate
+    filed = None
+    if filed_frame is not None and len(filed_frame):
+        filed = (filed_frame['Report Date'], filed_frame[item])
+    return dcc.Graph(figure=charts.item_history_figure(frame['Report Date'], frame[item], item, bool(dark), filed))

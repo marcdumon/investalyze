@@ -331,3 +331,25 @@ def fundamentals_figure(ttm: pd.DataFrame, dark: bool) -> go.Figure:
     fig.update_yaxes(tickformat='~s', row=2, col=2)
     fig.update_yaxes(tickformat='~s', row=2, col=3)
     return _style(fig, dark, 520)
+
+
+def item_history_figure(dates: pd.Series, values: pd.Series, label: str, dark: bool,
+                        filed: tuple[pd.Series, pd.Series] | None = None) -> go.Figure:
+    """One statement line item's full reported history as a single line, zero line visible.
+
+    `filed` = (dates, values) overlays the as-filed series in context gray with a legend.
+    """
+    theme = _theme(dark)
+    mode = 'lines+markers' if values.notna().sum() <= 40 else 'lines'
+    fig = go.Figure()
+    if filed is not None:
+        fig.add_trace(go.Scatter(x=filed[0], y=filed[1], mode=mode, name='as filed',
+                                 line={'width': 1.5, 'color': theme['context']}, marker={'size': 4},
+                                 hovertemplate='%{y:,.3s}<extra>as filed</extra>'))
+    fig.add_trace(go.Scatter(x=dates, y=values, mode=mode, name='restated', showlegend=filed is not None,
+                             line={'width': 2, 'color': theme['accent']}, marker={'size': 5},
+                             hovertemplate='%{y:,.3s}<extra>restated</extra>'))
+    fig.update_layout(title={'text': label, 'font': {'size': 12, 'color': theme['context']}, 'x': 0},
+                      legend={'orientation': 'h', 'x': 0, 'y': 1.2, 'font': {'size': 11}})
+    fig.update_yaxes(tickformat='~s', zeroline=True)
+    return _style(fig, dark, 240)
