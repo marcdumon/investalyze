@@ -1,34 +1,15 @@
-"""Per-ticker detail panel: stats, latest fundamentals, anomalies and the price chart."""
+"""Per-ticker detail panel: stats, latest fundamentals and anomalies side by side."""
 
 from pathlib import Path
 
 import duckdb
 import pandas as pd
-import plotly.graph_objects as go
-from dash import dcc, html
-from plotly.subplots import make_subplots
+from dash import html
 
 from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
-
-
-def price_figure(ticker: str, dark: bool) -> go.Figure:
-    """Adjusted close (log) and volume for the full history of one ticker."""
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
-        prices = con.execute("SELECT Date, AC, V FROM prices WHERE Ticker = ? ORDER BY Date", [ticker]).df()
-    finally:
-        con.close()
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.75, 0.25], vertical_spacing=0.03)
-    fig.add_trace(go.Scatter(x=prices['Date'], y=prices['AC'], name='AC', line={'width': 1}), row=1, col=1)
-    fig.add_trace(go.Bar(x=prices['Date'], y=prices['V'], name='Volume', marker={'line': {'width': 0}}), row=2, col=1)
-    fig.update_yaxes(type='log', row=1, col=1)
-    fig.update_layout(template='plotly_dark' if dark else 'plotly_white',
-                      height=420, margin={'l': 40, 'r': 10, 't': 30, 'b': 20}, showlegend=False,
-                      title={'text': f'{ticker} adjusted close (log) and volume', 'font': {'size': 14}})
-    return fig
 
 
 def fmt_money(value: object) -> str:
@@ -41,14 +22,14 @@ def fmt_money(value: object) -> str:
 def two_col_table(rows: list[tuple[str, object]]) -> html.Table:
     """Small label/value table used for the stats and fundamentals blocks."""
     return html.Table(
-        [html.Tr([html.Td(label, style={'color': 'var(--mantine-color-dimmed)', 'paddingRight': '12px'}),
-                  html.Td(str(value))]) for label, value in rows],
+        html.Tbody([html.Tr([html.Td(label, style={'color': 'var(--mantine-color-dimmed)', 'paddingRight': '12px'}),
+                             html.Td(str(value))]) for label, value in rows]),
         style={'fontSize': '13px', 'borderSpacing': '0 2px'},
     )
 
 
-def detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
-    """Stats, latest fundamentals, anomalies and the price chart for one ticker (row = its pool row)."""
+def detail_children(ticker: str, row: pd.Series) -> list:
+    """Stats, latest fundamentals and anomalies for one ticker (row = its pool row)."""
     stats = two_col_table([
         ('Company', row['name']), ('Sector', row['sector']), ('Industry', row['industry']),
         ('Country', row['country']), ('Employees', row['employees'] if pd.notna(row['employees']) else '-'),
@@ -92,27 +73,30 @@ def detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
         extra = f' (+{len(anomalies) - len(shown)} more)' if len(anomalies) > len(shown) else ''
         anomalies_block = html.Div([
             html.Div(f'{len(anomalies)} anomalies{extra}', style={'fontWeight': 'bold', 'fontSize': '13px'}),
-            html.Table(anomaly_rows, style={'fontSize': '12px'}),
+            html.Table(html.Tbody(anomaly_rows), style={'fontSize': '12px'}),
         ])
     else:
         anomalies_block = html.Div('no anomalies recorded', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})
 
-    left = html.Div(
-        [html.H4([ticker, dcc.Link('full analysis', href=f'/ticker?symbol={ticker}',
-                                   style={'fontSize': '12px', 'marginLeft': '10px', 'fontWeight': 'normal'})],
-                 style={'margin': '0 0 6px'}), stats,
-         html.H4('Fundamentals', style={'margin': '10px 0 4px', 'fontSize': '14px'}), fundamentals_block,
-         html.H4('Anomalies', style={'margin': '10px 0 4px', 'fontSize': '14px'}), anomalies_block],
-        style={'width': '440px', 'flexShrink': 0, 'overflowY': 'auto'},
+    heading = html.H4(
+        html.A(ticker, href=f'/ticker?symbol={ticker}', target='_blank', title='open full analysis in a new tab',
+               style={'color': 'var(--mantine-color-anchor)', 'textDecoration': 'none'}),
+        style={'margin': '0 0 6px'},
     )
-    chart = html.Div(dcc.Graph(figure=price_figure(ticker, dark)), style={'flex': 1, 'minWidth': 0})
-    return [html.Div([left, chart], style={'display': 'flex', 'gap': '16px'})]
+    blocks = [
+        html.Div([heading, stats], style={'flexShrink': 0}),
+        html.Div([html.H4('Fundamentals', style={'margin': '0 0 4px', 'fontSize': '14px'}), fundamentals_block],
+                 style={'flexShrink': 0}),
+        html.Div([html.H4('Anomalies', style={'margin': '0 0 4px', 'fontSize': '14px'}), anomalies_block],
+                 style={'minWidth': 0}),
+    ]
+    return [html.Div(blocks, style={'display': 'flex', 'gap': '32px', 'alignItems': 'flex-start', 'flexWrap': 'wrap'})]
 
 
-def safe_detail_children(ticker: str, row: pd.Series, dark: bool) -> list:
+def safe_detail_children(ticker: str, row: pd.Series) -> list:
     """detail_children, but a locked DB (a control-panel job writing) shows a notice instead of a traceback."""
     try:
-        return detail_children(ticker, row, dark)
+        return detail_children(ticker, row)
     except duckdb.Error:
         return [html.Div('database busy, a job is currently running, try again once it finishes',
                          style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '12px'})]

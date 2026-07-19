@@ -12,6 +12,7 @@ import dash_mantine_components as dmc
 import duckdb
 from dash import ALL, Input, Output, State, callback, clientside_callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
+from dash_iconify import DashIconify
 
 from investalyze.analysis import factors
 from investalyze.apps.screener import metrics
@@ -22,40 +23,30 @@ from investalyze.apps.universes import list_universes, load_universe, save_unive
 
 IDENTITY_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'mcap_bn', 'mcap_bucket']
 IDENTITY_COLUMNS = [
-    {'field': 'sel', 'headerName': '', 'editable': True, 'cellDataType': 'boolean', 'width': 50, 'pinned': 'left'},
-    {'field': 'Ticker', 'pinned': 'left', 'width': 95},
-    {'field': 'name', 'headerName': 'Company', 'width': 200},
-    {'field': 'sector', 'headerName': 'Sector', 'width': 140},
-    {'field': 'industry', 'headerName': 'Industry', 'width': 170},
-    {'field': 'mcap_bn', 'headerName': 'MCap $bn', 'width': 100},
-    {'field': 'mcap_bucket', 'headerName': 'Bucket', 'width': 85},
+    {'field': 'sel', 'headerName': '', 'editable': True, 'cellDataType': 'boolean', 'width': 46, 'pinned': 'left'},
+    {'field': 'Ticker', 'pinned': 'left', 'width': 82, 'cellRenderer': 'TickerLink'},
+    {'field': 'name', 'headerName': 'Company', 'width': 170},
+    {'field': 'sector', 'headerName': 'Sector', 'width': 120},
+    {'field': 'industry', 'headerName': 'Industry', 'width': 145},
+    {'field': 'mcap_bn', 'headerName': 'MCap $bn', 'width': 88},
+    {'field': 'mcap_bucket', 'headerName': 'Bucket', 'width': 78},
 ]
-SEL_FIELDS = ['Ticker', 'name', 'sector', 'mcap_bucket', 'dvol_mn']
+SEL_FIELDS = ['Ticker', 'name']
 SEL_COLUMNS = [
     {'field': 'sel', 'headerName': '', 'editable': True, 'cellDataType': 'boolean', 'width': 50},
-    {'field': 'Ticker', 'width': 95},
+    {'field': 'Ticker', 'width': 90, 'cellRenderer': 'TickerLink'},
     {'field': 'name', 'headerName': 'Company', 'flex': 1},
-    {'field': 'sector', 'headerName': 'Sector', 'width': 140},
-    {'field': 'mcap_bucket', 'headerName': 'Bucket', 'width': 85},
-    {'field': 'dvol_mn', 'headerName': '$Vol mn/d', 'width': 100},
 ]
 
-BTN = {'marginRight': '6px', 'marginBottom': '4px'}
 BUSY = 'database busy, a job is currently running, try again once it finishes'
 
 
-def labeled(text: str, component) -> html.Div:
-    """Sidebar row: a small label above its control."""
-    return html.Div([html.Label(text, style={'fontSize': '12px', 'color': 'var(--mantine-color-dimmed)'}), component],
-                    style={'marginBottom': '10px'})
-
-
-def grid_title(text: str, button_text: str, button_id: str) -> html.Div:
+def grid_title(text: str, button_text: str, button_id: str) -> dmc.Group:
     """Slim bar above a grid: a bold caption on the left, an action button on the right."""
-    return html.Div([
-        html.Div(text, style={'fontSize': '12px', 'fontWeight': 'bold'}),
-        html.Button(button_text, id=button_id, style=BTN | {'whiteSpace': 'nowrap', 'flexShrink': 0}),
-    ], style={'display': 'flex', 'justifyContent': 'space-between', 'alignItems': 'center', 'padding': '0 0 4px'})
+    return dmc.Group([
+        dmc.Text(text, size='xs', fw=700),
+        dmc.Button(button_text, id=button_id, size='compact-xs', variant='light'),
+    ], justify='space-between', mb=4, wrap='nowrap')
 
 
 def factor_row(factor: str) -> dmc.Group:
@@ -116,83 +107,97 @@ def layout() -> html.Div:
     except duckdb.Error:
         return html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '14px', 'padding': '24px'})
 
-    sidebar = html.Div([
-        labeled('Search ticker / company', dcc.Input(id='f-search', type='text', debounce=True, style={'width': '100%'})),
-        labeled('Sector', dcc.Dropdown(id='f-sector', options=sorted(df['sector'].unique()), multi=True)),
-        labeled('Industry', dcc.Dropdown(id='f-industry', multi=True)),
-        labeled('Market-cap bucket', dcc.Checklist(id='f-bucket', options=metrics.MCAP_LABELS, inline=True,
-                                                   style={'fontSize': '13px'})),
-        labeled('Min median $ volume (mn/day)', dcc.Input(id='f-mindvol', type='number', min=0, style={'width': '100%'})),
-        labeled('Min history (years)', dcc.Input(id='f-minyears', type='number', min=0, style={'width': '100%'})),
-        labeled('Listing', dcc.RadioItems(id='f-active', options=['all', 'active', 'delisted'], value='all', inline=True,
-                                          style={'fontSize': '13px'})),
-        labeled('Max anomalies', dcc.Input(id='f-maxanom', type='number', min=0, style={'width': '100%'})),
-        dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
-                        size='xs', clearable=True, mb=8),
-        dmc.Accordion([
-            dmc.AccordionItem([
-                dmc.AccordionControl(family, py=4),
-                dmc.AccordionPanel(dmc.Stack([factor_row(f) for f in members], gap=4)),
-            ], value=family)
-            for family, members in factors.FAMILIES.items()
-        ], multiple=True),
-        html.Div(id='filter-count', style={'fontSize': '13px', 'fontWeight': 'bold', 'margin': '8px 0'}),
-        html.Div(id='sel-status', style={'fontSize': '12px', 'color': '#0a7', 'marginTop': '6px'}),
-    ], style={'width': '340px', 'flexShrink': 0, 'padding': '12px', 'overflowY': 'auto',
-              'borderRight': '1px solid var(--mantine-color-default-border)'})
+    filter_row = dmc.Group([
+        dmc.TextInput(id='f-search', label='Search', placeholder='ticker or company', debounce=500, size='xs',
+                      leftSection=DashIconify(icon='tabler:search', width=14), style={'width': '190px'}),
+        dmc.MultiSelect(id='f-sector', label='Sector', data=sorted(df['sector'].unique()), placeholder='all',
+                        clearable=True, searchable=True, size='xs', style={'width': '190px'}),
+        dmc.MultiSelect(id='f-industry', label='Industry', data=[], placeholder='all',
+                        clearable=True, searchable=True, size='xs', style={'width': '210px'}),
+        dmc.NumberInput(id='f-mindvol', label='Min $vol (mn/d)', min=0, size='xs', style={'width': '110px'}),
+        dmc.NumberInput(id='f-minyears', label='Min years', min=0, size='xs', style={'width': '90px'}),
+        dmc.NumberInput(id='f-maxanom', label='Max anomalies', min=0, size='xs', style={'width': '110px'}),
+        html.Div([dmc.Text('Listing', size='xs', fw=500, mb=2),
+                  dmc.SegmentedControl(id='f-active', value='all', size='xs', data=['all', 'active', 'delisted'])]),
+        html.Div([dmc.Text('Market-cap bucket', size='xs', fw=500, mb=2),
+                  html.Div(dmc.ChipGroup(dmc.Group([dmc.Chip(label, value=label, size='xs')
+                                                    for label in metrics.MCAP_LABELS], gap=4),
+                                         id='f-bucket', multiple=True, value=[]),
+                           style={'height': '30px', 'display': 'flex', 'alignItems': 'center'})]),
+        dmc.Text(id='filter-count', size='sm', fw=700, style={'marginLeft': 'auto', 'alignSelf': 'flex-end'}),
+    ], gap=10, align='flex-end', px=12, pt=8, pb=6, style={'flexWrap': 'wrap'})
 
-    header = html.Div([
-        html.B('Screener', style={'marginRight': '20px'}),
-        html.Span(id='sel-count', style={'marginRight': '20px', 'color': 'var(--mantine-color-anchor)'}),
+    factor_panel = dmc.Accordion([
+        dmc.AccordionItem([
+            dmc.AccordionControl('Factor percentile filters & composite score', py=2),
+            dmc.AccordionPanel([
+                dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
+                                size='xs', clearable=True, mb=10, style={'maxWidth': '520px'}),
+                dmc.Group([
+                    dmc.Stack([dmc.Text(family, size='xs', fw=700)] + [factor_row(f) for f in members], gap=4)
+                    for family, members in factors.FAMILIES.items()
+                ], gap=24, align='flex-start', style={'flexWrap': 'wrap'}),
+            ]),
+        ], value='factors'),
+    ], multiple=True, styles={'control': {'paddingLeft': '12px'}, 'content': {'padding': '4px 12px 10px'}},
+       style={'borderBottom': '1px solid var(--mantine-color-default-border)'})
+
+    header = dmc.Group([
+        dmc.Text('Screener', fw=700, size='lg'),
+        dmc.Text(id='sel-count', size='xs', c='dimmed'),
         dmc.SegmentedControl(id='mode', value='raw', size='xs',
                              data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
-        dcc.Input(id='universe-name', type='text', placeholder='universe name',
-                  style={'width': '160px', 'marginLeft': '12px', 'marginRight': '6px'}),
-        html.Button('Save', id='btn-save', style=BTN),
-        dcc.Dropdown(id='universe-dd', options=list_universes(), placeholder='saved universes',
-                     style={'width': '200px', 'display': 'inline-block', 'verticalAlign': 'middle', 'marginRight': '6px'}),
-        html.Button('Load', id='btn-load', style=BTN),
-        html.Button('Refresh', id='btn-refresh', style=BTN),
-        html.Span(id='save-status', style={'fontSize': '12px', 'color': '#0a7', 'marginLeft': '10px'}),
-    ], style={'padding': '8px 12px', 'borderBottom': '1px solid var(--mantine-color-default-border)',
-              'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap'})
+        dmc.TextInput(id='universe-name', placeholder='universe name', size='xs', style={'width': '150px'}),
+        dmc.Button('Save', id='btn-save', size='xs', variant='default',
+                   leftSection=DashIconify(icon='tabler:device-floppy', width=14)),
+        dmc.Select(id='universe-dd', data=list_universes(), placeholder='saved universes', clearable=True,
+                   size='xs', style={'width': '190px'}),
+        dmc.Button('Load', id='btn-load', size='xs', variant='default',
+                   leftSection=DashIconify(icon='tabler:folder-open', width=14)),
+        dmc.Button('Refresh', id='btn-refresh', size='xs', variant='subtle',
+                   leftSection=DashIconify(icon='tabler:reload', width=14)),
+        dmc.Text(id='save-status', size='xs', c='teal'),
+    ], gap=8, px=12, py=8,
+       style={'borderBottom': '1px solid var(--mantine-color-default-border)', 'flexWrap': 'wrap'})
 
-    main = html.Div([
-        html.Div(id='notice'),
+    grids = html.Div([
         html.Div([
-            html.Div([
-                grid_title('Candidates', 'select all', 'btn-select-all'),
-                dag.AgGrid(
-                    id='grid', columnDefs=[], rowData=[],
-                    defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 110},
-                    dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
-                    className='ag-theme-alpine-dark',
-                    style={'flex': 1, 'width': '100%', 'minHeight': 0},
-                ),
-            ], style={'flex': 2, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
-            html.Div([
-                grid_title('Selected (uncheck to send back to candidates)', 'deselect all', 'btn-deselect-all'),
-                dag.AgGrid(
-                    id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
-                    defaultColDef={'sortable': True, 'resizable': True},
-                    dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
-                    className='ag-theme-alpine-dark',
-                    style={'flex': 1, 'width': '100%', 'minHeight': 0},
-                ),
-            ], style={'flex': 1, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
-        ], style={'display': 'flex', 'gap': '10px', 'height': '52%'}),
-        html.Div(
-            html.Span('click a grid row to inspect a ticker', style={'fontSize': '12px', 'color': 'var(--mantine-color-dimmed)'}),
-            style={'padding': '6px 12px'},
-        ),
-        html.Div(id='detail-content', style={'flex': 1, 'overflowY': 'auto', 'padding': '0 12px 12px'}),
-    ], style={'flex': 1, 'display': 'flex', 'flexDirection': 'column', 'minWidth': 0})
+            grid_title('Candidates', 'select all', 'btn-select-all'),
+            dag.AgGrid(
+                id='grid', columnDefs=[], rowData=[],
+                defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 85},
+                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
+                className='ag-theme-alpine-dark',
+                style={'flex': 1, 'width': '100%', 'minHeight': 0, '--ag-cell-horizontal-padding': '3px'},
+            ),
+        ], style={'flex': 1, 'minWidth': 0, 'display': 'flex', 'flexDirection': 'column'}),
+        html.Div([
+            grid_title('Selected (uncheck to remove)', 'deselect all', 'btn-deselect-all'),
+            dag.AgGrid(
+                id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
+                defaultColDef={'sortable': True, 'resizable': True},
+                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
+                className='ag-theme-alpine-dark',
+                style={'flex': 1, 'width': '100%', 'minHeight': 0, '--ag-cell-horizontal-padding': '3px'},
+            ),
+        ], style={'width': '340px', 'flexShrink': 0, 'display': 'flex', 'flexDirection': 'column'}),
+    ], style={'display': 'flex', 'gap': '10px', 'flex': 1, 'minHeight': 0, 'padding': '8px 12px 0'})
 
     return html.Div([
         dcc.Store(id='selection', data=[]),
         header,
-        html.Div([sidebar, main], style={'display': 'flex', 'flex': 1, 'minHeight': 0}),
-    ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)', 'fontFamily': 'sans-serif'})
+        filter_row,
+        factor_panel,
+        html.Div(id='notice'),
+        grids,
+        dmc.Group([
+            dmc.Text('click a row to inspect it below; click a Ticker cell to open its full analysis in a new tab',
+                     size='xs', c='dimmed'),
+            dmc.Text(id='sel-status', size='xs', c='teal'),
+        ], gap=16, px=12, py=6),
+        html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '45vh',
+                                             'flexShrink': 0}),
+    ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)'})
 
 
 dash.register_page(__name__, path='/screener', name='Screener', layout=layout)
@@ -204,7 +209,7 @@ clientside_callback(
 )
 
 
-@callback(Output('f-industry', 'options'), Input('f-sector', 'value'))
+@callback(Output('f-industry', 'data'), Input('f-sector', 'value'))
 def industry_options(sectors: list[str] | None) -> list[str]:
     """Industry choices narrowed to the picked sectors."""
     try:
@@ -227,6 +232,10 @@ def industry_options(sectors: list[str] | None) -> list[str]:
 def update_grid(search, sectors, industries, buckets, min_dvol, min_years, active, max_anom,
                 fmin_values, fmax_values, score_factors, mode, refresh_clicks, selection):
     """Rebuild both grids for the current filters, score selection, display mode and curation state."""
+    # dmc.NumberInput reports '' when cleared; the filters expect None for "no bound"
+    min_dvol = min_dvol if min_dvol not in (None, '') else None
+    min_years = min_years if min_years not in (None, '') else None
+    max_anom = max_anom if max_anom not in (None, '') else None
     if ctx.triggered_id == 'btn-refresh':
         clear_cache()
     try:
@@ -296,7 +305,7 @@ def update_state(grid_events, sel_events, select_all, deselect_all, load, select
 
 
 @callback(
-    Output('universe-dd', 'options'), Output('save-status', 'children'),
+    Output('universe-dd', 'data'), Output('save-status', 'children'),
     Input('btn-save', 'n_clicks'), State('selection', 'data'), State('universe-name', 'value'),
     prevent_initial_call=True,
 )
@@ -313,17 +322,17 @@ def save_current(n_clicks, selection, name):
 @callback(
     Output('detail-content', 'children'),
     Input('grid', 'cellClicked'), Input('sel-grid', 'cellClicked'),
-    State('grid', 'rowData'), State('sel-grid', 'rowData'), State('theme-switch', 'checked'),
+    State('grid', 'rowData'), State('sel-grid', 'rowData'),
     prevent_initial_call=True,
 )
-def show_detail(cell, sel_cell, rows, sel_rows, dark):
+def show_detail(cell, sel_cell, rows, sel_rows):
     """Show the detail panel for the clicked row of either grid.
 
     rowId is AG Grid's auto-assigned id (== original rowData array index) and stays stable under a
     client-side column sort; rowIndex is the sorted DISPLAY position and would resolve wrongly.
     """
     cell, data = (sel_cell, sel_rows) if ctx.triggered_id == 'sel-grid' else (cell, rows)
-    if not cell or cell.get('colId') == 'sel':
+    if not cell or cell.get('colId') in ('sel', 'Ticker'):
         raise PreventUpdate
     row_id = cell.get('rowId')
     if row_id is None or not str(row_id).isdigit() or not data or int(row_id) >= len(data):
@@ -334,4 +343,4 @@ def show_detail(cell, sel_cell, rows, sel_rows, dark):
         row = pool.loc[pool['Ticker'] == ticker].iloc[0]
     except duckdb.Error:
         return [html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '12px'})]
-    return safe_detail_children(ticker, row, bool(dark))
+    return safe_detail_children(ticker, row)
