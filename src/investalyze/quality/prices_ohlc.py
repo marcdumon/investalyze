@@ -5,12 +5,14 @@ import pandas as pd
 
 MAX_ABS_YIELD = 50.0  # bond rows are yields in percent; levels beyond this look price-quoted
 
-# NULL-safe Details: price fields can be NULL, and a plain || would null the whole string
+# NULL-safe Details: price fields can be NULL, and a plain || would null the whole string.
+# Rounded to 4 decimals: vendor prices come in as float32 cast to double, which otherwise prints
+# as noise (e.g. 10.8100004196167 instead of 10.81).
 _OHLC = (
-    """'O=' || coalesce(O::VARCHAR, 'null') || ' H=' || coalesce(H::VARCHAR, 'null')"""
-    """ || ' L=' || coalesce(L::VARCHAR, 'null') || ' C=' || coalesce(C::VARCHAR, 'null')"""
+    """'O=' || coalesce(ROUND(O, 4)::VARCHAR, 'null') || ' H=' || coalesce(ROUND(H, 4)::VARCHAR, 'null')"""
+    """ || ' L=' || coalesce(ROUND(L, 4)::VARCHAR, 'null') || ' C=' || coalesce(ROUND(C, 4)::VARCHAR, 'null')"""
 )
-_OHLC_AC = _OHLC + """ || ' AC=' || coalesce(AC::VARCHAR, 'null')"""
+_OHLC_AC = _OHLC + """ || ' AC=' || coalesce(ROUND(AC, 4)::VARCHAR, 'null')"""
 
 
 def nonpositive_price(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:

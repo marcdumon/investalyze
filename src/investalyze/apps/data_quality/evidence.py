@@ -90,6 +90,7 @@ def price_evidence(row: dict, dark: bool) -> list:
     if window.empty:
         return [html.Div(f'no {table} rows for {ticker}', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})]
 
+    window[['O', 'H', 'L', 'C']] = window[['O', 'H', 'L', 'C']].round(4)
     rows_layout = 2 if has_volume else 1
     heights = [0.75, 0.25] if has_volume else [1.0]
     fig = make_subplots(rows=rows_layout, cols=1, shared_xaxes=True, row_heights=heights, vertical_spacing=0.03)
