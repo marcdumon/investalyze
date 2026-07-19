@@ -9,7 +9,8 @@ MAX_DIVIDEND_FRAC = 0.25  # dividends above this fraction of the same-day close 
 def nonpositive_dividend(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Dividend rows with a non-positive amount."""
     return con.execute("""
-        SELECT 'dividends' AS SrcTable, Ticker, Date, NULL::VARCHAR AS Key, 'Dividend=' || Dividend AS Details
+        SELECT 'dividends' AS SrcTable, Ticker, Date, NULL::VARCHAR AS Key,
+               'Dividend=' || ROUND(Dividend, 4) AS Details
         FROM dividends
         WHERE Dividend <= 0
     """).df()
@@ -19,7 +20,7 @@ def oversized_dividend(con: duckdb.DuckDBPyConnection, *, max_dividend_frac: flo
     """Dividends above `max_dividend_frac` of the same-day close; rows without a price row are skipped."""
     return con.execute("""
         SELECT 'dividends' AS SrcTable, d.Ticker, d.Date, NULL::VARCHAR AS Key,
-               'Dividend=' || d.Dividend || ' C=' || p.C
+               'Dividend=' || ROUND(d.Dividend, 4) || ' C=' || ROUND(p.C, 4)
                || ' (' || round(100 * d.Dividend / p.C, 1) || '%)' AS Details
         FROM dividends d
         JOIN prices p ON p.Ticker = d.Ticker AND p.Date = d.Date
@@ -30,7 +31,8 @@ def oversized_dividend(con: duckdb.DuckDBPyConnection, *, max_dividend_frac: flo
 def invalid_split_ratio(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Split rows whose ratio is non-positive or exactly 1 (a no-op split)."""
     return con.execute("""
-        SELECT 'splits' AS SrcTable, Ticker, Date, NULL::VARCHAR AS Key, 'Ratio=' || Ratio AS Details
+        SELECT 'splits' AS SrcTable, Ticker, Date, NULL::VARCHAR AS Key,
+               'Ratio=' || ROUND(Ratio, 4) AS Details
         FROM splits
         WHERE Ratio <= 0 OR Ratio = 1
     """).df()
