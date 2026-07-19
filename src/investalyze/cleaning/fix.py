@@ -6,7 +6,7 @@ from datetime import date
 
 @dataclass(frozen=True)
 class Fix:
-    """One cleaning fix instance from `cleaning.toml`."""
+    """One cleaning fix instance from `cleaning.toml`; `column`/`value` are used by set_value."""
 
     fix_type: str
     table: str
@@ -14,3 +14,5 @@ class Fix:
     start: date | None
     end: date | None
     reason: str
+    column: str | None = None
+    value: float | None = None

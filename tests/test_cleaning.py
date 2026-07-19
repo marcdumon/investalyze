@@ -7,7 +7,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, registry, repair_zero_low, repair_zero_open
+from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, registry, repair_zero_low, repair_zero_open, set_value
 
 SEED_TOML = """\
 [[delete_date_range]]
@@ -124,9 +124,11 @@ def prices_con(tmp_path: Path) -> duckdb.DuckDBPyConnection:
     return con
 
 
-def price_fix(fix_type: str, tickers: list[str] | None = None) -> registry.Fix:
-    """Fix record for the prices repairs; empty tickers = every ticker."""
-    return registry.Fix(fix_type=fix_type, table='prices', tickers=tickers or [], start=None, end=None, reason='test')
+def price_fix(fix_type: str, tickers: list[str] | None = None, start: date | None = None, end: date | None = None,
+              column: str | None = None, value: float | None = None) -> registry.Fix:
+    """Fix record against the prices fixture table; empty tickers = every ticker."""
+    return registry.Fix(fix_type=fix_type, table='prices', tickers=tickers or [], start=start, end=end,
+                        reason='test', column=column, value=value)
 
 
 def test_repair_zero_low_sets_min_of_open_close(prices_con):
@@ -165,6 +167,49 @@ def test_repairs_leave_fully_broken_bars_alone(prices_con):
     repair_zero_open.apply(prices_con, price_fix('repair_zero_open'))
     row = prices_con.execute("SELECT O, L FROM prices WHERE Date = DATE '2000-01-04'").fetchone()
     assert row == (0.0, 0.0)
+
+
+# --- set_value -------------------------------------------------------------------
+
+
+def test_read_fixes_parses_set_value_entry(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[set_value]]\ntable = 'prices'\ntickers = ['CXE']\nstart = 2000-01-03\nend = 2000-01-03\n"
+                    "column = 'AC'\nvalue = 5.1\nreason = 'r'\n")
+    fix = registry.read_fixes(path)[0]
+    assert fix.column == 'AC'
+    assert fix.value == 5.1
+
+
+def test_read_fixes_rejects_set_value_without_column(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[set_value]]\ntable = 'prices'\ntickers = ['CXE']\nreason = 'r'\n")
+    with pytest.raises(ValueError, match='column'):
+        registry.read_fixes(path)
+
+
+def test_set_value_corrects_one_cell(prices_con):
+    fix = price_fix('set_value', tickers=['CXE'], start=date(2000, 1, 3), end=date(2000, 1, 3), column='AC', value=5.1)
+    assert set_value.detect(prices_con, fix) == 1
+    assert set_value.apply(prices_con, fix) == 1
+    stored = prices_con.execute("SELECT AC FROM prices WHERE Ticker = 'CXE' AND Date = DATE '2000-01-03'").fetchone()[0]
+    assert stored == 5.1
+    assert set_value.detect(prices_con, fix) == 0
+
+
+def test_set_value_without_value_clears_to_null(prices_con):
+    fix = price_fix('set_value', tickers=['ATLX'], start=date(2015, 8, 5), end=date(2015, 8, 5), column='AC')
+    assert set_value.detect(prices_con, fix) == 1
+    assert set_value.apply(prices_con, fix) == 1
+    stored = prices_con.execute("SELECT AC FROM prices WHERE Ticker = 'ATLX' AND Date = DATE '2015-08-05'").fetchone()[0]
+    assert stored is None
+    assert set_value.detect(prices_con, fix) == 0
+
+
+def test_set_value_rejects_malformed_column(prices_con):
+    fix = price_fix('set_value', tickers=['CXE'], column='AC"; DROP TABLE prices; --', value=1.0)
+    with pytest.raises(ValueError, match='column name'):
+        set_value.detect(prices_con, fix)
 
 
 # --- rebuild_adjusted_close ------------------------------------------------------
