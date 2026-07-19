@@ -12,6 +12,7 @@ from datetime import date, datetime
 import pandas as pd
 
 _INT_RUN = re.compile(r'(?<![\d.])(\d{5,})(\.\d+)?')
+_DECIMAL_RUN = re.compile(r'(?<![\d.])(-?\d+\.\d{5,})(?!\d)')
 
 # Details prefix of the tolerance-based identity checks -> the line items its formula uses
 _IDENTITY_ITEMS = {
@@ -81,11 +82,13 @@ def parse_key(key: object) -> dict | None:
 
 
 def format_details_numbers(text: str) -> str:
-    """Insert thousand separators into every number with 5+ integer digits in `text`.
+    """Round runs of 5+ decimal digits to 4 places, then add thousand separators to 5+ digit integer runs.
 
-    Shorter runs (day counts, percentages, the 4-digit years inside dates) stay untouched;
-    a decimal fraction is kept as written.
+    Vendor prices arrive as float32 cast to double and print as noise (0.2800000011920929
+    instead of 0.28) unless rounded here; shorter decimals (percentages) and integer runs
+    (day counts, the 4-digit years inside dates) stay untouched.
     """
+    text = _DECIMAL_RUN.sub(lambda m: f'{float(m.group(1)):.4f}'.rstrip('0').rstrip('.'), text)
     return _INT_RUN.sub(lambda m: f'{int(m.group(1)):,}{m.group(2) or ""}', text)
 
 
