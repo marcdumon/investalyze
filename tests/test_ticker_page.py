@@ -5,7 +5,7 @@ import pytest
 
 from investalyze.analysis.factors import FACTORS
 from investalyze.apps.ticker.data import (
-    MAX_PEERS, MAX_UNIVERSE_PEERS, drawdown, peer_group, peer_percentiles, rebased, trailing_returns, ttm_history,
+    MAX_UNIVERSE_PEERS, drawdown, peer_percentiles, rebased, scope_peer_group, trailing_returns, ttm_history,
     universe_peer_group,
 )
 
@@ -17,52 +17,39 @@ POOL = pd.DataFrame({
 })
 
 
-def test_peer_group_same_industry_ticker_first():
-    group = peer_group(POOL, 'ME')
-    assert group.iloc[0]['Ticker'] == 'ME'
-    # F has no market cap, so it cannot be judged size-comparable and is excluded
-    assert set(group['Ticker']) == {'ME', 'A', 'B', 'C', 'D', 'E'}
-
-
-def test_peer_group_excludes_size_mismatch():
-    pool = pd.DataFrame({
-        'Ticker': ['ME', 'TINY', 'OK1', 'OK2', 'OK3', 'OK4', 'OK5'],
-        'industry': ['Soft'] * 7, 'sector': ['Tech'] * 7,
-        'mcap': [1e12, 2e6, 1e11, 2e11, 5e11, 2e12, 5e12],   # TINY is 500000x smaller
-    })
-    group = peer_group(pool, 'ME')
-    assert 'TINY' not in set(group['Ticker'])
-    assert set(group['Ticker']) == {'ME', 'OK1', 'OK2', 'OK3', 'OK4', 'OK5'}
-
-
-def test_peer_group_no_own_mcap_falls_back_to_industry():
-    pool = POOL.copy()
-    pool.loc[pool['Ticker'] == 'ME', 'mcap'] = np.nan
-    group = peer_group(pool, 'ME')
+def test_scope_peer_group_industry_ticker_first():
+    group = scope_peer_group(POOL, 'ME', 'industry')
     assert group.iloc[0]['Ticker'] == 'ME'
     assert set(group['Ticker']) == {'ME', 'A', 'B', 'C', 'D', 'E', 'F'}
 
 
-def test_peer_group_widens_to_sector_when_thin():
-    pool = POOL[POOL['Ticker'].isin(['ME', 'A', 'B', 'S1', 'S2'])]
-    group = peer_group(pool, 'ME')   # only 2 industry mates -> widen to sector
-    assert set(group['Ticker']) == {'ME', 'A', 'B', 'S1', 'S2'}
+def test_scope_peer_group_sector_takes_whole_sector():
+    group = scope_peer_group(POOL, 'ME', 'sector')
+    assert set(group['Ticker']) == set(POOL['Ticker'])
 
 
-def test_peer_group_caps_by_mcap_proximity():
-    big = pd.DataFrame({
-        'Ticker': ['ME'] + [f'P{i}' for i in range(30)],
-        'industry': ['Soft'] * 31, 'sector': ['Tech'] * 31,
-        'mcap': [10e9] + [10e9 * (1.1 ** i) for i in range(30)],
+def test_scope_peer_group_unknown_value_ticker_alone():
+    pool = POOL.copy()
+    pool.loc[pool['Ticker'] == 'ME', 'industry'] = 'unknown'
+    group = scope_peer_group(pool, 'ME', 'industry')
+    assert group['Ticker'].tolist() == ['ME']
+
+
+def test_scope_peer_group_caps_by_mcap_proximity():
+    n = MAX_UNIVERSE_PEERS + 20
+    pool = pd.DataFrame({
+        'Ticker': ['ME'] + [f'P{i}' for i in range(n)],
+        'industry': ['Soft'] * (n + 1), 'sector': ['Tech'] * (n + 1),
+        'mcap': [10e9] + [10e9 * (1.1 ** i) for i in range(n)],
     })
-    group = peer_group(big, 'ME')
-    assert len(group) == MAX_PEERS + 1
-    assert group.iloc[0]['Ticker'] == 'ME'
-    assert 'P29' not in set(group['Ticker'])   # farthest by log-mcap is dropped
+    group = scope_peer_group(pool, 'ME', 'industry')
+    assert len(group) == MAX_UNIVERSE_PEERS + 1
+    assert f'P{n - 1}' not in set(group['Ticker'])   # farthest by log-mcap is dropped
+    assert len(scope_peer_group(pool, 'ME', 'industry', cap=None)) == n + 1
 
 
-def test_peer_group_unknown_ticker_empty():
-    assert peer_group(POOL, 'NOPE').empty
+def test_scope_peer_group_unknown_ticker_empty():
+    assert scope_peer_group(POOL, 'NOPE', 'industry').empty
 
 
 def test_universe_peer_group_ticker_first_and_deduped():

@@ -2,10 +2,10 @@
 
 The select's options and all snapshot numbers come from the screener's cached pool, so values
 match the screener. Time series are queried per selection. `?symbol=X` deep-links a ticker.
-A peer-basis select swaps the automatic peer group for any saved universe and persists across
-navigation; with a universe active its members group first in the ticker select and a stepper
-walks through them. Every section degrades to a dimmed note when its inputs are missing; a
-locked DB shows the shared busy notice.
+A peer-basis select picks the comparison group: the ticker's whole industry (default), its
+whole sector, or any saved universe; it persists across navigation. The active group's members
+come first in the ticker select, and a stepper walks through universe members. Every section
+degrades to a dimmed note when its inputs are missing; a locked DB shows the shared busy notice.
 """
 
 import dash
@@ -22,7 +22,8 @@ from investalyze.apps.universes import list_universes, load_universe
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
 DEFAULT_RANGE = '5y'
-AUTO_BASIS = 'auto'
+INDUSTRY_BASIS = 'industry'
+SECTOR_BASIS = 'sector'
 UNIVERSE_PREFIX = 'u:'
 ANCHOR_STYLE = {'scrollMarginTop': '70px'}
 PROMPT = dmc.Stack([
@@ -149,8 +150,8 @@ def _universe_members(basis: str | None) -> tuple[str, list[str]] | None:
 def _resolve_peers(pool: pd.DataFrame, row: pd.Series, basis: str | None) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """(capped peer frame, full frame for the violins, caption phrase) for the chosen peer basis.
 
-    A missing universe file falls back to auto. The capped frame drives the factor percentiles;
-    the violins get every member so distributions stay complete.
+    A missing universe file falls back to the industry scope. The capped frame drives the factor
+    percentiles; the violins get every member so distributions stay complete.
     """
     loaded = _universe_members(basis)
     if loaded is not None:
@@ -158,13 +159,10 @@ def _resolve_peers(pool: pd.DataFrame, row: pd.Series, basis: str | None) -> tup
         peers = data.universe_peer_group(pool, row['Ticker'], members)
         full = data.universe_peer_group(pool, row['Ticker'], members, cap=None)
         return peers, full, f"peers from universe '{name}'"
-    peers = data.peer_group(pool, row['Ticker'])
-    mates = peers.iloc[1:]
-    if len(mates) and (mates['industry'] == row['industry']).all():
-        scope = f"industry '{row['industry']}'"
-    else:
-        scope = f"sector '{row['sector']}'"
-    return peers, peers, f'size-comparable peers from {scope}'
+    scope = 'sector' if basis == SECTOR_BASIS else 'industry'
+    peers = data.scope_peer_group(pool, row['Ticker'], scope)
+    full = data.scope_peer_group(pool, row['Ticker'], scope, cap=None)
+    return peers, full, f"peers from {scope} '{row[scope]}'"
 
 
 def _risk_section(peers: pd.DataFrame, violin_peers: pd.DataFrame, ticker: str, dark: bool) -> dmc.Card:
@@ -174,7 +172,7 @@ def _risk_section(peers: pd.DataFrame, violin_peers: pd.DataFrame, ticker: str, 
     else:
         children = [_no_data('not enough peers for a risk comparison')]
     return _section('Risk', children,
-                    caption='the needle marks this ticker, color and P-tag its percentile standing (green = favorable)',
+                    caption='the needle marks this ticker, P its peer percentile (100 = best), green strong / red weak',
                     anchor='sec-risk')
 
 
@@ -193,7 +191,7 @@ def build_sections(ticker: str, dark: bool, basis: str | None) -> list:
     returns = data.trailing_returns(history) if len(history) else None
 
     peer_caption = (f'{len(violin_peers) - 1} {peer_source}; the needle marks this ticker, '
-                    'color and P-tag its percentile standing (green = favorable)')
+                    'P its peer percentile (100 = best), green strong / red weak')
     profile_caption = 'percentile within the peer group, 100 = best'
     if len(peers) < len(violin_peers):
         profile_caption = f'percentile within the {len(peers) - 1} closest-by-size peers, 100 = best'
@@ -244,8 +242,9 @@ def _select_options(pool: pd.DataFrame, universe: tuple[str, list[str]] | None =
 
 
 def _basis_options() -> list[dict]:
-    """Peer-basis select options: automatic grouping plus every saved universe."""
-    options = [{'value': AUTO_BASIS, 'label': 'auto (industry / size)'}]
+    """Peer-basis select options: the ticker's whole industry or sector, plus every saved universe."""
+    options = [{'value': INDUSTRY_BASIS, 'label': 'industry peers'},
+               {'value': SECTOR_BASIS, 'label': 'sector peers'}]
     for name in list_universes():
         options.append({'value': UNIVERSE_PREFIX + name, 'label': name})
     return options
@@ -275,7 +274,7 @@ def layout(symbol: str | None = None, **_query) -> html.Div:
             dmc.Select(id='tk-select', data=options, value=symbol, searchable=True, clearable=True,
                        placeholder='search ticker or company', limit=100, size='sm',
                        nothingFoundMessage='no match', style={'width': '360px'}),
-            dmc.Select(id='tk-peer-basis', data=_basis_options(), value=AUTO_BASIS, size='sm',
+            dmc.Select(id='tk-peer-basis', data=_basis_options(), value=INDUSTRY_BASIS, size='sm',
                        allowDeselect=False, persistence=True, leftSection=DashIconify(icon='tabler:users', width=14),
                        style={'width': '280px'}),
             stepper,
@@ -315,14 +314,22 @@ clientside_callback(
 )
 
 
-@callback(Output('tk-select', 'data'), Input('tk-peer-basis', 'value'))
-def update_ticker_options(basis):
-    """Regroup the ticker select so the active universe's members come first."""
+@callback(Output('tk-select', 'data'), Input('tk-peer-basis', 'value'), Input('tk-select', 'value'))
+def update_ticker_options(basis, ticker):
+    """Regroup the ticker select so the active peer group's members come first, largest first."""
     try:
         pool = get_pool()
     except duckdb.Error:
         raise PreventUpdate
-    return _select_options(pool, _universe_members(basis))
+    grouped = _universe_members(basis)
+    if grouped is None and ticker:
+        scope = 'sector' if basis == SECTOR_BASIS else 'industry'
+        me = pool[pool['Ticker'] == ticker]
+        if len(me) and me.iloc[0][scope] != 'unknown':
+            value = me.iloc[0][scope]
+            members = pool[pool[scope] == value].sort_values('mcap', ascending=False, na_position='last')
+            grouped = (value, members['Ticker'].tolist())
+    return _select_options(pool, grouped)
 
 
 @callback(Output('tk-stepper', 'style'), Output('tk-pos', 'children'),
