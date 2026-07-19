@@ -55,6 +55,11 @@ def build_quality_argv(checks: list[str] | None) -> tuple[str, list[str]]:
     return title, argv
 
 
+def build_cleaning_argv(command: str) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.cleaning check|apply`."""
+    return f'cleaning {command}', ['-m', 'investalyze.cleaning', command]
+
+
 # ---------- status cards ----------
 
 def freshness_card() -> dmc.Card:
@@ -92,11 +97,19 @@ def days_ago_badge(days_ago: int | None) -> dmc.Badge:
 
 
 # ---------- command cards ----------
+#
+# Visual rule: every button that modifies the database is orange and sits next to an orange
+# 'writes ...' badge naming what it writes; read-only buttons are plain with a dimmed 'read-only' label.
+
+def writes_badge(what: str) -> dmc.Badge:
+    """Orange badge marking a data-modifying action, naming what it writes."""
+    return dmc.Badge(f'writes {what}', color='orange', variant='light', size='xs')
+
 
 def ingest_card() -> dmc.Card:
     """Provider chips + full/update toggle + Run button."""
     return dmc.Card([
-        dmc.Text('Ingest', fw=700, size='sm', mb=8),
+        dmc.Group([dmc.Text('Ingest', fw=700, size='sm'), writes_badge('price + fundamentals tables')], gap=8, mb=8),
         dmc.ChipGroup(
             dmc.Group([dmc.Chip(desc, value=name, size='xs') for name, desc in orchestrator.PROVIDER_DESCRIPTIONS.items()]),
             id='cp-ingest-providers', multiple=True, value=[],
@@ -106,7 +119,8 @@ def ingest_card() -> dmc.Card:
             data=[{'label': 'Update', 'value': 'update'}, {'label': 'Full load', 'value': 'full'}],
             mt=8, size='xs',
         ),
-        dmc.Button('Run ingest', id='cp-btn-ingest', size='xs', mt=8, leftSection=DashIconify(icon='tabler:player-play')),
+        dmc.Button('Run ingest', id='cp-btn-ingest', size='xs', mt=8, color='orange',
+                   leftSection=DashIconify(icon='tabler:database-import')),
         dmc.Group([
             dmc.Anchor('stooq bulk file', href='http://stooq.com/db/h/', target='_blank', size='xs'),
             dmc.Anchor('stooq daily update', href='http://stooq.com/db/', target='_blank', size='xs'),
@@ -119,13 +133,13 @@ def ingest_card() -> dmc.Card:
 def housekeeping_card() -> dmc.Card:
     """Task chips + Run button."""
     return dmc.Card([
-        dmc.Text('Housekeeping', fw=700, size='sm', mb=8),
+        dmc.Group([dmc.Text('Housekeeping', fw=700, size='sm'), writes_badge('derived tables')], gap=8, mb=8),
         dmc.ChipGroup(
             dmc.Group([dmc.Chip(desc, value=name, size='xs') for name, desc in housekeeping.TASK_DESCRIPTIONS.items()]),
             id='cp-housekeeping-tasks', multiple=True, value=[],
         ),
-        dmc.Button('Run housekeeping', id='cp-btn-housekeeping', size='xs', mt=8,
-                   leftSection=DashIconify(icon='tabler:player-play')),
+        dmc.Button('Run housekeeping', id='cp-btn-housekeeping', size='xs', mt=8, color='orange',
+                   leftSection=DashIconify(icon='tabler:database-import')),
     ], withBorder=True, radius='md', padding='sm')
 
 
@@ -134,7 +148,9 @@ def quality_card() -> dmc.Card:
     errors = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == 'error']
     warns = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == 'warn']
     return dmc.Card([
-        dmc.Text('Quality checks', fw=700, size='sm', mb=8),
+        dmc.Group([dmc.Text('Quality checks', fw=700, size='sm'), writes_badge('anomalies table only')], gap=8, mb=4),
+        dmc.Text('scans the data and records findings in the anomalies table; correcting data happens in Cleaning',
+                 size='xs', c='dimmed', mb=8),
         dmc.Text('error', size='xs', c='red', mb=4),
         dmc.ChipGroup(
             dmc.Group([dmc.Chip(quality_registry.CHECK_DESCRIPTIONS[n], value=n, size='xs') for n in sorted(errors)]),
@@ -145,7 +161,26 @@ def quality_card() -> dmc.Card:
             dmc.Group([dmc.Chip(quality_registry.CHECK_DESCRIPTIONS[n], value=n, size='xs') for n in sorted(warns)]),
             id='cp-quality-warns', multiple=True, value=[],
         ),
-        dmc.Button('Run quality', id='cp-btn-quality', size='xs', mt=8, leftSection=DashIconify(icon='tabler:player-play')),
+        dmc.Button('Run quality scan', id='cp-btn-quality', size='xs', mt=8, color='orange',
+                   leftSection=DashIconify(icon='tabler:zoom-check')),
+    ], withBorder=True, radius='md', padding='sm')
+
+
+def cleaning_card() -> dmc.Card:
+    """Preview/apply buttons for the persistent manual corrections in cleaning.toml."""
+    return dmc.Card([
+        dmc.Text('Cleaning', fw=700, size='sm', mb=4),
+        dmc.Text('corrects known-bad rows using the fix list in cleaning.toml', size='xs', c='dimmed', mb=8),
+        dmc.Group([
+            dmc.Button('Preview fixes', id='cp-btn-cleaning-check', size='xs', variant='default',
+                       leftSection=DashIconify(icon='tabler:eye')),
+            dmc.Text('read-only: shows what apply would change', size='xs', c='dimmed'),
+        ], gap=8),
+        dmc.Group([
+            dmc.Button('Apply fixes', id='cp-btn-cleaning-apply', size='xs', color='orange',
+                       leftSection=DashIconify(icon='tabler:database-edit')),
+            writes_badge('price rows'),
+        ], gap=8, mt=6),
     ], withBorder=True, radius='md', padding='sm')
 
 
@@ -183,7 +218,8 @@ def layout() -> html.Div:
         dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card()],
                        cols={'base': 1, 'md': 3}, mb=12),
         dmc.Grid([
-            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card()], gap=10), span={'base': 12, 'lg': 5}),
+            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card(), cleaning_card()], gap=10),
+                        span={'base': 12, 'lg': 5}),
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
         dmc.Modal(
@@ -255,14 +291,22 @@ def refresh_status(_n: int):
 @callback(
     Output('cp-pending-action', 'data'), Output('cp-confirm-modal', 'opened'), Output('cp-confirm-text', 'children'),
     Input('cp-btn-ingest', 'n_clicks'), Input('cp-btn-housekeeping', 'n_clicks'), Input('cp-btn-quality', 'n_clicks'),
+    Input('cp-btn-cleaning-check', 'n_clicks'), Input('cp-btn-cleaning-apply', 'n_clicks'),
     State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'),
     State('cp-housekeeping-tasks', 'value'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
     prevent_initial_call=True,
 )
-def request_run(ingest_n, housekeeping_n, quality_n,
+def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n,
                  providers, mode, tasks, quality_errors, quality_warns):
-    """Build the argv for the clicked Run button. A full ingest load goes through a confirm modal."""
+    """Build the argv for the clicked Run button. Full ingest loads and cleaning applies go through a confirm modal."""
     trigger = ctx.triggered_id
+    if trigger == 'cp-btn-cleaning-check':
+        title, argv = build_cleaning_argv('check')
+        MANAGER.start(title, argv)
+        return dash.no_update, False, dash.no_update
+    if trigger == 'cp-btn-cleaning-apply':
+        title, argv = build_cleaning_argv('apply')
+        return {'title': title, 'argv': argv}, True, 'Apply the fixes in cleaning.toml? This writes to the database.'
     if trigger == 'cp-btn-ingest':
         title, argv = build_ingest_argv(providers, update=mode == 'update')
         if mode == 'full':
@@ -296,6 +340,7 @@ def resolve_confirm(yes_n, no_n, pending):
 @callback(
     Output('cp-job-badge', 'children'), Output('cp-job-log', 'children'), Output('cp-job-history', 'children'),
     Output('cp-btn-ingest', 'disabled'), Output('cp-btn-housekeeping', 'disabled'), Output('cp-btn-quality', 'disabled'),
+    Output('cp-btn-cleaning-check', 'disabled'), Output('cp-btn-cleaning-apply', 'disabled'),
     Input('cp-poll', 'n_intervals'),
 )
 def refresh_job(_n: int):
@@ -325,7 +370,7 @@ def refresh_job(_n: int):
     ]
 
     return (badge, log, html.Div(history_rows) if history_rows else dmc.Text('no runs yet', size='xs', c='dimmed'),
-            running, running, running)
+            running, running, running, running, running)
 
 
 @callback(Output('cp-cancel-tick', 'data'), Input('cp-btn-cancel', 'n_clicks'), prevent_initial_call=True)
