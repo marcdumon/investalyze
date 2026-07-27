@@ -7,7 +7,9 @@ import duckdb
 import pandas as pd
 import pytest
 
-from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, registry, rename_ticker, repair_zero_low, repair_zero_open, set_value
+from investalyze.cleaning import (
+    delete_date_range, rebuild_adjusted_close, registry, rename_ticker, repair_zero_low, repair_zero_open, set_value
+)
 
 SEED_TOML = """\
 [[delete_date_range]]
@@ -99,6 +101,13 @@ def test_read_fixes_rejects_rename_ticker_without_new_ticker(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text("[[rename_ticker]]\ntickers = ['SPCX']\nreason = 'r'\n")
     with pytest.raises(ValueError, match='new_ticker'):
+        registry.read_fixes(path)
+
+
+def test_read_fixes_rejects_rename_ticker_with_multiple_tickers(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[rename_ticker]]\ntickers = ['SPCX', 'OTHER']\nnew_ticker = 'SPCX.1'\nreason = 'r'\n")
+    with pytest.raises(ValueError, match='exactly one ticker'):
         registry.read_fixes(path)
 
 

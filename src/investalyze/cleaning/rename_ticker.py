@@ -3,7 +3,7 @@
 Used when a delisted ticker symbol is later reused by an unrelated company: the old company's
 historical rows are moved to a disambiguated key (e.g. SPCX -> SPCX.1) so the new company can be
 ingested under the bare symbol without merging with the old company's data. Unlike every other fix
-type, this one is not scoped to one `table` in cleaning.toml — it always touches every table in
+type, this one is not scoped to one `table` in cleaning.toml: it always touches every table in
 `storage.TICKER_KEYED_TABLES`, skipping any that don't exist in the connected DB.
 """
 

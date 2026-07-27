@@ -35,9 +35,12 @@ _REQUIRED_EXTRA = {
 def parse_fixes(text: str) -> list[Fix]:
     """Parse cleaning TOML text into `Fix` records.
 
-    Every top-level array-of-tables section must be a known fix type, and every entry must
-    carry `table`, `tickers` and `reason` (plus `column` for set_value); `start`/`end` are
-    optional inclusive TOML dates. Raises ValueError on an unknown section or a missing field.
+    Every top-level array-of-tables section must be a known fix type. All entries require
+    `tickers` and `reason`. Additional required fields depend on fix type: `table` for most
+    types (delete_date_range, rebuild_adjusted_close, repair_zero_low, repair_zero_open),
+    `column` for set_value, and `new_ticker` for rename_ticker. `start`/`end` are optional
+    inclusive TOML dates. Raises ValueError on unknown section, missing required field, or
+    validation error (e.g. rename_ticker with != 1 ticker).
     """
     raw = tomllib.loads(text)
     fixes: list[Fix] = []
@@ -51,6 +54,8 @@ def parse_fixes(text: str) -> list[Fix]:
             missing = [field for field in required if field not in entry]
             if missing:
                 raise ValueError(f'[[{section}]] entry missing required field(s): {", ".join(missing)}')
+            if section == 'rename_ticker' and len(entry['tickers']) != 1:
+                raise ValueError(f'[[{section}]] entry needs exactly one ticker, got {len(entry["tickers"])}')
             fixes.append(
                 Fix(
                     fix_type=section,
