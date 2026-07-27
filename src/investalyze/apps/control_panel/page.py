@@ -15,7 +15,7 @@ from dash import Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
-from investalyze.apps.control_panel import status
+from investalyze.apps.control_panel import listings_review, status
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.ingest import housekeeping, orchestrator, storage
 from investalyze.quality import registry as quality_registry
@@ -242,6 +242,7 @@ def layout() -> html.Div:
                         span={'base': 12, 'lg': 5}),
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
+        dmc.Grid([dmc.GridCol(listings_review.listings_card(), span=12)], gutter=12, mt=12),
         dmc.Modal(
             id='cp-confirm-modal', title='Confirm', centered=True,
             children=[
@@ -254,6 +255,7 @@ def layout() -> html.Div:
         ),
         dcc.Store(id='cp-pending-action'),
         dcc.Store(id='cp-cancel-tick'),
+        dcc.Store(id='cp-listings-tick', data=0),
     ])
 
 
@@ -417,3 +419,31 @@ dash.clientside_callback(
     Output('cp-log-scroll-dummy', 'children'),
     Input('cp-job-log', 'children'),
 )
+
+
+# ---------- listings-review callbacks ----------
+
+@callback(Output('cp-listings-grid', 'rowData'), Input('cp-poll', 'n_intervals'), Input('cp-listings-tick', 'data'))
+def refresh_listings_candidates(_n, _tick):
+    """Reload the candidates grid from the last scan's saved CSV."""
+    return listings_review.read_candidates()
+
+
+@callback(
+    Output('cp-listings-status', 'children'), Output('cp-listings-tick', 'data', allow_duplicate=True),
+    Output('cp-listings-grid', 'selectedRows', allow_duplicate=True),
+    Input('cp-btn-listings-add', 'n_clicks'),
+    State('cp-listings-grid', 'selectedRows'), State('cp-listings-tick', 'data'),
+    prevent_initial_call=True,
+)
+def add_selected_listings(_n, selected, tick):
+    """Append selected new/reactivated_safe rows to ticker.csv."""
+    rows = selected or []
+    if not rows:
+        return 'select at least one row first', dash.no_update, dash.no_update
+    added = listings_review.add_tickers(rows)
+    skipped = len(rows) - added
+    status_text = f'added {added} ticker(s) to ticker.csv'
+    if skipped:
+        status_text += f', skipped {skipped} collision row(s) (stage a rename first)'
+    return status_text, (tick or 0) + 1, []
