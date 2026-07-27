@@ -22,6 +22,7 @@ ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDA
 A|Agilent Technologies Inc. Common Stock|N|A|N|100|N|A
 SPCX|SpaceX Inc Common Stock|N|SPCX|N|100|N|SPCX
 IEXV|Some IEX Thing|V|IEXV|N|100|N|IEXV
+AMKT|American Market Co Common Stock|A|AMKT|N|100|N|AMKT
 File Creation Time: 07/27/2026 05:00:01
 """
 
@@ -37,10 +38,29 @@ def test_parse_nasdaqlisted_drops_etf_test_issue_and_warrants():
     assert list(frame['market']) == ['nasdaq']
 
 
+NASDAQLISTED_KEYWORD_SAMPLE = """\
+Symbol|Security Name|Market Category|Test Issue|Financial Status|Round Lot Size|ETF|NextShares
+BFAM|Bright Horizons Family Solutions Inc - Common Stock|G|N|N|100|N|N
+RGHT|XYZ Corp Rights|G|N|N|100|N|N
+PFD|ABC Preferred Stock|G|N|N|100|N|N
+UNIT|DEF Acquisition Corp Units|G|N|N|100|N|N
+File Creation Time: 07/27/2026 05:00:01
+"""
+
+
+def test_parse_nasdaqlisted_keeps_substring_match_but_drops_whole_word_keyword_matches():
+    frame = listings._parse_nasdaqlisted(NASDAQLISTED_KEYWORD_SAMPLE)
+    # 'Bright Horizons' merely contains 'right' as a substring and must be kept; 'Rights',
+    # 'Preferred', and 'Units' are whole-word matches and must be dropped
+    assert list(frame['ticker']) == ['BFAM']
+
+
 def test_parse_otherlisted_keeps_only_nyse_and_nysemkt():
     frame = listings._parse_otherlisted(OTHERLISTED_SAMPLE)
-    assert sorted(frame['ticker']) == ['A', 'SPCX']
-    assert set(frame['market']) == {'nyse'}
+    assert sorted(frame['ticker']) == ['A', 'AMKT', 'SPCX']
+    by_ticker = dict(zip(frame['ticker'], frame['market']))
+    assert by_ticker['AMKT'] == 'nysemkt'
+    assert set(frame['market']) == {'nyse', 'nysemkt'}
 
 
 def test_parse_sec_cik_map_upper_cases_tickers():
@@ -141,3 +161,18 @@ def test_scan_clears_dead_list_once_a_staged_rename_has_moved_the_old_rows(monke
     zomb = next(c for c in result.candidates if c.ticker == 'ZOMB')
     assert zomb.classification == 'new'   # resolved: no longer treated as a dead/collision ticker
     assert pd.read_csv(state_dir / 'price_dead.csv').empty
+
+
+def test_scan_checks_identity_for_a_ticker_stuck_in_blacklist_limbo(monkeypatch, scan_con, data_root):
+    """A ticker pruned out of ticker.csv while blacklisted (but not yet aged out to fully dead)
+    still holds price rows, so a live listing under it must go through the CIK identity check
+    rather than being classified new, even though it appears in neither dead-list CSV.
+    """
+    scan_con.execute("INSERT INTO prices VALUES ('LIMBO', '2020-01-01', 10.0)")
+    scan_con.execute("INSERT INTO companies VALUES ('LIMBO', 7)")   # CIK on file from before blacklisting
+    limbo_listing = pd.DataFrame([{'ticker': 'LIMBO', 'market': 'nasdaq', 'company_name': 'Limbo Corp'}])
+    monkeypatch.setattr(listings, 'fetch_nasdaq_listings', lambda: limbo_listing)
+    monkeypatch.setattr(listings, 'fetch_sec_cik_map', lambda: {'LIMBO': 7})   # same company, CIK matches
+    result = listings.scan(scan_con, data_root, cleaning_config=data_root / 'cleaning.toml')
+    limbo = next(c for c in result.candidates if c.ticker == 'LIMBO')
+    assert limbo.classification == 'reactivated_safe'

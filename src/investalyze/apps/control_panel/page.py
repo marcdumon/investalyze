@@ -465,6 +465,6 @@ def stage_selected_renames(_n, selected, reason, tick):
     except ValueError as err:
         return str(err), dash.no_update, dash.no_update
     block = '\n'.join(toml_io.serialize_block(section, fields) for section, fields in entries)
-    toml_io.append_block(Path('cleaning.toml'), block, cleaning_registry.parse_fixes)
+    toml_io.append_block(REPO_ROOT / 'cleaning.toml', block, cleaning_registry.parse_fixes)
     status_text = f'staged {len(entries)} rename(s); apply from Cleaning above, then re-scan to add the freed ticker(s)'
     return status_text, (tick or 0) + 1, []

@@ -9,6 +9,7 @@ without HTTP calls.
 """
 
 import io
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -25,8 +26,8 @@ OTHER_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt'
 SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json'
 HEADERS = {'User-Agent': 'investalyze ingest (7793950+marcdumon@users.noreply.github.com)'}
 
-# security-name keywords that signal a warrant/right/preferred/unit rather than common stock
-_DROP_KEYWORDS = ('warrant', 'right', 'preferred', ' unit')
+# security-name pattern that signals a warrant/right/preferred/unit rather than common stock
+_DROP_PATTERN = re.compile(r'\b(warrants?|rights?|preferred|units?)\b')
 _EXCHANGE_MARKET = {'N': 'nyse', 'A': 'nysemkt'}
 
 
@@ -42,8 +43,7 @@ def _is_common_stock(security_name: str) -> bool:
     """False when the security name signals a warrant/right/preferred/unit rather than common stock."""
     # heuristic only: anything that slips through and later returns no price data is caught by
     # the existing yahoo blacklist/dead mechanism, the same as it is today
-    lowered = security_name.lower()
-    return not any(keyword in lowered for keyword in _DROP_KEYWORDS)
+    return not _DROP_PATTERN.search(security_name.lower())
 
 
 def _parse_nasdaqlisted(text: str) -> pd.DataFrame:
@@ -144,17 +144,36 @@ class UniverseScanResult:
     saved_to: Path
 
 
-def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path) -> tuple[set[str], dict[str, int | None]]:
-    """Every ticker ever tracked but now dead, with the CIK on file from its last time being tracked."""
+def _tickers_with_rows(con: duckdb.DuckDBPyConnection) -> set[str]:
+    """Every ticker holding at least one row in any ticker-keyed table."""
+    known: set[str] = set()
+    for table in storage.TICKER_KEYED_TABLES:
+        if storage.table_exists(con, table):
+            known |= {ticker for (ticker,) in con.execute(f'SELECT DISTINCT Ticker FROM {table}').fetchall()}
+    return known
+
+
+def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path,
+                    tracked: set[str]) -> tuple[set[str], dict[str, int | None]]:
+    """Every ticker needing an identity check before being offered as a candidate, with the CIK on
+    file for it.
+
+    This is every ticker in price_dead.csv/meta_dead.csv (tracked before, now fully dead) plus any
+    ticker holding rows in a ticker-keyed table but currently untracked (the state a ticker sits in
+    while blacklisted but not yet aged out to dead) - both mean this symbol has history, and any
+    live listing under it needs its identity verified before being treated as brand new.
+    """
     state_dir = data_root / 'yahoo' / 'state'
     dead_tickers = set(blacklist.read_dead(state_dir / 'price_dead.csv')['ticker']) | \
         set(blacklist.read_dead(state_dir / 'meta_dead.csv')['ticker'])
-    if not dead_tickers or not storage.table_exists(con, 'companies'):
-        return dead_tickers, {}
-    placeholders = ', '.join('?' for _ in dead_tickers)
-    rows = con.execute(f'SELECT Ticker, CIK FROM companies WHERE Ticker IN ({placeholders})', list(dead_tickers)).fetchall()
+    with_rows = _tickers_with_rows(con)
+    needs_check = dead_tickers | (with_rows - tracked)
+    if not needs_check or not storage.table_exists(con, 'companies'):
+        return needs_check, {}
+    placeholders = ', '.join('?' for _ in needs_check)
+    rows = con.execute(f'SELECT Ticker, CIK FROM companies WHERE Ticker IN ({placeholders})', list(needs_check)).fetchall()
     last_cik = {ticker: (int(cik) if cik is not None else None) for ticker, cik in rows}
-    return dead_tickers, last_cik
+    return needs_check, last_cik
 
 
 def _ticker_row_count(con: duckdb.DuckDBPyConnection, ticker: str) -> int:
@@ -198,7 +217,7 @@ def scan(con: duckdb.DuckDBPyConnection, data_root: Path,
     """
     raw_dir = data_root / 'yahoo' / 'raw'
     tracked = set(pd.read_csv(raw_dir / 'ticker.csv')['ticker'])
-    dead_tickers, last_cik = _read_dead_ciks(con, data_root)
+    dead_tickers, last_cik = _read_dead_ciks(con, data_root, tracked)
     dead_tickers = _resolve_completed_renames(con, data_root, cleaning_config, dead_tickers)
 
     live_listings = fetch_nasdaq_listings()
