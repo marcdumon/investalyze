@@ -9,19 +9,27 @@ kind of problem is one new module plus a `FIX_TYPES` line.
 import tomllib
 from pathlib import Path
 
-from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, repair_zero_low, repair_zero_open, set_value
+from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, rename_ticker, repair_zero_low, repair_zero_open, set_value
 from investalyze.cleaning.fix import Fix
 
 FIX_TYPES = {
     'delete_date_range': delete_date_range,
     'rebuild_adjusted_close': rebuild_adjusted_close,
+    'rename_ticker': rename_ticker,
     'repair_zero_low': repair_zero_low,
     'repair_zero_open': repair_zero_open,
     'set_value': set_value,
 }
 
-_REQUIRED = ('table', 'tickers', 'reason')
-_REQUIRED_EXTRA = {'set_value': ('column',)}
+_REQUIRED = ('tickers', 'reason')
+_REQUIRED_EXTRA = {
+    'delete_date_range': ('table',),
+    'rebuild_adjusted_close': ('table',),
+    'repair_zero_low': ('table',),
+    'repair_zero_open': ('table',),
+    'set_value': ('table', 'column'),
+    'rename_ticker': ('new_ticker',),
+}
 
 
 def parse_fixes(text: str) -> list[Fix]:
@@ -46,13 +54,14 @@ def parse_fixes(text: str) -> list[Fix]:
             fixes.append(
                 Fix(
                     fix_type=section,
-                    table=entry['table'],
+                    table=entry.get('table'),
                     tickers=list(entry['tickers']),
                     start=entry.get('start'),
                     end=entry.get('end'),
                     reason=entry['reason'],
                     column=entry.get('column'),
                     value=entry.get('value'),
+                    new_ticker=entry.get('new_ticker'),
                 )
             )
     return fixes

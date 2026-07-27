@@ -7,7 +7,7 @@ import duckdb
 import pandas as pd
 import pytest
 
-from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, registry, repair_zero_low, repair_zero_open, set_value
+from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, registry, rename_ticker, repair_zero_low, repair_zero_open, set_value
 
 SEED_TOML = """\
 [[delete_date_range]]
@@ -75,6 +75,30 @@ def test_read_fixes_rejects_missing_required_field(tmp_path: Path):
     path = tmp_path / 'cleaning.toml'
     path.write_text("[[delete_date_range]]\ntable = 'market_data'\ntickers = ['^NDX']\n")
     with pytest.raises(ValueError, match='reason'):
+        registry.read_fixes(path)
+
+
+def test_read_fixes_rejects_delete_date_range_without_table(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[delete_date_range]]\ntickers = ['^NDX']\nreason = 'r'\n")
+    with pytest.raises(ValueError, match='table'):
+        registry.read_fixes(path)
+
+
+def test_read_fixes_parses_rename_ticker_entry(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[rename_ticker]]\ntickers = ['SPCX']\nnew_ticker = 'SPCX.1'\nreason = 'r'\n")
+    fix = registry.read_fixes(path)[0]
+    assert fix.fix_type == 'rename_ticker'
+    assert fix.table is None
+    assert fix.tickers == ['SPCX']
+    assert fix.new_ticker == 'SPCX.1'
+
+
+def test_read_fixes_rejects_rename_ticker_without_new_ticker(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[rename_ticker]]\ntickers = ['SPCX']\nreason = 'r'\n")
+    with pytest.raises(ValueError, match='new_ticker'):
         registry.read_fixes(path)
 
 
@@ -255,3 +279,50 @@ def test_rebuild_adjusted_close_apply_fixes_negative_prefix(tmp_path):
     fixed = [r[0] for r in con.execute('SELECT AC FROM prices ORDER BY Date').fetchall()]
     assert fixed == pytest.approx([90.0, 90.0, 90.0, 100.0])
     assert rebuild_adjusted_close.detect(con, fix) == 0
+
+
+# --- rename_ticker ----------------------------------------------------------------
+
+
+@pytest.fixture
+def listings_con(tmp_path: Path) -> duckdb.DuckDBPyConnection:
+    """Writable temp DuckDB with two of the nine ticker-keyed tables, seeded with a collision case."""
+    con = duckdb.connect(str(tmp_path / 'listings.duckdb'))
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
+    con.execute('CREATE TABLE _yahoo_companies (Ticker VARCHAR, Src VARCHAR, Industry VARCHAR)')
+    con.executemany('INSERT INTO prices VALUES (?, ?, ?)', [
+        ('SPCX', '2020-01-02', 10.0), ('SPCX', '2020-01-03', 11.0), ('OTHER', '2020-01-02', 5.0),
+    ])
+    con.executemany('INSERT INTO _yahoo_companies VALUES (?, ?, ?)', [('SPCX', 'yahoo', 'Aerospace')])
+    return con
+
+
+def rename_fix(new_ticker: str = 'SPCX.1') -> registry.Fix:
+    return registry.Fix(fix_type='rename_ticker', table=None, tickers=['SPCX'], start=None, end=None,
+                        reason='test', new_ticker=new_ticker)
+
+
+def test_detect_sums_rows_across_existing_ticker_keyed_tables_only(listings_con):
+    assert rename_ticker.detect(listings_con, rename_fix()) == 3   # 2 prices + 1 _yahoo_companies
+
+
+def test_detect_ignores_tables_absent_from_this_db(listings_con):
+    # income/balance/cashflow/etc. from TICKER_KEYED_TABLES don't exist in this fixture; must not raise
+    rename_ticker.detect(listings_con, rename_fix())
+
+
+def test_apply_moves_only_the_old_ticker_rows(listings_con):
+    changed = rename_ticker.apply(listings_con, rename_fix())
+    assert changed == 3
+    old_count = listings_con.execute("SELECT count(*) FROM prices WHERE Ticker = 'SPCX'").fetchone()[0]
+    assert old_count == 0
+    moved = listings_con.execute("SELECT count(*) FROM prices WHERE Ticker = 'SPCX.1'").fetchone()[0]
+    assert moved == 2
+    other = listings_con.execute("SELECT Ticker FROM prices WHERE Ticker = 'OTHER'").fetchone()[0]
+    assert other == 'OTHER'
+
+
+def test_apply_is_idempotent(listings_con):
+    rename_ticker.apply(listings_con, rename_fix())
+    assert rename_ticker.apply(listings_con, rename_fix()) == 0
+    assert rename_ticker.detect(listings_con, rename_fix()) == 0

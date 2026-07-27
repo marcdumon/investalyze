@@ -40,7 +40,11 @@ def main() -> None:
     for fix in fixes:
         module = registry.FIX_TYPES[fix.fix_type]
         span = f'{fix.start or "..."} .. {fix.end or "..."}'
-        label = f'{fix.fix_type} {fix.table} {fix.tickers} [{span}]' + (f' {fix.column}' if fix.column else '')
+        label = f'{fix.fix_type} {fix.table or "(all tables)"} {fix.tickers} [{span}]'
+        if fix.column:
+            label += f' {fix.column}'
+        if fix.new_ticker:
+            label += f' -> {fix.new_ticker}'
         if args.command == 'check':
             n = module.detect(con, fix)
             state = 'clean' if n == 0 else 'pending'

@@ -16,6 +16,12 @@ import pandas as pd
 
 _DB = 'investalyze.duckdb'
 
+# every table a ticker's data can live in; a rename_ticker cleaning fix touches all of these
+TICKER_KEYED_TABLES = (
+    'prices', 'dividends', 'splits', 'income', 'balance', 'cashflow',
+    '_yahoo_companies', 'company_officers', '_simfin_companies',
+)
+
 
 # --- db -----------------------------------------------------------------------
 def connect(data_root: Path, db: str = _DB, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
