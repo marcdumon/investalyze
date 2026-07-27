@@ -9,10 +9,16 @@ without HTTP calls.
 """
 
 import io
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
+import duckdb
 import pandas as pd
 import requests
+
+from investalyze.cleaning import registry as cleaning_registry
+from investalyze.ingest import storage
+from investalyze.ingest.providers.yahoo import blacklist
 
 NASDAQ_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt'
 OTHER_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt'
@@ -125,3 +131,91 @@ def next_free_suffix(ticker: str, existing: set[str]) -> str:
     while f'{ticker}.{n}' in existing:
         n += 1
     return f'{ticker}.{n}'
+
+
+CANDIDATES_FILE = 'listing_candidates.csv'
+
+
+@dataclass(frozen=True)
+class UniverseScanResult:
+    """Everything one listings scan produced: the classified candidates and where they were saved."""
+
+    candidates: list[Candidate]
+    saved_to: Path
+
+
+def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path) -> tuple[set[str], dict[str, int | None]]:
+    """Every ticker ever tracked but now dead, with the CIK on file from its last time being tracked."""
+    state_dir = data_root / 'yahoo' / 'state'
+    dead_tickers = set(blacklist.read_dead(state_dir / 'price_dead.csv')['ticker']) | \
+        set(blacklist.read_dead(state_dir / 'meta_dead.csv')['ticker'])
+    if not dead_tickers or not storage.table_exists(con, 'companies'):
+        return dead_tickers, {}
+    placeholders = ', '.join('?' for _ in dead_tickers)
+    rows = con.execute(f'SELECT Ticker, CIK FROM companies WHERE Ticker IN ({placeholders})', list(dead_tickers)).fetchall()
+    last_cik = {ticker: (int(cik) if cik is not None else None) for ticker, cik in rows}
+    return dead_tickers, last_cik
+
+
+def _ticker_row_count(con: duckdb.DuckDBPyConnection, ticker: str) -> int:
+    """Row count for `ticker`, summed across every ticker-keyed table that exists.
+
+    Deliberately duplicates rename_ticker.detect()'s loop rather than importing it, see this
+    plan's "Design note: intentional duplication."
+    """
+    return sum(
+        int(con.execute(f'SELECT count(*) FROM {table} WHERE Ticker = ?', [ticker]).fetchone()[0])  # type: ignore[index]
+        for table in storage.TICKER_KEYED_TABLES if storage.table_exists(con, table)
+    )
+
+
+def _resolve_completed_renames(con: duckdb.DuckDBPyConnection, data_root: Path, cleaning_config: Path,
+                               dead_tickers: set[str]) -> set[str]:
+    """Drop dead-list tickers whose staged rename_ticker fix has fully moved their rows; returns the survivors."""
+    if not cleaning_config.exists():
+        return dead_tickers
+    fixes = cleaning_registry.parse_fixes(cleaning_config.read_text())
+    staged = {fix.tickers[0] for fix in fixes if fix.fix_type == 'rename_ticker'}
+    resolved = {ticker for ticker in dead_tickers & staged if _ticker_row_count(con, ticker) == 0}
+    if resolved:
+        state_dir = data_root / 'yahoo' / 'state'
+        for name in ('price_dead.csv', 'meta_dead.csv'):
+            path = state_dir / name
+            df = blacklist.read_dead(path)
+            if not df.empty:
+                df[~df['ticker'].isin(resolved)].to_csv(path, index=False)
+    return dead_tickers - resolved
+
+
+def scan(con: duckdb.DuckDBPyConnection, data_root: Path,
+        cleaning_config: Path = Path('cleaning.toml')) -> UniverseScanResult:
+    """Fetch live US common-stock listings, classify every untracked one, and save the result to CSV.
+
+    Compares against ticker.csv (currently tracked) and price_dead.csv/meta_dead.csv (tracked
+    before, now dead). Resolves any dead ticker whose staged rename has completed before
+    classifying, so a freshly cleared symbol is treated as brand new rather than stuck flagged as
+    a collision.
+    """
+    raw_dir = data_root / 'yahoo' / 'raw'
+    tracked = set(pd.read_csv(raw_dir / 'ticker.csv')['ticker'])
+    dead_tickers, last_cik = _read_dead_ciks(con, data_root)
+    dead_tickers = _resolve_completed_renames(con, data_root, cleaning_config, dead_tickers)
+
+    live_listings = fetch_nasdaq_listings()
+    live_cik = fetch_sec_cik_map()
+    candidates = classify(live_listings, tracked, dead_tickers, live_cik, last_cik)
+
+    known_tickers = set(tracked)
+    if storage.table_exists(con, 'companies'):
+        known_tickers |= set(con.execute('SELECT Ticker FROM companies').fetchdf()['Ticker'])
+    resolved_candidates = []
+    for candidate in candidates:
+        if candidate.classification == 'reactivated_collision':
+            suggestion = next_free_suffix(candidate.ticker, known_tickers)
+            known_tickers.add(suggestion)
+            candidate = replace(candidate, suggested_new_ticker=suggestion)
+        resolved_candidates.append(candidate)
+
+    out_path = data_root / 'yahoo' / 'state' / CANDIDATES_FILE
+    pd.DataFrame([vars(c) for c in resolved_candidates]).to_csv(out_path, index=False)
+    return UniverseScanResult(resolved_candidates, out_path)

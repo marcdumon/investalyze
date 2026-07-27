@@ -1,6 +1,10 @@
 """Tests for investalyze.ingest.listings: NASDAQ/SEC source parsing and classification."""
 
+from pathlib import Path
+
+import duckdb
 import pandas as pd
+import pytest
 
 from investalyze.ingest import listings
 
@@ -81,3 +85,59 @@ def test_next_free_suffix_finds_the_first_unused_key():
     assert listings.next_free_suffix('SPCX', existing=set()) == 'SPCX.1'
     assert listings.next_free_suffix('SPCX', existing={'SPCX.1'}) == 'SPCX.2'
     assert listings.next_free_suffix('SPCX', existing={'SPCX.1', 'SPCX.2'}) == 'SPCX.3'
+
+
+@pytest.fixture
+def data_root(tmp_path: Path) -> Path:
+    """A minimal data_root: ticker.csv with one tracked ticker, empty state dir."""
+    raw_dir = tmp_path / 'yahoo' / 'raw'
+    state_dir = tmp_path / 'yahoo' / 'state'
+    raw_dir.mkdir(parents=True)
+    state_dir.mkdir(parents=True)
+    pd.DataFrame({'ticker': ['AAPL'], 'market': ['nasdaq']}).to_csv(raw_dir / 'ticker.csv', index=False)
+    return tmp_path
+
+
+@pytest.fixture
+def scan_con(tmp_path: Path) -> duckdb.DuckDBPyConnection:
+    con = duckdb.connect(str(tmp_path / 'scan.duckdb'))
+    con.execute('CREATE TABLE companies (Ticker VARCHAR, CIK BIGINT)')
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
+    return con
+
+
+def test_scan_classifies_and_writes_candidates_csv(monkeypatch, scan_con, data_root):
+    monkeypatch.setattr(listings, 'fetch_nasdaq_listings', lambda: sample_listings())
+    monkeypatch.setattr(listings, 'fetch_sec_cik_map', lambda: {})
+    result = listings.scan(scan_con, data_root, cleaning_config=data_root / 'cleaning.toml')
+    assert result.saved_to == data_root / 'yahoo' / 'state' / listings.CANDIDATES_FILE
+    saved = pd.read_csv(result.saved_to)
+    assert set(saved['ticker']) == {'SPCX', 'ZOMB', 'RELS'}   # AAPL already tracked, excluded
+
+
+def test_scan_suggests_a_free_key_for_collision_candidates(monkeypatch, scan_con, data_root):
+    state_dir = data_root / 'yahoo' / 'state'
+    pd.DataFrame([{'ticker': 'ZOMB', 'attempts': 3, 'first_blacklisted': '2020-01-01', 'died_on': '2020-06-01'}]
+                ).to_csv(state_dir / 'price_dead.csv', index=False)
+    scan_con.execute("INSERT INTO companies VALUES ('ZOMB', 1)")   # old company's CIK on file
+    monkeypatch.setattr(listings, 'fetch_nasdaq_listings', lambda: sample_listings())
+    monkeypatch.setattr(listings, 'fetch_sec_cik_map', lambda: {'ZOMB': 99})   # different CIK now trading
+    result = listings.scan(scan_con, data_root, cleaning_config=data_root / 'cleaning.toml')
+    zomb = next(c for c in result.candidates if c.ticker == 'ZOMB')
+    assert zomb.classification == 'reactivated_collision'
+    assert zomb.suggested_new_ticker == 'ZOMB.1'
+
+
+def test_scan_clears_dead_list_once_a_staged_rename_has_moved_the_old_rows(monkeypatch, scan_con, data_root):
+    state_dir = data_root / 'yahoo' / 'state'
+    pd.DataFrame([{'ticker': 'ZOMB', 'attempts': 3, 'first_blacklisted': '2020-01-01', 'died_on': '2020-06-01'}]
+                ).to_csv(state_dir / 'price_dead.csv', index=False)
+    cleaning_path = data_root / 'cleaning.toml'
+    cleaning_path.write_text("[[rename_ticker]]\ntickers = ['ZOMB']\nnew_ticker = 'ZOMB.1'\nreason = 'r'\n")
+    # the rename has already been applied: no ZOMB rows remain anywhere
+    monkeypatch.setattr(listings, 'fetch_nasdaq_listings', lambda: sample_listings())
+    monkeypatch.setattr(listings, 'fetch_sec_cik_map', lambda: {})
+    result = listings.scan(scan_con, data_root, cleaning_config=cleaning_path)
+    zomb = next(c for c in result.candidates if c.ticker == 'ZOMB')
+    assert zomb.classification == 'new'   # resolved: no longer treated as a dead/collision ticker
+    assert pd.read_csv(state_dir / 'price_dead.csv').empty
