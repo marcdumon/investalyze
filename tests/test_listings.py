@@ -1,5 +1,7 @@
 """Tests for investalyze.ingest.listings: NASDAQ/SEC source parsing and classification."""
 
+import pandas as pd
+
 from investalyze.ingest import listings
 
 NASDAQLISTED_SAMPLE = """\
@@ -40,9 +42,6 @@ def test_parse_otherlisted_keeps_only_nyse_and_nysemkt():
 def test_parse_sec_cik_map_upper_cases_tickers():
     cik_map = listings._parse_sec_cik_map(SEC_TICKERS_SAMPLE)
     assert cik_map == {'AAPL': 320193, 'TSLA': 1318605}
-
-
-import pandas as pd
 
 
 def sample_listings() -> pd.DataFrame:

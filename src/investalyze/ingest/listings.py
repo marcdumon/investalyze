@@ -100,8 +100,8 @@ def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str],
 
     A ticker not in `dead_tickers` is brand new. A ticker in `dead_tickers` (tracked before, now
     dead) is reactivated_safe only when its live SEC CIK matches the CIK on file from the last time
-    it was tracked; a mismatch, or either CIK missing, is reactivated_collision — an unknown CIK
-    defaults to treating the case as a collision, never as safe.
+    it was tracked. A mismatch or missing CIK is reactivated_collision. An unknown CIK is treated
+    as a collision.
     """
     candidates = []
     for _, row in listings.iterrows():
