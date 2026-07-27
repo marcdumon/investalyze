@@ -32,11 +32,9 @@ def _strip_footer(text: str) -> str:
 
 
 def _is_common_stock(security_name: str) -> bool:
-    """False when the security name signals a warrant/right/preferred/unit rather than common stock.
-
-    Not exhaustive by design: anything that slips through and later returns no price data is
-    caught by the existing yahoo blacklist/dead mechanism, the same as it is today.
-    """
+    """False when the security name signals a warrant/right/preferred/unit rather than common stock."""
+    # heuristic only: anything that slips through and later returns no price data is caught by
+    # the existing yahoo blacklist/dead mechanism, the same as it is today
     lowered = security_name.lower()
     return not any(keyword in lowered for keyword in _DROP_KEYWORDS)
 
@@ -65,9 +63,11 @@ def _parse_otherlisted(text: str) -> pd.DataFrame:
 
 def fetch_nasdaq_listings() -> pd.DataFrame:
     """Live NASDAQ/NYSE/NYSE American common-stock listings: columns ticker, market, company_name."""
-    nasdaq_text = requests.get(NASDAQ_LISTED_URL, headers=HEADERS, timeout=15).text
-    other_text = requests.get(OTHER_LISTED_URL, headers=HEADERS, timeout=15).text
-    return pd.concat([_parse_nasdaqlisted(nasdaq_text), _parse_otherlisted(other_text)], ignore_index=True)
+    nasdaq_response = requests.get(NASDAQ_LISTED_URL, headers=HEADERS, timeout=15)
+    nasdaq_response.raise_for_status()
+    other_response = requests.get(OTHER_LISTED_URL, headers=HEADERS, timeout=15)
+    other_response.raise_for_status()
+    return pd.concat([_parse_nasdaqlisted(nasdaq_response.text), _parse_otherlisted(other_response.text)], ignore_index=True)
 
 
 def _parse_sec_cik_map(payload: dict) -> dict[str, int]:
