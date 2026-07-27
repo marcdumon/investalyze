@@ -60,6 +60,11 @@ def build_cleaning_argv(command: str) -> tuple[str, list[str]]:
     return f'cleaning {command}', ['-m', 'investalyze.cleaning', command]
 
 
+def build_listings_scan_argv() -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.ingest scan-listings`."""
+    return 'scan listings', ['-m', 'investalyze.ingest', 'scan-listings']
+
+
 # ---------- status cards ----------
 
 def freshness_card() -> dmc.Card:
@@ -184,6 +189,20 @@ def cleaning_card() -> dmc.Card:
     ], withBorder=True, radius='md', padding='sm')
 
 
+def listings_scan_card() -> dmc.Card:
+    """Scan button for new/reactivated tickers; read-only (writes only local state files)."""
+    return dmc.Card([
+        dmc.Text('New listings', fw=700, size='sm', mb=4),
+        dmc.Text('checks NASDAQ/NYSE listings against ticker.csv for new or reactivated tickers',
+                 size='xs', c='dimmed', mb=8),
+        dmc.Group([
+            dmc.Button('Scan for new listings', id='cp-btn-listings-scan', size='xs', variant='default',
+                       leftSection=DashIconify(icon='tabler:zoom-check')),
+            dmc.Text('read-only: review candidates below', size='xs', c='dimmed'),
+        ], gap=8),
+    ], withBorder=True, radius='md', padding='sm')
+
+
 # ---------- job console ----------
 
 def job_console() -> dmc.Card:
@@ -218,7 +237,8 @@ def layout() -> html.Div:
         dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card()],
                        cols={'base': 1, 'md': 3}, mb=12),
         dmc.Grid([
-            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card(), cleaning_card()], gap=10),
+            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card(), cleaning_card(),
+                                   listings_scan_card()], gap=10),
                         span={'base': 12, 'lg': 5}),
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
@@ -292,11 +312,12 @@ def refresh_status(_n: int):
     Output('cp-pending-action', 'data'), Output('cp-confirm-modal', 'opened'), Output('cp-confirm-text', 'children'),
     Input('cp-btn-ingest', 'n_clicks'), Input('cp-btn-housekeeping', 'n_clicks'), Input('cp-btn-quality', 'n_clicks'),
     Input('cp-btn-cleaning-check', 'n_clicks'), Input('cp-btn-cleaning-apply', 'n_clicks'),
+    Input('cp-btn-listings-scan', 'n_clicks'),
     State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'),
     State('cp-housekeeping-tasks', 'value'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
     prevent_initial_call=True,
 )
-def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n,
+def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n, listings_scan_n,
                  providers, mode, tasks, quality_errors, quality_warns):
     """Build the argv for the clicked Run button. Full ingest loads and cleaning applies go through a confirm modal."""
     trigger = ctx.triggered_id
@@ -321,6 +342,10 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
         title, argv = build_quality_argv((quality_errors or []) + (quality_warns or []))
         MANAGER.start(title, argv)
         return dash.no_update, False, dash.no_update
+    if trigger == 'cp-btn-listings-scan':
+        title, argv = build_listings_scan_argv()
+        MANAGER.start(title, argv)
+        return dash.no_update, False, dash.no_update
     raise PreventUpdate
 
 
@@ -341,6 +366,7 @@ def resolve_confirm(yes_n, no_n, pending):
     Output('cp-job-badge', 'children'), Output('cp-job-log', 'children'), Output('cp-job-history', 'children'),
     Output('cp-btn-ingest', 'disabled'), Output('cp-btn-housekeeping', 'disabled'), Output('cp-btn-quality', 'disabled'),
     Output('cp-btn-cleaning-check', 'disabled'), Output('cp-btn-cleaning-apply', 'disabled'),
+    Output('cp-btn-listings-scan', 'disabled'),
     Input('cp-poll', 'n_intervals'),
 )
 def refresh_job(_n: int):
@@ -370,7 +396,7 @@ def refresh_job(_n: int):
     ]
 
     return (badge, log, html.Div(history_rows) if history_rows else dmc.Text('no runs yet', size='xs', c='dimmed'),
-            running, running, running, running, running)
+            running, running, running, running, running, running)
 
 
 @callback(Output('cp-cancel-tick', 'data'), Input('cp-btn-cancel', 'n_clicks'), prevent_initial_call=True)
