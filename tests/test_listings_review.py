@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from investalyze.apps.control_panel import listings_review
 
@@ -46,3 +47,30 @@ def test_add_tickers_skips_duplicates(tmp_path: Path):
     added = listings_review.add_tickers([{'ticker': 'AAPL', 'market': 'nasdaq', 'classification': 'new'}], ticker_csv)
     assert added == 1   # counted as processed...
     assert len(pd.read_csv(ticker_csv)) == 1   # ...but not duplicated
+
+
+def test_rename_entries_builds_one_entry_per_collision_row():
+    rows = [
+        {'ticker': 'ZOMB', 'classification': 'reactivated_collision', 'suggested_new_ticker': 'ZOMB.1'},
+        {'ticker': 'AAPL', 'classification': 'new', 'suggested_new_ticker': ''},
+    ]
+    entries = listings_review.rename_entries(rows, 'CIK mismatch on relisting')
+    assert entries == [('rename_ticker', {'tickers': ['ZOMB'], 'new_ticker': 'ZOMB.1',
+                                          'reason': 'CIK mismatch on relisting'})]
+
+
+def test_rename_entries_rejects_no_collision_rows_selected():
+    with pytest.raises(ValueError, match='reactivated'):
+        listings_review.rename_entries([{'ticker': 'AAPL', 'classification': 'new'}], 'reason')
+
+
+def test_rename_entries_rejects_missing_reason():
+    rows = [{'ticker': 'ZOMB', 'classification': 'reactivated_collision', 'suggested_new_ticker': 'ZOMB.1'}]
+    with pytest.raises(ValueError, match='reason'):
+        listings_review.rename_entries(rows, '  ')
+
+
+def test_rename_entries_rejects_row_with_no_suggested_ticker():
+    rows = [{'ticker': 'ZOMB', 'classification': 'reactivated_collision', 'suggested_new_ticker': ''}]
+    with pytest.raises(ValueError, match='ZOMB'):
+        listings_review.rename_entries(rows, 'reason')

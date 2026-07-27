@@ -17,6 +17,8 @@ from dash_iconify import DashIconify
 
 from investalyze.apps.control_panel import listings_review, status
 from investalyze.apps.control_panel.jobs import MANAGER
+from investalyze.apps.data_quality import toml_io
+from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import housekeeping, orchestrator, storage
 from investalyze.quality import registry as quality_registry
 
@@ -446,4 +448,23 @@ def add_selected_listings(_n, selected, tick):
     status_text = f'added {added} ticker(s) to ticker.csv'
     if skipped:
         status_text += f', skipped {skipped} collision row(s) (stage a rename first)'
+    return status_text, (tick or 0) + 1, []
+
+
+@callback(
+    Output('cp-listings-status', 'children', allow_duplicate=True), Output('cp-listings-tick', 'data', allow_duplicate=True),
+    Output('cp-listings-grid', 'selectedRows', allow_duplicate=True),
+    Input('cp-btn-listings-rename', 'n_clicks'),
+    State('cp-listings-grid', 'selectedRows'), State('cp-listings-reason', 'value'), State('cp-listings-tick', 'data'),
+    prevent_initial_call=True,
+)
+def stage_selected_renames(_n, selected, reason, tick):
+    """Stage a rename_ticker fix in cleaning.toml for every selected collision row."""
+    try:
+        entries = listings_review.rename_entries(selected or [], reason or '')
+    except ValueError as err:
+        return str(err), dash.no_update, dash.no_update
+    block = '\n'.join(toml_io.serialize_block(section, fields) for section, fields in entries)
+    toml_io.append_block(Path('cleaning.toml'), block, cleaning_registry.parse_fixes)
+    status_text = f'staged {len(entries)} rename(s); apply from Cleaning above, then re-scan to add the freed ticker(s)'
     return status_text, (tick or 0) + 1, []

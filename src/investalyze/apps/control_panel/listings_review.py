@@ -2,8 +2,7 @@
 
 Reads `data/yahoo/state/listing_candidates.csv` (written by `investalyze.ingest.listings.scan`)
 and lets the user append new/reactivated-safe tickers to `ticker.csv`. Reactivated-collision rows
-are never added here; see `rename_entries` (added in the next task) for staging the rename that
-must happen first.
+are never added here; see `rename_entries` for staging the rename that must happen first.
 """
 
 from pathlib import Path
@@ -51,6 +50,28 @@ def add_tickers(rows: list[dict], ticker_csv_path: Path = TICKER_CSV_PATH) -> in
     return len(addable)
 
 
+def rename_entries(rows: list[dict], reason: str) -> list[tuple[str, dict]]:
+    """cleaning.toml (section, fields) entries staging a rename_ticker fix for each collision row.
+
+    Raises ValueError if no collision rows are selected, the reason is blank, or a row has no
+    suggested_new_ticker (scan() always fills this in for reactivated_collision candidates, so a
+    missing value means the candidates file is stale, re-run the scan).
+    """
+    collisions = [r for r in rows if r['classification'] == 'reactivated_collision']
+    if not collisions:
+        raise ValueError('select at least one reactivated (collision) row first')
+    reason = reason.strip()
+    if not reason:
+        raise ValueError('a reason is required (it is stored with the fix)')
+    entries = []
+    for row in collisions:
+        new_ticker = row.get('suggested_new_ticker')
+        if not new_ticker:
+            raise ValueError(f"{row['ticker']} has no suggested new ticker; re-run the scan")
+        entries.append(('rename_ticker', {'tickers': [row['ticker']], 'new_ticker': new_ticker, 'reason': reason}))
+    return entries
+
+
 def listings_card() -> dmc.Card:
     """New-listings review card: scan-result grid + Add / Stage-rename actions."""
     return dmc.Card([
@@ -63,9 +84,13 @@ def listings_card() -> dmc.Card:
                              'suppressRowClickSelection': True},
             className='ag-theme-alpine-dark', style={'height': '260px', 'width': '100%'},
         ),
+        dmc.Textarea(id='cp-listings-reason', autosize=True, minRows=2, size='xs', mt=8,
+                    placeholder='why the rename is needed (stored in cleaning.toml)'),
         dmc.Group([
             dmc.Button('Add selected to ticker.csv', id='cp-btn-listings-add', size='xs', color='orange',
                        leftSection=DashIconify(icon='tabler:playlist-add')),
+            dmc.Button('Stage rename for selected', id='cp-btn-listings-rename', size='xs', color='orange',
+                       leftSection=DashIconify(icon='tabler:arrows-right-left')),
         ], gap=8, mt=8),
         dmc.Text(id='cp-listings-status', size='xs', c='dimmed', mt=4),
     ], withBorder=True, radius='md', padding='sm')
