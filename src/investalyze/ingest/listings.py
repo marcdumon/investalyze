@@ -9,6 +9,7 @@ without HTTP calls.
 """
 
 import io
+from dataclasses import dataclass
 
 import pandas as pd
 import requests
@@ -80,3 +81,47 @@ def fetch_sec_cik_map() -> dict[str, int]:
     response = requests.get(SEC_TICKERS_URL, headers=HEADERS, timeout=15)
     response.raise_for_status()
     return _parse_sec_cik_map(response.json())
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One live ticker not currently tracked, with its universe-scan classification."""
+
+    ticker: str
+    market: str
+    company_name: str
+    classification: str   # 'new' | 'reactivated_safe' | 'reactivated_collision'
+    suggested_new_ticker: str | None = None
+
+
+def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str],
+            live_cik: dict[str, int], last_cik: dict[str, int | None]) -> list[Candidate]:
+    """Classify every live listing not already tracked as new, reactivated_safe, or reactivated_collision.
+
+    A ticker not in `dead_tickers` is brand new. A ticker in `dead_tickers` (tracked before, now
+    dead) is reactivated_safe only when its live SEC CIK matches the CIK on file from the last time
+    it was tracked; a mismatch, or either CIK missing, is reactivated_collision — an unknown CIK
+    defaults to treating the case as a collision, never as safe.
+    """
+    candidates = []
+    for _, row in listings.iterrows():
+        ticker = row['ticker']
+        if ticker in tracked:
+            continue
+        if ticker not in dead_tickers:
+            candidates.append(Candidate(ticker, row['market'], row['company_name'], 'new'))
+            continue
+        live = live_cik.get(ticker)
+        known = last_cik.get(ticker)
+        classification = 'reactivated_safe' if live is not None and known is not None and live == known \
+            else 'reactivated_collision'
+        candidates.append(Candidate(ticker, row['market'], row['company_name'], classification))
+    return candidates
+
+
+def next_free_suffix(ticker: str, existing: set[str]) -> str:
+    """The first `{ticker}.N` key (N starting at 1) not already present in `existing`."""
+    n = 1
+    while f'{ticker}.{n}' in existing:
+        n += 1
+    return f'{ticker}.{n}'

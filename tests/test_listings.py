@@ -40,3 +40,45 @@ def test_parse_otherlisted_keeps_only_nyse_and_nysemkt():
 def test_parse_sec_cik_map_upper_cases_tickers():
     cik_map = listings._parse_sec_cik_map(SEC_TICKERS_SAMPLE)
     assert cik_map == {'AAPL': 320193, 'TSLA': 1318605}
+
+
+import pandas as pd
+
+
+def sample_listings() -> pd.DataFrame:
+    return pd.DataFrame([
+        {'ticker': 'SPCX', 'market': 'nasdaq', 'company_name': 'SpaceX Corp'},
+        {'ticker': 'AAPL', 'market': 'nasdaq', 'company_name': 'Apple Inc.'},
+        {'ticker': 'ZOMB', 'market': 'nyse', 'company_name': 'Zombie Reincorp'},
+        {'ticker': 'RELS', 'market': 'nyse', 'company_name': 'Relisted Co'},
+    ])
+
+
+def test_classify_never_tracked_ticker_as_new():
+    candidates = listings.classify(sample_listings(), tracked={'AAPL'}, dead_tickers=set(), live_cik={}, last_cik={})
+    by_ticker = {c.ticker: c for c in candidates}
+    assert by_ticker['SPCX'].classification == 'new'
+    assert 'AAPL' not in by_ticker   # already tracked, not a candidate
+
+
+def test_classify_reactivated_ticker_with_matching_cik_as_safe():
+    candidates = listings.classify(sample_listings(), tracked=set(), dead_tickers={'RELS'},
+                                   live_cik={'RELS': 42}, last_cik={'RELS': 42})
+    assert next(c for c in candidates if c.ticker == 'RELS').classification == 'reactivated_safe'
+
+
+def test_classify_reactivated_ticker_with_mismatched_cik_as_collision():
+    candidates = listings.classify(sample_listings(), tracked=set(), dead_tickers={'ZOMB'},
+                                   live_cik={'ZOMB': 99}, last_cik={'ZOMB': 1})
+    assert next(c for c in candidates if c.ticker == 'ZOMB').classification == 'reactivated_collision'
+
+
+def test_classify_reactivated_ticker_with_unknown_cik_defaults_to_collision():
+    candidates = listings.classify(sample_listings(), tracked=set(), dead_tickers={'ZOMB'}, live_cik={}, last_cik={})
+    assert next(c for c in candidates if c.ticker == 'ZOMB').classification == 'reactivated_collision'
+
+
+def test_next_free_suffix_finds_the_first_unused_key():
+    assert listings.next_free_suffix('SPCX', existing=set()) == 'SPCX.1'
+    assert listings.next_free_suffix('SPCX', existing={'SPCX.1'}) == 'SPCX.2'
+    assert listings.next_free_suffix('SPCX', existing={'SPCX.1', 'SPCX.2'}) == 'SPCX.3'
