@@ -2,12 +2,13 @@
 
 import argparse
 import logging
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-from investalyze.ingest import config, housekeeping, orchestrator
+from investalyze.ingest import config, housekeeping, listings, orchestrator, storage
 from investalyze.ingest.logging import configure_logging
 
 log = logging.getLogger('investalyze.ingest')
@@ -42,9 +43,10 @@ def main() -> None:
     parser.add_argument(
         'command',
         nargs='?',
-        choices=('setup', 'housekeeping'),
-        help=("'setup' scaffolds the data dirs, 'housekeeping' runs maintenance tasks "
-              '(both exit without ingesting); omit to run the ingest'),
+        choices=('setup', 'housekeeping', 'scan-listings'),
+        help=("'setup' scaffolds the data dirs, 'housekeeping' runs maintenance tasks, "
+              "'scan-listings' checks for new/reactivated tickers (all exit without ingesting); "
+              'omit to run the ingest'),
     )
     parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
                         help='TOML config file (default: ./ingest.toml; missing is fine)')
@@ -78,6 +80,18 @@ def main() -> None:
         summary = housekeeping.run_housekeeping(cfg, args.tasks)
         for name, result in summary.items():
             log.info(f'{name}: {result}')
+        return
+
+    if args.command == 'scan-listings':
+        con = storage.connect(cfg.data_root, cfg.db, read_only=True)
+        try:
+            result = listings.scan(con, cfg.data_root)
+        finally:
+            con.close()
+        counts = Counter(c.classification for c in result.candidates)
+        log.info(f'scan complete: {len(result.candidates)} candidate(s) -> {result.saved_to}')
+        for classification, n in sorted(counts.items()):
+            log.info(f'  {classification}: {n}')
         return
 
     summary = orchestrator.run(cfg, args.providers, update=args.update)
