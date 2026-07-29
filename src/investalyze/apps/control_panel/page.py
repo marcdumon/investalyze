@@ -6,6 +6,7 @@ The status cards at the top query the DB directly through short-lived read-only 
 and are paused while a job is running, since the running job may hold the write lock.
 """
 
+import json
 from pathlib import Path
 
 import dash
@@ -15,15 +16,13 @@ from dash import Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
+from investalyze.apps import universes
 from investalyze.apps.control_panel import listings_review, status
 from investalyze.apps.control_panel.jobs import MANAGER
-from investalyze.apps.data_quality import toml_io
-from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import housekeeping, orchestrator, storage
 from investalyze.quality import registry as quality_registry
 
 DATA_ROOT = Path('data')
-REPO_ROOT = Path(__file__).resolve().parents[4]
 
 SEVERITY_COLOR = {'error': 'red', 'warn': 'yellow'}
 
@@ -65,6 +64,26 @@ def build_cleaning_argv(command: str) -> tuple[str, list[str]]:
 def build_listings_scan_argv() -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.ingest scan-listings`."""
     return 'scan listings', ['-m', 'investalyze.ingest', 'scan-listings']
+
+
+def build_blacklist_argv(ticker: str | None, universe: str | None, reason: str) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.ingest blacklist-ticker`, targeting either one ticker or
+    every ticker in a saved universe (exactly one of `ticker`/`universe` must be set)."""
+    if universe:
+        return f'blacklist universe {universe}', ['-m', 'investalyze.ingest', 'blacklist-ticker',
+                                                   '--universe', universe, '--reason', reason]
+    return f'blacklist {ticker}', ['-m', 'investalyze.ingest', 'blacklist-ticker', '--ticker', ticker, '--reason', reason]
+
+
+def build_add_listings_argv(rows: list[dict]) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.ingest add-listings --rows <json>`.
+
+    Each row's current grid state (ticker, market, classification, and its possibly user-edited
+    suggested_new_ticker) is passed straight through as the collision-fix target.
+    """
+    payload = json.dumps([{'ticker': r['ticker'], 'market': r['market'], 'classification': r['classification'],
+                           'new_ticker': r.get('suggested_new_ticker')} for r in rows])
+    return f'add {len(rows)} listing(s)', ['-m', 'investalyze.ingest', 'add-listings', '--rows', payload]
 
 
 # ---------- status cards ----------
@@ -192,16 +211,35 @@ def cleaning_card() -> dmc.Card:
 
 
 def listings_scan_card() -> dmc.Card:
-    """Scan button for new/reactivated tickers; read-only (writes only local state files)."""
+    """Scan button for new/reactivated tickers; auto-adds new ones, reactivated ones need review below."""
     return dmc.Card([
-        dmc.Text('New listings', fw=700, size='sm', mb=4),
-        dmc.Text('checks NASDAQ/NYSE listings against ticker.csv for new or reactivated tickers',
-                 size='xs', c='dimmed', mb=8),
+        dmc.Group([dmc.Text('New listings', fw=700, size='sm'), writes_badge('ticker.csv (new tickers)')],
+                  gap=8, mb=4),
+        dmc.Text('Checks NASDAQ/NYSE listings against ticker.csv; new tickers are added automatically, '
+                 'reactivated ones need review below.', size='xs', c='dimmed', mb=8),
+        dmc.Button('Scan for new listings', id='cp-btn-listings-scan', size='xs', color='orange',
+                   leftSection=DashIconify(icon='tabler:zoom-check')),
+    ], withBorder=True, radius='md', padding='sm')
+
+
+def blacklist_card() -> dmc.Card:
+    """Delete a ticker's (or a whole universe's) data everywhere and block it from ever being
+    re-added by a scan. Fill in either the ticker field or the universe field, not both; one
+    reason is stored against every ticker blacklisted, so it stays clear later why."""
+    return dmc.Card([
+        dmc.Group([dmc.Text('Blacklist ticker', fw=700, size='sm'),
+                  dmc.Badge('deletes ticker data', color='red', variant='light', size='xs')], gap=8, mb=4),
+        dmc.Text("Permanently deletes the data and blocks future scans from re-adding it. Fill in "
+                 'either a ticker or a universe, not both.', size='xs', c='dimmed', mb=8),
         dmc.Group([
-            dmc.Button('Scan for new listings', id='cp-btn-listings-scan', size='xs', variant='default',
-                       leftSection=DashIconify(icon='tabler:zoom-check')),
-            dmc.Text('read-only: review candidates below', size='xs', c='dimmed'),
+            dmc.TextInput(id='cp-blacklist-ticker', placeholder='TICKER', size='xs', style={'width': '140px'}),
+            dmc.Select(id='cp-blacklist-universe', placeholder='Or a whole universe', data=[], size='xs',
+                      clearable=True, style={'flex': 1}),
         ], gap=8),
+        dmc.Textarea(id='cp-blacklist-reason', autosize=True, minRows=2, size='xs', mt=6,
+                    placeholder='Reason (stored against every ticker blacklisted)'),
+        dmc.Button('Blacklist', id='cp-btn-blacklist', size='xs', mt=8, color='red',
+                   leftSection=DashIconify(icon='tabler:trash')),
     ], withBorder=True, radius='md', padding='sm')
 
 
@@ -219,6 +257,7 @@ def job_console() -> dmc.Card:
         html.Pre(id='cp-job-log', style={
             'height': '360px', 'overflowY': 'auto', 'background': '#0b0b0f', 'color': '#ddd',
             'padding': '8px', 'borderRadius': '6px', 'fontSize': '12px', 'marginTop': '8px', 'marginBottom': '8px',
+            'whiteSpace': 'pre-wrap', 'wordBreak': 'break-word',
         }),
         dmc.Accordion([
             dmc.AccordionItem([
@@ -239,8 +278,8 @@ def layout() -> html.Div:
         dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card()],
                        cols={'base': 1, 'md': 3}, mb=12),
         dmc.Grid([
-            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), quality_card(), cleaning_card(),
-                                   listings_scan_card()], gap=10),
+            dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), blacklist_card(), quality_card(),
+                                   cleaning_card(), listings_scan_card()], gap=10),
                         span={'base': 12, 'lg': 5}),
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
@@ -257,7 +296,7 @@ def layout() -> html.Div:
         ),
         dcc.Store(id='cp-pending-action'),
         dcc.Store(id='cp-cancel-tick'),
-        dcc.Store(id='cp-listings-tick', data=0),
+        dcc.Store(id='cp-listings-signature'),
     ])
 
 
@@ -316,13 +355,16 @@ def refresh_status(_n: int):
     Output('cp-pending-action', 'data'), Output('cp-confirm-modal', 'opened'), Output('cp-confirm-text', 'children'),
     Input('cp-btn-ingest', 'n_clicks'), Input('cp-btn-housekeeping', 'n_clicks'), Input('cp-btn-quality', 'n_clicks'),
     Input('cp-btn-cleaning-check', 'n_clicks'), Input('cp-btn-cleaning-apply', 'n_clicks'),
-    Input('cp-btn-listings-scan', 'n_clicks'),
+    Input('cp-btn-listings-scan', 'n_clicks'), Input('cp-btn-blacklist', 'n_clicks'), Input('cp-btn-listings-add', 'n_clicks'),
     State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'),
     State('cp-housekeeping-tasks', 'value'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
+    State('cp-blacklist-ticker', 'value'), State('cp-blacklist-universe', 'value'), State('cp-blacklist-reason', 'value'),
+    State('cp-listings-grid', 'selectedRows'),
     prevent_initial_call=True,
 )
-def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n, listings_scan_n,
-                 providers, mode, tasks, quality_errors, quality_warns):
+def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n, listings_scan_n, blacklist_n,
+                 listings_add_n, providers, mode, tasks, quality_errors, quality_warns, blacklist_ticker,
+                 blacklist_universe, blacklist_reason, listings_selected):
     """Build the argv for the clicked Run button. Full ingest loads and cleaning applies go through a confirm modal."""
     trigger = ctx.triggered_id
     if trigger == 'cp-btn-cleaning-check':
@@ -350,6 +392,22 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
         title, argv = build_listings_scan_argv()
         MANAGER.start(title, argv)
         return dash.no_update, False, dash.no_update
+    if trigger == 'cp-btn-blacklist':
+        ticker = (blacklist_ticker or '').strip().upper()
+        universe = (blacklist_universe or '').strip()
+        reason = (blacklist_reason or '').strip()
+        if not reason or bool(ticker) == bool(universe):
+            raise PreventUpdate   # need a reason, and exactly one of ticker/universe
+        title, argv = build_blacklist_argv(ticker or None, universe or None, reason)
+        target = f'universe "{universe}" ({len(universes.load_universe(universe))} ticker(s))' if universe else ticker
+        return {'title': title, 'argv': argv}, True, f'Permanently delete all stored data for {target} and block them from future scans?'
+    if trigger == 'cp-btn-listings-add':
+        rows = listings_selected or []
+        if not rows:
+            raise PreventUpdate
+        title, argv = build_add_listings_argv(rows)
+        MANAGER.start(title, argv)
+        return dash.no_update, False, dash.no_update
     raise PreventUpdate
 
 
@@ -370,7 +428,7 @@ def resolve_confirm(yes_n, no_n, pending):
     Output('cp-job-badge', 'children'), Output('cp-job-log', 'children'), Output('cp-job-history', 'children'),
     Output('cp-btn-ingest', 'disabled'), Output('cp-btn-housekeeping', 'disabled'), Output('cp-btn-quality', 'disabled'),
     Output('cp-btn-cleaning-check', 'disabled'), Output('cp-btn-cleaning-apply', 'disabled'),
-    Output('cp-btn-listings-scan', 'disabled'),
+    Output('cp-btn-listings-scan', 'disabled'), Output('cp-btn-blacklist', 'disabled'), Output('cp-btn-listings-add', 'disabled'),
     Input('cp-poll', 'n_intervals'),
 )
 def refresh_job(_n: int):
@@ -400,7 +458,7 @@ def refresh_job(_n: int):
     ]
 
     return (badge, log, html.Div(history_rows) if history_rows else dmc.Text('no runs yet', size='xs', c='dimmed'),
-            running, running, running, running, running, running)
+            running, running, running, running, running, running, running, running)
 
 
 @callback(Output('cp-cancel-tick', 'data'), Input('cp-btn-cancel', 'n_clicks'), prevent_initial_call=True)
@@ -425,46 +483,28 @@ dash.clientside_callback(
 
 # ---------- listings-review callbacks ----------
 
-@callback(Output('cp-listings-grid', 'rowData'), Input('cp-poll', 'n_intervals'), Input('cp-listings-tick', 'data'))
-def refresh_listings_candidates(_n, _tick):
-    """Reload the candidates grid from the last scan's saved CSV."""
-    return listings_review.read_candidates()
-
-
 @callback(
-    Output('cp-listings-status', 'children'), Output('cp-listings-tick', 'data', allow_duplicate=True),
-    Output('cp-listings-grid', 'selectedRows', allow_duplicate=True),
-    Input('cp-btn-listings-add', 'n_clicks'),
-    State('cp-listings-grid', 'selectedRows'), State('cp-listings-tick', 'data'),
-    prevent_initial_call=True,
+    Output('cp-listings-grid', 'rowData'), Output('cp-listings-signature', 'data'),
+    Input('cp-poll', 'n_intervals'),
+    State('cp-listings-signature', 'data'),
 )
-def add_selected_listings(_n, selected, tick):
-    """Append selected new/reactivated_safe rows to ticker.csv."""
-    rows = selected or []
-    if not rows:
-        return 'select at least one row first', dash.no_update, dash.no_update
-    added = listings_review.add_tickers(rows)
-    skipped = len(rows) - added
-    status_text = f'added {added} ticker(s) to ticker.csv'
-    if skipped:
-        status_text += f', skipped {skipped} collision row(s) (stage a rename first)'
-    return status_text, (tick or 0) + 1, []
+def refresh_listings_candidates(_n, last_signature):
+    """Reload the candidates grid from the last scan's saved CSV, skipping the update when the
+    content hasn't changed since the last poll.
+
+    The 1-second poll would otherwise reset rowData every tick even when nothing changed, which
+    resets the grid's scroll position and makes it impossible to scroll through the list.
+    """
+    rows = listings_review.read_candidates()
+    # plain lists, not tuples: dcc.Store round-trips data through JSON, which has no tuple type,
+    # so a tuple signature would never compare equal to the list it deserializes back into
+    signature = sorted([r['ticker'], r['classification'], r.get('suggested_new_ticker', '')] for r in rows)
+    if signature == last_signature:
+        return dash.no_update, dash.no_update
+    return rows, signature
 
 
-@callback(
-    Output('cp-listings-status', 'children', allow_duplicate=True), Output('cp-listings-tick', 'data', allow_duplicate=True),
-    Output('cp-listings-grid', 'selectedRows', allow_duplicate=True),
-    Input('cp-btn-listings-rename', 'n_clicks'),
-    State('cp-listings-grid', 'selectedRows'), State('cp-listings-reason', 'value'), State('cp-listings-tick', 'data'),
-    prevent_initial_call=True,
-)
-def stage_selected_renames(_n, selected, reason, tick):
-    """Stage a rename_ticker fix in cleaning.toml for every selected collision row."""
-    try:
-        entries = listings_review.rename_entries(selected or [], reason or '')
-    except ValueError as err:
-        return str(err), dash.no_update, dash.no_update
-    block = '\n'.join(toml_io.serialize_block(section, fields) for section, fields in entries)
-    toml_io.append_block(REPO_ROOT / 'cleaning.toml', block, cleaning_registry.parse_fixes)
-    status_text = f'staged {len(entries)} rename(s); apply from Cleaning above, then re-scan to add the freed ticker(s)'
-    return status_text, (tick or 0) + 1, []
+@callback(Output('cp-blacklist-universe', 'data'), Input('cp-poll', 'n_intervals'))
+def refresh_blacklist_universe_options(_n):
+    """List saved universes as options for the blacklist card's universe picker."""
+    return universes.list_universes()

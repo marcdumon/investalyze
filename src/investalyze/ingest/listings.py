@@ -11,6 +11,7 @@ without HTTP calls.
 import io
 import re
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -46,12 +47,23 @@ def _is_common_stock(security_name: str) -> bool:
     return not _DROP_PATTERN.search(security_name.lower())
 
 
+def _drop_blank_tickers(frame: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows with a blank/missing ticker.
+
+    Vendor data occasionally has a blank symbol on an otherwise-parseable row; a blank ticker can
+    never be fetched or tracked, and would crash downstream code (e.g. yfinance) if it ever
+    reached ticker.csv.
+    """
+    return frame[frame['ticker'].notna() & (frame['ticker'].str.strip() != '')].reset_index(drop=True)
+
+
 def _parse_nasdaqlisted(text: str) -> pd.DataFrame:
     """NASDAQ-listed common stocks from nasdaqlisted.txt: columns ticker, market, company_name."""
     frame = pd.read_csv(io.StringIO(_strip_footer(text)), sep='|', dtype=str)
     frame = frame[(frame['Test Issue'] == 'N') & (frame['ETF'] == 'N')]
     frame = frame[frame['Security Name'].apply(_is_common_stock)]
-    return pd.DataFrame({'ticker': frame['Symbol'], 'market': 'nasdaq', 'company_name': frame['Security Name']})
+    listings = pd.DataFrame({'ticker': frame['Symbol'], 'market': 'nasdaq', 'company_name': frame['Security Name']})
+    return _drop_blank_tickers(listings)
 
 
 def _parse_otherlisted(text: str) -> pd.DataFrame:
@@ -64,8 +76,9 @@ def _parse_otherlisted(text: str) -> pd.DataFrame:
     frame = frame[(frame['Test Issue'] == 'N') & (frame['ETF'] == 'N')]
     frame = frame[frame['Security Name'].apply(_is_common_stock)]
     frame = frame[frame['Exchange'].isin(_EXCHANGE_MARKET)]
-    return pd.DataFrame({'ticker': frame['ACT Symbol'], 'market': frame['Exchange'].map(_EXCHANGE_MARKET),
-                         'company_name': frame['Security Name']})
+    listings = pd.DataFrame({'ticker': frame['ACT Symbol'], 'market': frame['Exchange'].map(_EXCHANGE_MARKET),
+                             'company_name': frame['Security Name']})
+    return _drop_blank_tickers(listings)
 
 
 def fetch_nasdaq_listings() -> pd.DataFrame:
@@ -98,17 +111,20 @@ class Candidate:
     company_name: str
     classification: str   # 'new' | 'reactivated_safe' | 'reactivated_collision'
     suggested_new_ticker: str | None = None
+    previous_company_name: str | None = None
 
 
-def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str],
-            live_cik: dict[str, int], last_cik: dict[str, int | None]) -> list[Candidate]:
+def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str], live_cik: dict[str, int],
+            last_cik: dict[str, int | None], last_company_name: dict[str, str | None] | None = None) -> list[Candidate]:
     """Classify every live listing not already tracked as new, reactivated_safe, or reactivated_collision.
 
     A ticker not in `dead_tickers` is brand new. A ticker in `dead_tickers` (tracked before, now
     dead) is reactivated_safe only when its live SEC CIK matches the CIK on file from the last time
     it was tracked. A mismatch or missing CIK is reactivated_collision. An unknown CIK is treated
-    as a collision.
+    as a collision. `last_company_name` (optional) fills in `previous_company_name` so a collision
+    shows which earlier company held the symbol, not just the live listing's current name.
     """
+    last_company_name = last_company_name or {}
     candidates = []
     for _, row in listings.iterrows():
         ticker = row['ticker']
@@ -121,7 +137,8 @@ def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str],
         known = last_cik.get(ticker)
         classification = 'reactivated_safe' if live is not None and known is not None and live == known \
             else 'reactivated_collision'
-        candidates.append(Candidate(ticker, row['market'], row['company_name'], classification))
+        candidates.append(Candidate(ticker, row['market'], row['company_name'], classification,
+                                    previous_company_name=last_company_name.get(ticker)))
     return candidates
 
 
@@ -153,10 +170,10 @@ def _tickers_with_rows(con: duckdb.DuckDBPyConnection) -> set[str]:
     return known
 
 
-def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path,
-                    tracked: set[str]) -> tuple[set[str], dict[str, int | None]]:
-    """Every ticker needing an identity check before being offered as a candidate, with the CIK on
-    file for it.
+def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path, tracked: set[str],
+                    ) -> tuple[set[str], dict[str, int | None], dict[str, str | None]]:
+    """Every ticker needing an identity check before being offered as a candidate, with the CIK and
+    company name on file for it.
 
     This is every ticker in price_dead.csv/meta_dead.csv (tracked before, now fully dead) plus any
     ticker holding rows in a ticker-keyed table but currently untracked (the state a ticker sits in
@@ -169,11 +186,14 @@ def _read_dead_ciks(con: duckdb.DuckDBPyConnection, data_root: Path,
     with_rows = _tickers_with_rows(con)
     needs_check = dead_tickers | (with_rows - tracked)
     if not needs_check or not storage.table_exists(con, 'companies'):
-        return needs_check, {}
+        return needs_check, {}, {}
     placeholders = ', '.join('?' for _ in needs_check)
-    rows = con.execute(f'SELECT Ticker, CIK FROM companies WHERE Ticker IN ({placeholders})', list(needs_check)).fetchall()
-    last_cik = {ticker: (int(cik) if cik is not None else None) for ticker, cik in rows}
-    return needs_check, last_cik
+    rows = con.execute(
+        f'SELECT Ticker, CIK, CompanyName FROM companies WHERE Ticker IN ({placeholders})', list(needs_check),
+    ).fetchall()
+    last_cik = {ticker: (int(cik) if cik is not None else None) for ticker, cik, _ in rows}
+    last_company_name = {ticker: name for ticker, _, name in rows}
+    return needs_check, last_cik, last_company_name
 
 
 def _ticker_row_count(con: duckdb.DuckDBPyConnection, ticker: str) -> int:
@@ -206,23 +226,113 @@ def _resolve_completed_renames(con: duckdb.DuckDBPyConnection, data_root: Path, 
     return dead_tickers - resolved
 
 
+MANUAL_BLACKLIST_FILE = 'manual_blacklist.csv'
+_MANUAL_BLACKLIST_COLS = ('ticker', 'reason', 'blacklisted_on')
+
+
+def _read_manual_blacklist(data_root: Path) -> set[str]:
+    """Tickers the user has explicitly blacklisted; empty set if none have been."""
+    path = data_root / 'yahoo' / 'state' / MANUAL_BLACKLIST_FILE
+    if not path.exists():
+        return set()
+    return set(pd.read_csv(path, keep_default_na=False)['ticker'])
+
+
+def blacklist_tickers(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: list[str], reason: str) -> int:
+    """Delete every row for each of `tickers`, drop them from ticker.csv, and record each one with
+    the same `reason` so no future scan offers it again. Returns the number of rows deleted.
+    """
+    if not tickers:
+        return 0
+    placeholders = ', '.join('?' for _ in tickers)
+    total = 0
+    for table in storage.TICKER_KEYED_TABLES:
+        if storage.table_exists(con, table):
+            total += int(con.execute(f'DELETE FROM {table} WHERE Ticker IN ({placeholders})', tickers).fetchone()[0])  # type: ignore[index]
+
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    if ticker_csv.exists():
+        existing_tracked = pd.read_csv(ticker_csv, keep_default_na=False)
+        existing_tracked[~existing_tracked['ticker'].isin(tickers)].to_csv(ticker_csv, index=False)
+
+    state_dir = data_root / 'yahoo' / 'state'
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = state_dir / MANUAL_BLACKLIST_FILE
+    existing = pd.read_csv(path, keep_default_na=False) if path.exists() else pd.DataFrame(columns=_MANUAL_BLACKLIST_COLS)
+    today = date.today().isoformat()
+    new_rows = pd.DataFrame([{'ticker': ticker, 'reason': reason, 'blacklisted_on': today} for ticker in tickers])
+    pd.concat([existing, new_rows], ignore_index=True).to_csv(path, index=False)
+    return total
+
+
+def add_listings(con: duckdb.DuckDBPyConnection, data_root: Path, rows: list[dict]) -> tuple[int, int, int]:
+    """Add reviewed candidates to ticker.csv in one step.
+
+    A `reactivated_collision` row is renamed to its `new_ticker` key first, moving the old
+    company's data aside, then added under the bare symbol. A collision row with a blank
+    `new_ticker` is skipped entirely rather than added unrenamed, since that would merge two
+    companies' data. Returns (tickers added, renames performed, rows skipped).
+    """
+    renamed = skipped = 0
+    addable = []
+    for row in rows:
+        if row['classification'] == 'reactivated_collision':
+            new_ticker = (row.get('new_ticker') or '').strip()
+            if not new_ticker:
+                skipped += 1
+                continue
+            old = row['ticker']
+            for table in storage.TICKER_KEYED_TABLES:
+                if storage.table_exists(con, table):
+                    con.execute(f'UPDATE {table} SET Ticker = ? WHERE Ticker = ?', [new_ticker, old])
+            renamed += 1
+        addable.append(row)
+
+    if addable:
+        ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+        existing = pd.read_csv(ticker_csv, keep_default_na=False)
+        new_rows = pd.DataFrame({'ticker': [r['ticker'] for r in addable], 'market': [r['market'] for r in addable]})
+        combined = pd.concat([existing, new_rows], ignore_index=True).drop_duplicates('ticker', keep='first')
+        combined.to_csv(ticker_csv, index=False)
+    return len(addable), renamed, skipped
+
+
+def _add_new_tickers(candidates: list[Candidate], raw_dir: Path) -> None:
+    """Append candidates classified 'new' to ticker.csv, so they're tracked without manual review."""
+    additions = [c for c in candidates if c.classification == 'new']
+    if not additions:
+        return
+    ticker_csv = raw_dir / 'ticker.csv'
+    existing = pd.read_csv(ticker_csv, keep_default_na=False)
+    new_rows = pd.DataFrame({'ticker': [c.ticker for c in additions], 'market': [c.market for c in additions]})
+    combined = pd.concat([existing, new_rows], ignore_index=True).drop_duplicates('ticker', keep='first')
+    combined.to_csv(ticker_csv, index=False)
+
+
 def scan(con: duckdb.DuckDBPyConnection, data_root: Path,
         cleaning_config: Path = Path('cleaning.toml')) -> UniverseScanResult:
-    """Fetch live US common-stock listings, classify every untracked one, and save the result to CSV.
+    """Fetch live US common-stock listings, classify every untracked one, add the new ones to
+    ticker.csv automatically, and save the ones still needing review to CSV.
 
     Compares against ticker.csv (currently tracked) and price_dead.csv/meta_dead.csv (tracked
     before, now dead). Resolves any dead ticker whose staged rename has completed before
     classifying, so a freshly cleared symbol is treated as brand new rather than stuck flagged as
-    a collision.
+    a collision. Skips anything in manual_blacklist.csv entirely. Candidates classified 'new' are
+    added to ticker.csv directly and left out of the saved CSV, since there's nothing left to
+    review; 'reactivated_safe'/'reactivated_collision' are saved for review. The returned
+    `UniverseScanResult.candidates` still includes every classification, 'new' included.
     """
     raw_dir = data_root / 'yahoo' / 'raw'
-    tracked = set(pd.read_csv(raw_dir / 'ticker.csv')['ticker'])
-    dead_tickers, last_cik = _read_dead_ciks(con, data_root, tracked)
+    tracked = set(pd.read_csv(raw_dir / 'ticker.csv', keep_default_na=False)['ticker'])
+    manual_blacklist = _read_manual_blacklist(data_root)
+    dead_tickers, last_cik, last_company_name = _read_dead_ciks(con, data_root, tracked)
     dead_tickers = _resolve_completed_renames(con, data_root, cleaning_config, dead_tickers)
 
     live_listings = fetch_nasdaq_listings()
+    live_listings = live_listings[~live_listings['ticker'].isin(manual_blacklist)]
     live_cik = fetch_sec_cik_map()
-    candidates = classify(live_listings, tracked, dead_tickers, live_cik, last_cik)
+    candidates = classify(live_listings, tracked, dead_tickers, live_cik, last_cik, last_company_name)
+    _add_new_tickers(candidates, raw_dir)
 
     known_tickers = set(tracked)
     if storage.table_exists(con, 'companies'):
@@ -235,6 +345,7 @@ def scan(con: duckdb.DuckDBPyConnection, data_root: Path,
             candidate = replace(candidate, suggested_new_ticker=suggestion)
         resolved_candidates.append(candidate)
 
+    reviewable = [c for c in resolved_candidates if c.classification != 'new']
     out_path = data_root / 'yahoo' / 'state' / CANDIDATES_FILE
-    pd.DataFrame([vars(c) for c in resolved_candidates]).to_csv(out_path, index=False)
+    pd.DataFrame([vars(c) for c in reviewable]).to_csv(out_path, index=False)
     return UniverseScanResult(resolved_candidates, out_path)
