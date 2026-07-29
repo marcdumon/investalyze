@@ -107,8 +107,7 @@ def _hero(ticker: str, row: pd.Series, ttm: pd.DataFrame, returns: pd.DataFrame 
         _tile('market cap', _money(row['mcap'])),
         _tile('revenue TTM', _money(latest['revenue']) if latest is not None else '-'),
         _tile('net margin TTM', f'{margin:.1%}' if margin is not None and pd.notna(margin) else '-', color=margin_color),
-        _tile('1y return', _pct(ret_1y['ticker']) if ret_1y is not None else '-',
-              f"S&P 500 {_pct(ret_1y['market'])}" if ret_1y is not None else None, color=ret_color),
+        _tile('1y return', _pct(ret_1y['ticker']) if ret_1y is not None else '-', color=ret_color),
         _tile('volatility 1y', f"{row['vol_252']:.0%}" if pd.notna(row['vol_252']) else '-'),
     ]
     if not history.empty:
@@ -121,20 +120,26 @@ def _hero(ticker: str, row: pd.Series, ttm: pd.DataFrame, returns: pd.DataFrame 
 
 
 def _performance_section(history: pd.DataFrame, returns: pd.DataFrame | None, ticker: str, dark: bool) -> dmc.Card:
-    """Indexed line vs S&P 500 with range control, plus the trailing-returns bars."""
+    """Indexed line with a range control, plus the trailing-returns bars. No benchmark is compared
+    against by default; the benchmark selector opts into one or more indices."""
     if history.empty:
         return _section('Performance', [_no_data(f'no price history for {ticker}')], anchor='sec-performance')
     window = data.rebased(history, data.RANGE_SESSIONS[DEFAULT_RANGE])
-    controls = dmc.SegmentedControl(id='tk-range', value=DEFAULT_RANGE, size='xs',
-                                    data=list(data.RANGE_SESSIONS))
+    controls = dmc.Group([
+        dmc.SegmentedControl(id='tk-range', value=DEFAULT_RANGE, size='xs', data=list(data.RANGE_SESSIONS)),
+        dmc.MultiSelect(id='tk-benchmarks', value=[], size='xs', placeholder='compare vs...', clearable=True,
+                        data=[{'value': ticker_, 'label': label} for ticker_, label in data.BENCHMARKS.items()],
+                        style={'minWidth': '260px'}),
+    ], gap=10)
     charts_row = dmc.Grid([
         dmc.GridCol(dcc.Graph(id='tk-perf', figure=charts.performance_figure(window, ticker, dark)),
                     span={'base': 12, 'lg': 8}),
-        dmc.GridCol(dcc.Graph(figure=charts.trailing_returns_figure(returns, ticker, dark)),
+        dmc.GridCol(dcc.Graph(id='tk-trailing', figure=charts.trailing_returns_figure(returns, ticker, dark)),
                     span={'base': 12, 'lg': 4}),
     ], gutter=8)
     return _section('Performance', [controls, charts_row],
-                    caption='total return, both series rebased to 100 at the window start; drawdown beneath',
+                    caption='total return, rebased to 100 at the window start; drawdown beneath; '
+                            'pick one or more indices above to compare against',
                     anchor='sec-performance')
 
 
@@ -435,18 +440,22 @@ def render(ticker, basis, dark):
         return dmc.Text(BUSY, size='sm', c='yellow')
 
 
-@callback(Output('tk-perf', 'figure'), Input('tk-range', 'value'),
+@callback(Output('tk-perf', 'figure'), Output('tk-trailing', 'figure'),
+          Input('tk-range', 'value'), Input('tk-benchmarks', 'value'),
           State('tk-select', 'value'), State('theme-switch', 'checked'), prevent_initial_call=True)
-def update_range(range_key, ticker, dark):
-    """Re-render only the performance chart for a new time range."""
+def update_performance(range_key, benchmarks, ticker, dark):
+    """Re-render the performance chart and trailing-returns bars for a new range or benchmark pick."""
     if not ticker:
         raise PreventUpdate
+    benchmarks = benchmarks or []
     try:
-        history = data.price_history(ticker)
+        history = data.price_history(ticker, tuple(benchmarks))
     except duckdb.Error:
         raise PreventUpdate
     window = data.rebased(history, data.RANGE_SESSIONS.get(range_key))
-    return charts.performance_figure(window, ticker, bool(dark))
+    returns = data.trailing_returns(history)
+    return (charts.performance_figure(window, ticker, bool(dark), benchmarks),
+            charts.trailing_returns_figure(returns, ticker, bool(dark), benchmarks))
 
 
 @callback(Output('tk-st-grid', 'columnDefs'), Output('tk-st-grid', 'rowData'),

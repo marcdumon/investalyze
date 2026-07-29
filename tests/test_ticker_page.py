@@ -109,6 +109,31 @@ def test_trailing_returns():
     assert np.isnan(out[out['window'] == '3y'].iloc[0]['ticker'])   # not enough history
 
 
+def test_trailing_returns_with_no_benchmark_selected():
+    n = 300
+    history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=n), 'AC': np.linspace(100, 200, n)})
+    out = trailing_returns(history)
+    assert list(out.columns) == ['window', 'ticker']   # no benchmark columns present, none in the output
+
+
+def test_trailing_returns_with_multiple_benchmarks():
+    n = 300
+    history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=n), 'AC': np.linspace(100, 200, n),
+                            '^SPX': np.full(n, 50.0), '^NDQ': np.linspace(10, 20, n)})
+    out = trailing_returns(history)
+    row_1y = out[out['window'] == '1y'].iloc[0]
+    assert row_1y['^SPX'] == pytest.approx(0.0)
+    assert row_1y['^NDQ'] == pytest.approx(history['^NDQ'].iloc[-1] / history['^NDQ'].iloc[-253] - 1)
+
+
+def test_rebased_rebases_every_benchmark_column_present():
+    history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=3), 'AC': [10, 20, 40],
+                            '^SPX': [1, 2, 4], '^NDQ': [5, 10, 15]})
+    out = rebased(history, None)
+    assert out.iloc[0][['AC', '^SPX', '^NDQ']].tolist() == pytest.approx([100.0, 100.0, 100.0])
+    assert out.iloc[-1]['^NDQ'] == pytest.approx(300.0)
+
+
 def test_ttm_history_sums_margins_and_per_share():
     quarters = pd.DataFrame({
         'Report Date': pd.date_range('2020-03-31', periods=5, freq='QE'),

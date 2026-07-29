@@ -18,7 +18,8 @@ from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
-MARKET_TICKER = '^SPX'
+# selectable performance-chart benchmarks, ticker -> display label; fixed order controls color assignment
+BENCHMARKS = {'^SPX': 'S&P 500', '^NDQ': 'Nasdaq Composite', '^NDX': 'Nasdaq-100', '^DJI': 'Dow Jones'}
 MAX_UNIVERSE_PEERS = 100   # caps the factor-profile comparison group for very large peer sets
 TRAILING_WINDOWS = {'1m': 21, '3m': 63, '6m': 126, '1y': 252, '3y': 756, '5y': 1260}
 RANGE_SESSIONS = {'3m': 63, '1y': 252, '3y': 756, '5y': 1260, '10y': 2520, 'max': None}
@@ -64,25 +65,32 @@ def universe_peer_group(pool: pd.DataFrame, ticker: str, members: list[str],
     return pd.concat([me, mates], ignore_index=True)
 
 
-def price_history(ticker: str) -> pd.DataFrame:
-    """Daily adjusted closes joined to the benchmark on shared dates: columns Date, AC, market."""
+def price_history(ticker: str, benchmarks: tuple[str, ...] = ()) -> pd.DataFrame:
+    """Daily adjusted closes, optionally joined to one or more benchmark indices on shared dates.
+
+    Columns: Date, AC, plus one column per ticker in `benchmarks` (e.g. '^SPX'). No benchmarks
+    means no join at all, so a ticker's own history is never trimmed by an index's date range.
+    """
     con = storage.connect(DATA_ROOT, read_only=True)
     try:
         prices = con.execute("SELECT Date, AC FROM prices WHERE Ticker = ? AND AC IS NOT NULL ORDER BY Date", [ticker]).df()
-        market = con.execute("SELECT Date, C AS market FROM market_data WHERE Ticker = ? ORDER BY Date", [MARKET_TICKER]).df()
+        for benchmark in benchmarks:
+            market = con.execute("SELECT Date, C FROM market_data WHERE Ticker = ? ORDER BY Date", [benchmark]).df()
+            prices = prices.merge(market.rename(columns={'C': benchmark}), on='Date', how='inner')
     finally:
         con.close()
-    return prices.merge(market, on='Date', how='inner')
+    return prices
 
 
 def rebased(history: pd.DataFrame, sessions: int | None) -> pd.DataFrame:
-    """The last `sessions` rows (all when None) with AC and market rebased to 100 at the window start."""
+    """The last `sessions` rows (all when None) with every price column rebased to 100 at the window start."""
     window = history.tail(sessions) if sessions else history
     if window.empty:
         return window
     out = window.copy()
-    out['AC'] = out['AC'] / out['AC'].iloc[0] * 100
-    out['market'] = out['market'] / out['market'].iloc[0] * 100
+    for column in out.columns:
+        if column != 'Date':
+            out[column] = out[column] / out[column].iloc[0] * 100
     return out
 
 
@@ -92,15 +100,25 @@ def drawdown(series: pd.Series) -> pd.Series:
 
 
 def trailing_returns(history: pd.DataFrame) -> pd.DataFrame:
-    """Ticker vs market fractional return over each TRAILING_WINDOWS window; NaN when history is shorter."""
+    """Ticker vs each benchmark column's fractional return over each TRAILING_WINDOWS window.
+
+    Columns: window, ticker, plus one column per benchmark ticker present in `history`. NaN when
+    history is shorter than the window.
+    """
+    benchmark_cols = [c for c in history.columns if c not in ('Date', 'AC')]
     rows = []
     for label, sessions in TRAILING_WINDOWS.items():
+        row = {'window': label}
         if len(history) > sessions:
             start, end = history.iloc[-sessions - 1], history.iloc[-1]
-            rows.append({'window': label, 'ticker': end['AC'] / start['AC'] - 1,
-                         'market': end['market'] / start['market'] - 1})
+            row['ticker'] = end['AC'] / start['AC'] - 1
+            for column in benchmark_cols:
+                row[column] = end[column] / start[column] - 1
         else:
-            rows.append({'window': label, 'ticker': np.nan, 'market': np.nan})
+            row['ticker'] = np.nan
+            for column in benchmark_cols:
+                row[column] = np.nan
+        rows.append(row)
     return pd.DataFrame(rows)
 
 

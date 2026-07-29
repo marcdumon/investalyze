@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from investalyze.analysis.factors import FAMILIES, HIGHER_IS_BETTER
-from investalyze.apps.ticker.data import drawdown
+from investalyze.apps.ticker.data import BENCHMARKS, drawdown
 
 _COLORS = {
     'light': {'accent': '#2a78d6', 'context': '#898781', 'neg': '#e34948', 'grid': '#e1e0d9',
@@ -67,13 +67,25 @@ def _label_last(fig: go.Figure, x: pd.Series, y: pd.Series, text: str, color: st
                        showarrow=False, xanchor='left', xshift=5, row=row, col=col)
 
 
-def performance_figure(window: pd.DataFrame, ticker: str, dark: bool) -> go.Figure:
-    """Indexed total return of the ticker vs the benchmark (log y) with the drawdown band beneath."""
+def _benchmark_color(theme: dict, benchmark: str) -> str:
+    """A benchmark's color, in BENCHMARKS' fixed order, so it stays the same regardless of which
+    other benchmarks are also selected. Slot 0 is the ticker's own accent, so benchmarks start at 1."""
+    index = list(BENCHMARKS).index(benchmark)
+    return theme['slots'][(index + 1) % len(theme['slots'])]
+
+
+def performance_figure(window: pd.DataFrame, ticker: str, dark: bool, benchmarks: list[str] = ()) -> go.Figure:
+    """Indexed total return of the ticker, optionally vs one or more benchmarks (log y), with the
+    drawdown band beneath. No benchmarks selected draws just the ticker's own line."""
     theme = _theme(dark)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.05)
-    fig.add_trace(go.Scatter(x=window['Date'], y=window['market'], name='S&P 500',
-                             line={'width': 1.5, 'color': theme['context']},
-                             hovertemplate='%{y:.0f}<extra>S&P 500</extra>'), row=1, col=1)
+    for benchmark in benchmarks:
+        if benchmark not in window.columns:
+            continue
+        label = BENCHMARKS.get(benchmark, benchmark)
+        fig.add_trace(go.Scatter(x=window['Date'], y=window[benchmark], name=label,
+                                 line={'width': 1.5, 'color': _benchmark_color(theme, benchmark)},
+                                 hovertemplate='%{y:.0f}<extra>' + label + '</extra>'), row=1, col=1)
     fig.add_trace(go.Scatter(x=window['Date'], y=window['AC'], name=ticker,
                              line={'width': 2, 'color': theme['accent']},
                              hovertemplate='%{y:.0f}<extra>' + ticker + '</extra>'), row=1, col=1)
@@ -88,13 +100,19 @@ def performance_figure(window: pd.DataFrame, ticker: str, dark: bool) -> go.Figu
     return _style(fig, dark, 440)
 
 
-def trailing_returns_figure(returns: pd.DataFrame, ticker: str, dark: bool) -> go.Figure:
-    """Horizontal grouped bars: ticker vs benchmark total return per trailing window."""
+def trailing_returns_figure(returns: pd.DataFrame, ticker: str, dark: bool, benchmarks: list[str] = ()) -> go.Figure:
+    """Horizontal grouped bars: ticker, optionally vs each selected benchmark's total return per
+    trailing window. No benchmarks selected draws just the ticker's own bars."""
     theme = _theme(dark)
     ordered = returns.iloc[::-1]   # longest window at the bottom, 1m on top
     fig = go.Figure()
-    fig.add_trace(go.Bar(y=ordered['window'], x=ordered['market'], orientation='h', name='S&P 500',
-                         marker={'color': theme['context']}, hovertemplate='%{x:.1%}<extra>S&P 500</extra>'))
+    for benchmark in benchmarks:
+        if benchmark not in returns.columns:
+            continue
+        label = BENCHMARKS.get(benchmark, benchmark)
+        fig.add_trace(go.Bar(y=ordered['window'], x=ordered[benchmark], orientation='h', name=label,
+                             marker={'color': _benchmark_color(theme, benchmark)},
+                             hovertemplate='%{x:.1%}<extra>' + label + '</extra>'))
     fig.add_trace(go.Bar(y=ordered['window'], x=ordered['ticker'], orientation='h', name=ticker,
                          marker={'color': theme['accent']}, hovertemplate='%{x:.1%}<extra>' + ticker + '</extra>'))
     fig.update_xaxes(tickformat='.0%')
