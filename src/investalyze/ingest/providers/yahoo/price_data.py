@@ -153,7 +153,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     state_dir = data_root / 'yahoo' / 'state'
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    ticker_df = pd.read_csv(raw_dir / settings['ticker_file'])
+    ticker_df = pd.read_csv(raw_dir / settings['ticker_file'], keep_default_na=False)
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
     blacklist_file = state_dir / 'price_blacklist.csv'
@@ -319,7 +319,7 @@ def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
         )
         dead_df.to_csv(dead_file, index=False)
 
-    ticker_df = pd.read_csv(ticker_file)
+    ticker_df = pd.read_csv(ticker_file, keep_default_na=False)
     if revived_rows:
         revived_df = pd.DataFrame([{'ticker': r['ticker'], 'market': r['market']} for r in revived_rows])
         ticker_df = pd.concat([ticker_df, revived_df], ignore_index=True).drop_duplicates('ticker', keep='last')

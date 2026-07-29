@@ -124,7 +124,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     state_dir = data_root / 'yahoo' / 'state'
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    ticker_df = pd.read_csv(price_raw_dir / 'ticker.csv')
+    ticker_df = pd.read_csv(price_raw_dir / 'ticker.csv', keep_default_na=False)
     symbols = ticker_df['ticker'].tolist()
     market_by_ticker = dict(zip(ticker_df['ticker'], ticker_df['market']))
 
