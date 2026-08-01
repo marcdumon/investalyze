@@ -15,6 +15,8 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from investalyze.analysis import factors
+from investalyze.apps.control_panel.jobs import MANAGER
+from investalyze.apps.control_panel.page import build_blacklist_argv
 from investalyze.apps.screener import metrics
 from investalyze.apps.screener.data import clear_cache, get_pool
 from investalyze.apps.screener.detail import safe_detail_children
@@ -154,6 +156,9 @@ def layout() -> html.Div:
                    size='xs', style={'width': '190px'}),
         dmc.Button('Load', id='btn-load', size='xs', variant='default',
                    leftSection=DashIconify(icon='tabler:folder-open', width=14)),
+        dmc.Button('Blacklist selected', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
+                   leftSection=DashIconify(icon='tabler:trash', width=14)),
+        dmc.Text(id='scr-blacklist-status', size='xs'),
         dmc.Button('Refresh', id='btn-refresh', size='xs', variant='subtle',
                    leftSection=DashIconify(icon='tabler:reload', width=14)),
         dmc.Text(id='save-status', size='xs', c='teal'),
@@ -197,6 +202,20 @@ def layout() -> html.Div:
         ], gap=16, px=12, py=6),
         html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '45vh',
                                              'flexShrink': 0}),
+        dmc.Modal(
+            id='scr-confirm-modal', title='Confirm', centered=True,
+            children=[
+                dmc.Text(id='scr-confirm-text'),
+                dmc.Textarea(id='scr-blacklist-reason', autosize=True, minRows=2, size='xs', mt=8,
+                             placeholder='Reason (stored against every ticker blacklisted)'),
+                dmc.Group([
+                    dmc.Button('Cancel', id='scr-confirm-no', variant='default', size='xs'),
+                    dmc.Button('Confirm', id='scr-confirm-yes', color='red', size='xs'),
+                ], justify='flex-end', mt=12),
+            ],
+        ),
+        dcc.Store(id='scr-blacklist-pending'),
+        dcc.Interval(id='scr-blacklist-poll', interval=1000, disabled=True),
     ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)'})
 
 
@@ -344,3 +363,66 @@ def show_detail(cell, sel_cell, rows, sel_rows):
     except duckdb.Error:
         return [html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '12px'})]
     return safe_detail_children(ticker, row)
+
+
+@callback(
+    Output('scr-confirm-modal', 'opened'), Output('scr-confirm-text', 'children'), Output('scr-blacklist-reason', 'value'),
+    Input('scr-btn-blacklist', 'n_clicks'),
+    State('selection', 'data'),
+    prevent_initial_call=True,
+)
+def open_blacklist_confirm(_n_clicks, selection):
+    """Open the confirm modal for the current selection; no-op if nothing is selected."""
+    if not selection:
+        raise PreventUpdate
+    target = selection[0] if len(selection) == 1 else f'the {len(selection)} selected tickers'
+    verb = 'it' if len(selection) == 1 else 'them'
+    return True, f'Permanently delete all stored data for {target} and block {verb} from future scans?', ''
+
+
+@callback(
+    Output('scr-confirm-modal', 'opened', allow_duplicate=True), Output('scr-blacklist-pending', 'data'),
+    Output('scr-blacklist-status', 'children'), Output('scr-btn-blacklist', 'disabled'),
+    Output('scr-blacklist-poll', 'disabled', allow_duplicate=True),
+    Input('scr-confirm-yes', 'n_clicks'), Input('scr-confirm-no', 'n_clicks'),
+    State('selection', 'data'), State('scr-blacklist-reason', 'value'),
+    prevent_initial_call=True,
+)
+def resolve_blacklist_confirm(_yes_n, _no_n, selection, reason):
+    """Start the blacklist job for the current selection on Confirm; just close the modal on Cancel."""
+    if ctx.triggered_id != 'scr-confirm-yes':
+        return False, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    reason = (reason or '').strip()
+    if not selection or not reason:
+        raise PreventUpdate
+    title, argv = build_blacklist_argv(selection, None, reason)
+    if not MANAGER.start(title, argv):
+        return (False, False, dmc.Text('a job is already running elsewhere, try again shortly', size='xs', c='red'),
+                False, True)
+    return False, True, dmc.Text('blacklisting...', size='xs', c='yellow'), True, False
+
+
+@callback(
+    Output('scr-btn-blacklist', 'disabled', allow_duplicate=True), Output('scr-blacklist-status', 'children', allow_duplicate=True),
+    Output('scr-blacklist-pending', 'data', allow_duplicate=True), Output('selection', 'data', allow_duplicate=True),
+    Output('scr-blacklist-poll', 'disabled', allow_duplicate=True),
+    Input('scr-blacklist-poll', 'n_intervals'),
+    State('scr-blacklist-pending', 'data'), State('selection', 'data'),
+    prevent_initial_call=True,
+)
+def poll_blacklist_job(_n_intervals, pending, selection):
+    """Once our own blacklist job finishes, clear the pool cache, drop blacklisted tickers from selection,
+    and stop polling."""
+    running = MANAGER.is_running()
+    if not pending or running:
+        return running, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    job = MANAGER.history[0] if MANAGER.history else None
+    if job is None or job.returncode != 0:
+        return (False, dmc.Text('blacklist failed, check the control panel job log', size='xs', c='red'),
+                False, dash.no_update, True)
+    clear_cache()
+    try:
+        remaining = set(get_pool()['Ticker'])
+    except duckdb.Error:
+        return False, dmc.Text('blacklisted (refresh to update the grid)', size='xs', c='teal'), False, dash.no_update, True
+    return False, dmc.Text('blacklisted', size='xs', c='teal'), False, [t for t in selection if t in remaining], True

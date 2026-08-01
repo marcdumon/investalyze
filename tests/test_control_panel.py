@@ -12,10 +12,17 @@ def test_build_listings_scan_argv():
 
 
 def test_build_blacklist_argv_for_one_ticker():
-    title, argv = page.build_blacklist_argv('BID', None, 'reused by a different company')
+    title, argv = page.build_blacklist_argv(['BID'], None, 'reused by a different company')
     assert title == 'blacklist BID'
     assert argv == ['-m', 'investalyze.ingest', 'blacklist-ticker', '--ticker', 'BID',
                     '--reason', 'reused by a different company']
+
+
+def test_build_blacklist_argv_for_multiple_tickers():
+    title, argv = page.build_blacklist_argv(['AAPL', 'MSFT'], None, 'batch cleanup')
+    assert title == 'blacklist 2 tickers'
+    assert argv == ['-m', 'investalyze.ingest', 'blacklist-ticker', '--ticker', 'AAPL', '--ticker', 'MSFT',
+                    '--reason', 'batch cleanup']
 
 
 def test_build_blacklist_argv_for_a_universe():

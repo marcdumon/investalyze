@@ -66,13 +66,18 @@ def build_listings_scan_argv() -> tuple[str, list[str]]:
     return 'scan listings', ['-m', 'investalyze.ingest', 'scan-listings']
 
 
-def build_blacklist_argv(ticker: str | None, universe: str | None, reason: str) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.ingest blacklist-ticker`, targeting either one ticker or
-    every ticker in a saved universe (exactly one of `ticker`/`universe` must be set)."""
+def build_blacklist_argv(tickers: list[str] | None, universe: str | None, reason: str) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.ingest blacklist-ticker`, targeting either `tickers` or
+    every ticker in a saved universe (exactly one of `tickers`/`universe` must be set)."""
     if universe:
         return f'blacklist universe {universe}', ['-m', 'investalyze.ingest', 'blacklist-ticker',
                                                    '--universe', universe, '--reason', reason]
-    return f'blacklist {ticker}', ['-m', 'investalyze.ingest', 'blacklist-ticker', '--ticker', ticker, '--reason', reason]
+    argv = ['-m', 'investalyze.ingest', 'blacklist-ticker']
+    for ticker in tickers:
+        argv += ['--ticker', ticker]
+    argv += ['--reason', reason]
+    title = f'blacklist {tickers[0]}' if len(tickers) == 1 else f'blacklist {len(tickers)} tickers'
+    return title, argv
 
 
 def build_add_listings_argv(rows: list[dict]) -> tuple[str, list[str]]:
@@ -398,7 +403,7 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
         reason = (blacklist_reason or '').strip()
         if not reason or bool(ticker) == bool(universe):
             raise PreventUpdate   # need a reason, and exactly one of ticker/universe
-        title, argv = build_blacklist_argv(ticker or None, universe or None, reason)
+        title, argv = build_blacklist_argv([ticker] if ticker else None, universe or None, reason)
         target = f'universe "{universe}" ({len(universes.load_universe(universe))} ticker(s))' if universe else ticker
         return {'title': title, 'argv': argv}, True, f'Permanently delete all stored data for {target} and block them from future scans?'
     if trigger == 'cp-btn-listings-add':

@@ -55,7 +55,8 @@ def main() -> None:
     parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
                         help='TOML config file (default: ./ingest.toml; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None, help='override the data dir from config')
-    parser.add_argument('--ticker', help='ticker to blacklist (with blacklist-ticker, alternative to --universe)')
+    parser.add_argument('--ticker', action='append', dest='tickers',
+                        help='ticker to blacklist (repeatable), alternative to --universe')
     parser.add_argument('--universe', help='saved universe whose tickers to blacklist (alternative to --ticker)')
     parser.add_argument('--reason', help='reason for blacklisting (required with blacklist-ticker)')
     parser.add_argument('--rows', help='JSON list of {ticker, market, classification, new_ticker} (required with add-listings)')
@@ -106,12 +107,12 @@ def main() -> None:
         return
 
     if args.command == 'blacklist-ticker':
-        if not args.reason or (not args.ticker and not args.universe) or (args.ticker and args.universe):
-            parser.error('blacklist-ticker requires --reason and exactly one of --ticker or --universe')
+        if not args.reason or (not args.tickers and not args.universe) or (args.tickers and args.universe):
+            parser.error('blacklist-ticker requires --reason and exactly one of --ticker (repeatable) or --universe')
         if args.universe:
             tickers = universes.load_universe(args.universe, universe_dir=cfg.data_root / 'universes')
         else:
-            tickers = [args.ticker]
+            tickers = args.tickers
         con = storage.connect(cfg.data_root, cfg.db)
         try:
             deleted = listings.blacklist_tickers(con, cfg.data_root, tickers, args.reason)

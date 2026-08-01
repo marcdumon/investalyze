@@ -17,7 +17,9 @@ from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, 
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
-from investalyze.apps.screener.data import get_pool
+from investalyze.apps.control_panel.jobs import MANAGER
+from investalyze.apps.control_panel.page import build_blacklist_argv
+from investalyze.apps.screener.data import clear_cache, get_pool
 from investalyze.apps.ticker import charts, data, statements
 from investalyze.apps.universes import list_universes, load_universe
 
@@ -345,6 +347,9 @@ def layout(symbol: str | None = None, **_query) -> html.Div:
                        allowDeselect=False, persistence=True, leftSection=DashIconify(icon='tabler:users', width=14),
                        style={'width': '280px'}),
             stepper,
+            dmc.Button('Blacklist', id='tk-btn-blacklist', size='xs', variant='subtle', color='red',
+                       leftSection=DashIconify(icon='tabler:trash', width=14)),
+            dmc.Text(id='tk-blacklist-status', size='xs', c='dimmed'),
             section_nav,
         ], gap=10),
         style={'position': 'sticky', 'top': 0, 'zIndex': 1001, 'background': 'var(--mantine-color-body)',
@@ -357,6 +362,20 @@ def layout(symbol: str | None = None, **_query) -> html.Div:
         dcc.Loading(html.Div(id='tk-content', children=PROMPT), type='circle', color='#3987e5',
                     delay_show=250, overlay_style={'visibility': 'visible', 'opacity': 0.4}),
         dcc.Store(id='tk-nav-scroll'),
+        dmc.Modal(
+            id='tk-confirm-modal', title='Confirm', centered=True,
+            children=[
+                dmc.Text(id='tk-confirm-text'),
+                dmc.Textarea(id='tk-blacklist-reason', autosize=True, minRows=2, size='xs', mt=8,
+                             placeholder='Reason (stored against the ticker)'),
+                dmc.Group([
+                    dmc.Button('Cancel', id='tk-confirm-no', variant='default', size='xs'),
+                    dmc.Button('Confirm', id='tk-confirm-yes', color='red', size='xs'),
+                ], justify='flex-end', mt=12),
+            ],
+        ),
+        dcc.Store(id='tk-blacklist-pending'),
+        dcc.Interval(id='tk-blacklist-poll', interval=1000, disabled=True),
     ], style={'padding': '4px'})
 
 
@@ -495,3 +514,59 @@ def chart_line_item(cell, rows, statement, period, basis, ticker, dark):
     if filed_frame is not None and len(filed_frame):
         filed = (filed_frame['Report Date'], filed_frame[item])
     return dcc.Graph(figure=charts.item_history_figure(frame['Report Date'], frame[item], item, bool(dark), filed))
+
+
+@callback(
+    Output('tk-confirm-modal', 'opened'), Output('tk-confirm-text', 'children'), Output('tk-blacklist-reason', 'value'),
+    Input('tk-btn-blacklist', 'n_clicks'),
+    State('tk-select', 'value'),
+    prevent_initial_call=True,
+)
+def open_blacklist_confirm(_n_clicks, ticker):
+    """Open the confirm modal for the currently viewed ticker."""
+    if not ticker:
+        raise PreventUpdate
+    return True, f'Permanently delete all stored data for {ticker} and block it from future scans?', ''
+
+
+@callback(
+    Output('tk-confirm-modal', 'opened', allow_duplicate=True),
+    Output('tk-blacklist-pending', 'data'), Output('tk-blacklist-status', 'children'),
+    Output('tk-blacklist-poll', 'disabled', allow_duplicate=True),
+    Input('tk-confirm-yes', 'n_clicks'), Input('tk-confirm-no', 'n_clicks'),
+    State('tk-select', 'value'), State('tk-blacklist-reason', 'value'),
+    prevent_initial_call=True,
+)
+def resolve_blacklist_confirm(_yes_n, _no_n, ticker, reason):
+    """Start the blacklist job for the current ticker on Confirm; just close the modal on Cancel."""
+    if ctx.triggered_id != 'tk-confirm-yes':
+        return False, dash.no_update, dash.no_update, dash.no_update
+    reason = (reason or '').strip()
+    if not ticker or not reason:
+        raise PreventUpdate
+    title, argv = build_blacklist_argv([ticker], None, reason)
+    if not MANAGER.start(title, argv):
+        return False, None, dmc.Text('a job is already running elsewhere, try again shortly', size='xs', c='red'), True
+    return False, {'ticker': ticker}, dmc.Text(f'blacklisting {ticker}...', size='xs', c='yellow'), False
+
+
+@callback(
+    Output('tk-select', 'value', allow_duplicate=True), Output('tk-select', 'data', allow_duplicate=True),
+    Output('tk-blacklist-status', 'children', allow_duplicate=True), Output('tk-blacklist-pending', 'data', allow_duplicate=True),
+    Output('tk-blacklist-poll', 'disabled', allow_duplicate=True),
+    Input('tk-blacklist-poll', 'n_intervals'),
+    State('tk-blacklist-pending', 'data'), State('tk-select', 'value'),
+    prevent_initial_call=True,
+)
+def poll_blacklist_job(_n_intervals, pending, current_ticker):
+    """Once our own blacklist job finishes, refresh the ticker options, clear the selection if it's
+    gone, and stop polling."""
+    if not pending or MANAGER.is_running():
+        raise PreventUpdate
+    job = MANAGER.history[0] if MANAGER.history else None
+    if job is None or job.returncode != 0:
+        return (dash.no_update, dash.no_update,
+                dmc.Text('blacklist failed, check the control panel job log', size='xs', c='red'), None, True)
+    clear_cache()
+    value_out = None if current_ticker == pending['ticker'] else dash.no_update
+    return value_out, _select_options(get_pool()), dmc.Text(f"{pending['ticker']} blacklisted", size='xs', c='teal'), None, True
