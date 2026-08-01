@@ -274,6 +274,22 @@ def test_blacklist_tickers_with_empty_list_is_a_no_op(scan_con, data_root):
     assert listings.blacklist_tickers(scan_con, data_root, [], 'reason') == 0
 
 
+def test_blacklist_tickers_processes_a_batch_spanning_multiple_chunks(monkeypatch, scan_con, data_root):
+    monkeypatch.setattr(listings, '_BLACKLIST_CHUNK_SIZE', 2)
+    tickers = [f'T{i}' for i in range(5)]
+    scan_con.executemany('INSERT INTO prices VALUES (?, ?, ?)', [(t, '2020-01-01', 1.0) for t in tickers])
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    pd.DataFrame({'ticker': tickers, 'market': ['nasdaq'] * len(tickers)}).to_csv(ticker_csv, index=False)
+
+    deleted = listings.blacklist_tickers(scan_con, data_root, tickers, 'batch cleanup')
+
+    assert deleted == len(tickers)
+    assert scan_con.execute('SELECT COUNT(*) FROM prices').fetchone()[0] == 0
+    assert pd.read_csv(ticker_csv).empty
+    manual = pd.read_csv(data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE)
+    assert set(manual['ticker']) == set(tickers)
+
+
 # --- add_listings ------------------------------------------------------------------
 
 

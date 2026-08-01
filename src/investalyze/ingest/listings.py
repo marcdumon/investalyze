@@ -9,6 +9,7 @@ without HTTP calls.
 """
 
 import io
+import logging
 import re
 from dataclasses import dataclass, replace
 from datetime import date
@@ -21,6 +22,8 @@ import requests
 from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import storage
 from investalyze.ingest.providers.yahoo import blacklist
+
+log = logging.getLogger('investalyze.ingest.listings')
 
 NASDAQ_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt'
 OTHER_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt'
@@ -238,12 +241,30 @@ def _read_manual_blacklist(data_root: Path) -> set[str]:
     return set(pd.read_csv(path, keep_default_na=False)['ticker'])
 
 
+_BLACKLIST_CHUNK_SIZE = 200
+
+
 def blacklist_tickers(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: list[str], reason: str) -> int:
     """Delete every row for each of `tickers`, drop them from ticker.csv, and record each one with
     the same `reason` so no future scan offers it again. Returns the number of rows deleted.
+
+    Processed in chunks of `_BLACKLIST_CHUNK_SIZE`: each chunk's DB deletes and file rewrites
+    complete before the next chunk starts, so progress is logged as it goes and an interruption
+    only ever leaves the current chunk incomplete, not the whole batch.
     """
     if not tickers:
         return 0
+    total = 0
+    for start in range(0, len(tickers), _BLACKLIST_CHUNK_SIZE):
+        chunk = tickers[start:start + _BLACKLIST_CHUNK_SIZE]
+        total += _blacklist_chunk(con, data_root, chunk, reason)
+        log.info(f'blacklisted {start + len(chunk)}/{len(tickers)} tickers')
+    return total
+
+
+def _blacklist_chunk(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: list[str], reason: str) -> int:
+    """Delete one chunk's rows from every ticker-keyed table and update ticker.csv/manual_blacklist.csv
+    to match. Returns the number of rows deleted."""
     placeholders = ', '.join('?' for _ in tickers)
     total = 0
     for table in storage.TICKER_KEYED_TABLES:
