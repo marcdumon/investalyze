@@ -524,18 +524,19 @@ def refresh_blacklist_universe_options(_n):
 
 @callback(
     Output('cp-blacklist-grid', 'rowData'), Output('cp-blacklist-signature', 'data'),
-    Input('cp-poll', 'n_intervals'),
+    Input('cp-poll', 'n_intervals'), Input('cp-blacklist-search', 'value'),
     State('cp-blacklist-signature', 'data'),
 )
-def refresh_blacklist_grid(_n, last_signature):
-    """Reload the blacklisted-tickers grid from manual_blacklist.csv, skipping the update when the
-    content hasn't changed since the last poll (same scroll-preserving reasoning as
-    refresh_listings_candidates)."""
+def refresh_blacklist_grid(_n, search, last_signature):
+    """Reload the blacklisted-tickers grid from manual_blacklist.csv, filtered by the ticker search
+    box, skipping the update on an unchanged poll tick (same scroll-preserving reasoning as
+    refresh_listings_candidates); a search-box edit always re-renders, since the visible rows change
+    even though the underlying file didn't."""
     rows = blacklist_review.read_blacklist()
     signature = sorted([r['ticker'], r['reason'], r['blacklisted_on']] for r in rows)
-    if signature == last_signature:
+    if signature == last_signature and ctx.triggered_id == 'cp-poll':
         return dash.no_update, dash.no_update
-    return rows, signature
+    return blacklist_review.filter_blacklist(rows, search), signature
 
 
 @callback(

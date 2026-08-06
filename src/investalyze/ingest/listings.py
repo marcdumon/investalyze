@@ -18,6 +18,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 import requests
+from pandas.errors import EmptyDataError
 
 from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import storage
@@ -303,13 +304,26 @@ def unblacklist_tickers(data_root: Path, tickers: list[str]) -> int:
     return removed
 
 
-def add_listings(con: duckdb.DuckDBPyConnection, data_root: Path, rows: list[dict]) -> tuple[int, int, int]:
+def _remove_from_candidates(data_root: Path, tickers: list[str]) -> None:
+    """Drop `tickers` from listing_candidates.csv so a future review doesn't offer them again."""
+    path = data_root / 'yahoo' / 'state' / CANDIDATES_FILE
+    if not path.exists():
+        return
+    try:
+        existing = pd.read_csv(path, keep_default_na=False)
+    except EmptyDataError:
+        return
+    existing[~existing['ticker'].isin(tickers)].to_csv(path, index=False)
+
+
+def add_listings(con: duckdb.DuckDBPyConnection, data_root: Path, rows: list[dict]) -> tuple[list[str], int, int]:
     """Add reviewed candidates to ticker.csv in one step.
 
     A `reactivated_collision` row is renamed to its `new_ticker` key first, moving the old
     company's data aside, then added under the bare symbol. A collision row with a blank
     `new_ticker` is skipped entirely rather than added unrenamed, since that would merge two
-    companies' data. Returns (tickers added, renames performed, rows skipped).
+    companies' data. Added tickers are also dropped from listing_candidates.csv so a future
+    review doesn't offer them again. Returns (added ticker symbols, renames performed, rows skipped).
     """
     renamed = skipped = 0
     addable = []
@@ -326,13 +340,15 @@ def add_listings(con: duckdb.DuckDBPyConnection, data_root: Path, rows: list[dic
             renamed += 1
         addable.append(row)
 
+    added_tickers = [r['ticker'] for r in addable]
     if addable:
         ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
         existing = pd.read_csv(ticker_csv, keep_default_na=False)
-        new_rows = pd.DataFrame({'ticker': [r['ticker'] for r in addable], 'market': [r['market'] for r in addable]})
+        new_rows = pd.DataFrame({'ticker': added_tickers, 'market': [r['market'] for r in addable]})
         combined = pd.concat([existing, new_rows], ignore_index=True).drop_duplicates('ticker', keep='first')
         combined.to_csv(ticker_csv, index=False)
-    return len(addable), renamed, skipped
+        _remove_from_candidates(data_root, added_tickers)
+    return added_tickers, renamed, skipped
 
 
 def _add_new_tickers(candidates: list[Candidate], raw_dir: Path) -> None:

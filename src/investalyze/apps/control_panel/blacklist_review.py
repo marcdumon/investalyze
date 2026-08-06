@@ -34,12 +34,21 @@ def read_blacklist(path: Path = BLACKLIST_PATH) -> list[dict]:
         return []
 
 
+def filter_blacklist(rows: list[dict], search: str | None) -> list[dict]:
+    """Rows whose ticker contains `search` (case-insensitive), or every row when `search` is blank."""
+    if not search:
+        return rows
+    needle = search.strip().upper()
+    return [row for row in rows if needle in row['ticker'].upper()]
+
+
 def blacklist_review_card() -> dmc.Card:
-    """Manually blacklisted tickers grid + an Unblacklist action."""
+    """Manually blacklisted tickers grid + a ticker search box + an Unblacklist action."""
     return dmc.Card([
         dmc.Group([dmc.Text('Blacklisted tickers', fw=700, size='sm'),
                   dmc.Text('Select tickers and click Unblacklist to let a future scan offer them again.',
                           size='xs', c='dimmed')], gap=8, mb=4),
+        dmc.TextInput(id='cp-blacklist-search', placeholder='ticker', size='xs', style={'width': '130px'}, mb=6),
         dag.AgGrid(
             id='cp-blacklist-grid', columnDefs=BLACKLIST_COLUMNS, rowData=[],
             defaultColDef={'sortable': True, 'filter': True, 'resizable': True},

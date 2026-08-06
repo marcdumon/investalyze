@@ -327,7 +327,7 @@ def test_add_listings_adds_safe_rows_directly(scan_con, data_root):
 
     added, renamed, skipped = listings.add_listings(scan_con, data_root, rows)
 
-    assert (added, renamed, skipped) == (1, 0, 0)
+    assert (added, renamed, skipped) == (['RELS'], 0, 0)
     assert set(pd.read_csv(ticker_csv, keep_default_na=False)['ticker']) == {'AAPL', 'RELS'}
 
 
@@ -353,7 +353,7 @@ def test_add_listings_renames_collision_before_adding(scan_con, data_root):
 
     added, renamed, skipped = listings.add_listings(scan_con, data_root, rows)
 
-    assert (added, renamed, skipped) == (1, 1, 0)
+    assert (added, renamed, skipped) == (['BID'], 1, 0)
     old_rows = scan_con.execute("SELECT Ticker FROM prices WHERE Ticker = 'BID'").fetchall()
     assert old_rows == []
     moved_rows = scan_con.execute("SELECT Ticker FROM prices WHERE Ticker = 'BID.1'").fetchall()
@@ -369,7 +369,34 @@ def test_add_listings_skips_collision_row_with_blank_new_ticker(scan_con, data_r
 
     added, renamed, skipped = listings.add_listings(scan_con, data_root, rows)
 
-    assert (added, renamed, skipped) == (0, 0, 1)
+    assert (added, renamed, skipped) == ([], 0, 1)
     assert 'BID' not in set(pd.read_csv(ticker_csv)['ticker'])   # never added unrenamed
     still_there = scan_con.execute("SELECT Ticker FROM prices WHERE Ticker = 'BID'").fetchall()
     assert still_there == [('BID',)]   # untouched, not merged
+
+
+def test_add_listings_drops_added_tickers_from_the_candidates_review_file(scan_con, data_root):
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    pd.DataFrame({'ticker': ['AAPL'], 'market': ['nasdaq']}).to_csv(ticker_csv, index=False)
+    candidates_csv = data_root / 'yahoo' / 'state' / listings.CANDIDATES_FILE
+    candidates_csv.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({'ticker': ['RELS', 'OTHER'], 'classification': ['reactivated_safe'] * 2}).to_csv(candidates_csv, index=False)
+    rows = [{'ticker': 'RELS', 'market': 'nyse', 'classification': 'reactivated_safe', 'new_ticker': None}]
+
+    listings.add_listings(scan_con, data_root, rows)
+
+    assert set(pd.read_csv(candidates_csv)['ticker']) == {'OTHER'}
+
+
+def test_add_listings_leaves_the_candidates_review_file_untouched_when_a_row_is_skipped(scan_con, data_root):
+    scan_con.execute("INSERT INTO prices VALUES ('BID', '2019-01-01', 10.0)")
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    pd.DataFrame({'ticker': ['AAPL'], 'market': ['nasdaq']}).to_csv(ticker_csv, index=False)
+    candidates_csv = data_root / 'yahoo' / 'state' / listings.CANDIDATES_FILE
+    candidates_csv.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({'ticker': ['BID'], 'classification': ['reactivated_collision']}).to_csv(candidates_csv, index=False)
+    rows = [{'ticker': 'BID', 'market': 'nasdaq', 'classification': 'reactivated_collision', 'new_ticker': ''}]
+
+    listings.add_listings(scan_con, data_root, rows)
+
+    assert set(pd.read_csv(candidates_csv)['ticker']) == {'BID'}

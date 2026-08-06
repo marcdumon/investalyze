@@ -16,3 +16,21 @@ def test_read_blacklist_reads_the_saved_entries(tmp_path: Path):
     pd.DataFrame([{'ticker': 'SPCX', 'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}]).to_csv(path, index=False)
     rows = blacklist_review.read_blacklist(path)
     assert rows[0] == {'ticker': 'SPCX', 'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}
+
+
+def test_filter_blacklist_with_no_search_returns_every_row():
+    rows = [{'ticker': 'SPCX', 'reason': 'x', 'blacklisted_on': '2026-08-01'}]
+    assert blacklist_review.filter_blacklist(rows, None) == rows
+    assert blacklist_review.filter_blacklist(rows, '') == rows
+
+
+def test_filter_blacklist_matches_a_ticker_substring_case_insensitively():
+    rows = [{'ticker': 'SPCX', 'reason': 'x', 'blacklisted_on': '2026-08-01'},
+            {'ticker': 'AAPL', 'reason': 'y', 'blacklisted_on': '2026-08-01'}]
+    assert blacklist_review.filter_blacklist(rows, 'spc') == [rows[0]]
+    assert blacklist_review.filter_blacklist(rows, ' PCX ') == [rows[0]]
+
+
+def test_filter_blacklist_with_no_match_returns_an_empty_list():
+    rows = [{'ticker': 'SPCX', 'reason': 'x', 'blacklisted_on': '2026-08-01'}]
+    assert blacklist_review.filter_blacklist(rows, 'ZZZ') == []

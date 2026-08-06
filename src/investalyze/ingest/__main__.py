@@ -130,7 +130,9 @@ def main() -> None:
             added, renamed, skipped = listings.add_listings(con, cfg.data_root, rows)
         finally:
             con.close()
-        log.info(f'added {added} ticker(s), {renamed} renamed first, {skipped} skipped (no new ticker given)')
+        log.info(f'added {len(added)} ticker(s), {renamed} renamed first, {skipped} skipped (no new ticker given)')
+        if added:
+            log.info(f'  added: {", ".join(added)}')
         return
 
     summary = orchestrator.run(cfg, args.providers, update=args.update)
