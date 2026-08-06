@@ -17,9 +17,9 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from investalyze.apps import universes
-from investalyze.apps.control_panel import listings_review, status
+from investalyze.apps.control_panel import blacklist_review, listings_review, status
 from investalyze.apps.control_panel.jobs import MANAGER
-from investalyze.ingest import housekeeping, orchestrator, storage
+from investalyze.ingest import housekeeping, listings, orchestrator, storage
 from investalyze.quality import registry as quality_registry
 
 DATA_ROOT = Path('data')
@@ -280,8 +280,11 @@ def job_console() -> dmc.Card:
 def layout() -> html.Div:
     """Build the control panel page: status row, command cards, job console."""
     return html.Div([
+        # type='container': breakpoints measure this grid's own width, so the cards stop
+        # reflowing at the width they actually need (~220px each) instead of at a viewport
+        # size that ignores the navbar and page padding.
         dmc.SimpleGrid([freshness_card(), row_counts_card(), anomalies_card()],
-                       cols={'base': 1, 'md': 3}, mb=12),
+                       type='container', cols={'base': 1, '460px': 2, '700px': 3}, mb=12),
         dmc.Grid([
             dmc.GridCol(dmc.Stack([ingest_card(), housekeeping_card(), blacklist_card(), quality_card(),
                                    cleaning_card(), listings_scan_card()], gap=10),
@@ -289,6 +292,7 @@ def layout() -> html.Div:
             dmc.GridCol(job_console(), span={'base': 12, 'lg': 7}),
         ], gutter=12),
         dmc.Grid([dmc.GridCol(listings_review.listings_card(), span=12)], gutter=12, mt=12),
+        dmc.Grid([dmc.GridCol(blacklist_review.blacklist_review_card(), span=12)], gutter=12, mt=12),
         dmc.Modal(
             id='cp-confirm-modal', title='Confirm', centered=True,
             children=[
@@ -302,6 +306,7 @@ def layout() -> html.Div:
         dcc.Store(id='cp-pending-action'),
         dcc.Store(id='cp-cancel-tick'),
         dcc.Store(id='cp-listings-signature'),
+        dcc.Store(id='cp-blacklist-signature'),
     ])
 
 
@@ -513,3 +518,36 @@ def refresh_listings_candidates(_n, last_signature):
 def refresh_blacklist_universe_options(_n):
     """List saved universes as options for the blacklist card's universe picker."""
     return universes.list_universes()
+
+
+# ---------- blacklist-review callbacks ----------
+
+@callback(
+    Output('cp-blacklist-grid', 'rowData'), Output('cp-blacklist-signature', 'data'),
+    Input('cp-poll', 'n_intervals'),
+    State('cp-blacklist-signature', 'data'),
+)
+def refresh_blacklist_grid(_n, last_signature):
+    """Reload the blacklisted-tickers grid from manual_blacklist.csv, skipping the update when the
+    content hasn't changed since the last poll (same scroll-preserving reasoning as
+    refresh_listings_candidates)."""
+    rows = blacklist_review.read_blacklist()
+    signature = sorted([r['ticker'], r['reason'], r['blacklisted_on']] for r in rows)
+    if signature == last_signature:
+        return dash.no_update, dash.no_update
+    return rows, signature
+
+
+@callback(
+    Output('cp-unblacklist-status', 'children'),
+    Input('cp-btn-unblacklist', 'n_clicks'),
+    State('cp-blacklist-grid', 'selectedRows'),
+    prevent_initial_call=True,
+)
+def unblacklist_selected(_n, selected):
+    """Remove the selected tickers from manual_blacklist.csv so a future scan can offer them again."""
+    rows = selected or []
+    if not rows:
+        raise PreventUpdate
+    removed = listings.unblacklist_tickers(DATA_ROOT, [r['ticker'] for r in rows])
+    return dmc.Text(f'{removed} ticker(s) unblacklisted', size='xs', c='teal')

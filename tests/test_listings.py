@@ -290,6 +290,33 @@ def test_blacklist_tickers_processes_a_batch_spanning_multiple_chunks(monkeypatc
     assert set(manual['ticker']) == set(tickers)
 
 
+def test_unblacklist_tickers_removes_only_the_given_entries(data_root):
+    path = data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({'ticker': ['AAA', 'BBB', 'CCC'], 'reason': ['x', 'x', 'y'],
+                  'blacklisted_on': ['2026-01-01'] * 3}).to_csv(path, index=False)
+
+    removed = listings.unblacklist_tickers(data_root, ['AAA', 'BBB'])
+
+    assert removed == 2
+    assert set(pd.read_csv(path)['ticker']) == {'CCC'}
+
+
+def test_unblacklist_tickers_missing_file_is_a_no_op(data_root):
+    assert listings.unblacklist_tickers(data_root, ['AAA']) == 0
+
+
+def test_unblacklist_tickers_with_no_matches_removes_nothing(data_root):
+    path = data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({'ticker': ['AAA'], 'reason': ['x'], 'blacklisted_on': ['2026-01-01']}).to_csv(path, index=False)
+
+    removed = listings.unblacklist_tickers(data_root, ['ZZZ'])
+
+    assert removed == 0
+    assert set(pd.read_csv(path)['ticker']) == {'AAA'}
+
+
 # --- add_listings ------------------------------------------------------------------
 
 

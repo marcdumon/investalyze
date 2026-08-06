@@ -286,6 +286,23 @@ def _blacklist_chunk(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: l
     return total
 
 
+def unblacklist_tickers(data_root: Path, tickers: list[str]) -> int:
+    """Remove `tickers` from manual_blacklist.csv so a future scan can offer them again.
+
+    Only lifts the block on re-adding the ticker; data already deleted by blacklist_tickers stays
+    deleted. A plain file write, not a DB write. Returns the number of entries removed.
+    """
+    path = data_root / 'yahoo' / 'state' / MANUAL_BLACKLIST_FILE
+    if not path.exists():
+        return 0
+    existing = pd.read_csv(path, keep_default_na=False)
+    remaining = existing[~existing['ticker'].isin(tickers)]
+    removed = len(existing) - len(remaining)
+    if removed:
+        remaining.to_csv(path, index=False)
+    return removed
+
+
 def add_listings(con: duckdb.DuckDBPyConnection, data_root: Path, rows: list[dict]) -> tuple[int, int, int]:
     """Add reviewed candidates to ticker.csv in one step.
 

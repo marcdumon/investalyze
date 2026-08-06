@@ -35,7 +35,7 @@ _NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search',
 def nav_link(page: dict) -> dmc.NavLink:
     """One sidebar link for a registered Dash page."""
     icon = _NAV_ICONS.get(page['path'], 'tabler:file')
-    return dmc.NavLink(label=page['name'], href=page['path'], leftSection=DashIconify(icon=icon), variant='filled')
+    return dmc.NavLink(label=page['name'], href=page['path'], leftSection=DashIconify(icon=icon), variant='filled', px=8)
 
 
 theme_switch = dmc.Switch(
@@ -53,11 +53,11 @@ app.layout = dmc.MantineProvider(
             [
                 dmc.AppShellNavbar(
                     [nav_link(p) for p in dash.page_registry.values()] + [theme_switch],
-                    p='sm', style={'display': 'flex', 'flexDirection': 'column'},
+                    p='xs', style={'display': 'flex', 'flexDirection': 'column'},
                 ),
                 dmc.AppShellMain(dash.page_container),
             ],
-            navbar={'width': 220, 'breakpoint': 'sm'},
+            navbar={'width': 152, 'breakpoint': 'sm'},
             padding='md',
         ),
     ], style={'height': '100vh'}),
