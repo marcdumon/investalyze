@@ -183,9 +183,8 @@ def test_scan_does_not_add_reactivated_candidates_to_ticker_csv(monkeypatch, sca
 
 
 def test_scan_skips_manually_blacklisted_tickers(monkeypatch, scan_con, data_root):
-    state_dir = data_root / 'yahoo' / 'state'
     pd.DataFrame([{'ticker': 'SPCX', 'reason': 'not interesting', 'blacklisted_on': '2026-01-01'}]
-                ).to_csv(state_dir / listings.MANUAL_BLACKLIST_FILE, index=False)
+                ).to_csv(data_root / listings.MANUAL_BLACKLIST_FILE, index=False)
     monkeypatch.setattr(listings, 'fetch_nasdaq_listings', lambda: sample_listings())
     monkeypatch.setattr(listings, 'fetch_sec_cik_map', lambda: {})
     result = listings.scan(scan_con, data_root, cleaning_config=data_root / 'cleaning.toml')
@@ -252,7 +251,7 @@ def test_blacklist_tickers_deletes_rows_drops_from_ticker_csv_and_records_it(sca
     remaining = scan_con.execute("SELECT Ticker FROM prices").fetchall()
     assert remaining == [('OTHER',)]
     assert set(pd.read_csv(ticker_csv)['ticker']) == {'AAPL'}
-    manual = pd.read_csv(data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE)
+    manual = pd.read_csv(data_root / listings.MANUAL_BLACKLIST_FILE)
     assert manual.iloc[0]['ticker'] == 'JUNK'
     assert manual.iloc[0]['reason'] == 'not a real business'
 
@@ -265,7 +264,7 @@ def test_blacklist_tickers_applies_one_reason_to_every_ticker(scan_con, data_roo
     listings.blacklist_tickers(scan_con, data_root, ['AAA', 'BBB'], 'blacklisted as a universe')
 
     assert set(pd.read_csv(ticker_csv)['ticker']) == {'CCC'}
-    manual = pd.read_csv(data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE)
+    manual = pd.read_csv(data_root / listings.MANUAL_BLACKLIST_FILE)
     assert set(manual['ticker']) == {'AAA', 'BBB'}
     assert set(manual['reason']) == {'blacklisted as a universe'}   # same reason recorded for both
 
@@ -286,13 +285,12 @@ def test_blacklist_tickers_processes_a_batch_spanning_multiple_chunks(monkeypatc
     assert deleted == len(tickers)
     assert scan_con.execute('SELECT COUNT(*) FROM prices').fetchone()[0] == 0
     assert pd.read_csv(ticker_csv).empty
-    manual = pd.read_csv(data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE)
+    manual = pd.read_csv(data_root / listings.MANUAL_BLACKLIST_FILE)
     assert set(manual['ticker']) == set(tickers)
 
 
 def test_unblacklist_tickers_removes_only_the_given_entries(data_root):
-    path = data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = data_root / listings.MANUAL_BLACKLIST_FILE
     pd.DataFrame({'ticker': ['AAA', 'BBB', 'CCC'], 'reason': ['x', 'x', 'y'],
                   'blacklisted_on': ['2026-01-01'] * 3}).to_csv(path, index=False)
 
@@ -307,8 +305,7 @@ def test_unblacklist_tickers_missing_file_is_a_no_op(data_root):
 
 
 def test_unblacklist_tickers_with_no_matches_removes_nothing(data_root):
-    path = data_root / 'yahoo' / 'state' / listings.MANUAL_BLACKLIST_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = data_root / listings.MANUAL_BLACKLIST_FILE
     pd.DataFrame({'ticker': ['AAA'], 'reason': ['x'], 'blacklisted_on': ['2026-01-01']}).to_csv(path, index=False)
 
     removed = listings.unblacklist_tickers(data_root, ['ZZZ'])

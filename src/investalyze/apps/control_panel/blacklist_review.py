@@ -1,6 +1,6 @@
 """Control-panel section: review and lift manual ticker blacklists.
 
-Reads `data/yahoo/state/manual_blacklist.csv` (written by `investalyze.ingest.listings.blacklist_tickers`).
+Reads `data/manual_blacklist.csv` (written by `investalyze.ingest.listings.blacklist_tickers`).
 Unblacklisting only removes the entry so a future scan can offer the ticker again - it never
 restores data already deleted, and it's a plain file write, not a DB write, so it runs directly
 in-process rather than through the MANAGER subprocess (see `apps.universes`'s save/delete for the
@@ -15,7 +15,7 @@ import pandas as pd
 from dash_iconify import DashIconify
 from pandas.errors import EmptyDataError
 
-BLACKLIST_PATH = Path('data/yahoo/state/manual_blacklist.csv')
+BLACKLIST_PATH = Path('data/manual_blacklist.csv')
 
 BLACKLIST_COLUMNS = [
     {'field': 'ticker', 'headerName': 'Ticker', 'width': 140},

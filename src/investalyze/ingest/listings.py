@@ -236,7 +236,7 @@ _MANUAL_BLACKLIST_COLS = ('ticker', 'reason', 'blacklisted_on')
 
 def _read_manual_blacklist(data_root: Path) -> set[str]:
     """Tickers the user has explicitly blacklisted; empty set if none have been."""
-    path = data_root / 'yahoo' / 'state' / MANUAL_BLACKLIST_FILE
+    path = data_root / MANUAL_BLACKLIST_FILE
     if not path.exists():
         return set()
     return set(pd.read_csv(path, keep_default_na=False)['ticker'])
@@ -277,9 +277,7 @@ def _blacklist_chunk(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: l
         existing_tracked = pd.read_csv(ticker_csv, keep_default_na=False)
         existing_tracked[~existing_tracked['ticker'].isin(tickers)].to_csv(ticker_csv, index=False)
 
-    state_dir = data_root / 'yahoo' / 'state'
-    state_dir.mkdir(parents=True, exist_ok=True)
-    path = state_dir / MANUAL_BLACKLIST_FILE
+    path = data_root / MANUAL_BLACKLIST_FILE
     existing = pd.read_csv(path, keep_default_na=False) if path.exists() else pd.DataFrame(columns=_MANUAL_BLACKLIST_COLS)
     today = date.today().isoformat()
     new_rows = pd.DataFrame([{'ticker': ticker, 'reason': reason, 'blacklisted_on': today} for ticker in tickers])
@@ -293,7 +291,7 @@ def unblacklist_tickers(data_root: Path, tickers: list[str]) -> int:
     Only lifts the block on re-adding the ticker; data already deleted by blacklist_tickers stays
     deleted. A plain file write, not a DB write. Returns the number of entries removed.
     """
-    path = data_root / 'yahoo' / 'state' / MANUAL_BLACKLIST_FILE
+    path = data_root / MANUAL_BLACKLIST_FILE
     if not path.exists():
         return 0
     existing = pd.read_csv(path, keep_default_na=False)
