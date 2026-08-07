@@ -43,10 +43,17 @@ SEL_COLUMNS = [
 BUSY = 'database busy, a job is currently running, try again once it finishes'
 
 
-def grid_title(text: str, button_text: str, button_id: str) -> dmc.Group:
-    """Slim bar above a grid: a bold caption on the left, an action button on the right."""
+def grid_title(text: str, button_text: str, button_id: str, count_id: str | None = None) -> dmc.Group:
+    """Slim bar above a grid: a bold caption on the left, an action button on the right.
+
+    Args:
+        count_id: when given, an id'd Text sits beside the caption to carry a 'matched/total' count.
+    """
+    caption = [dmc.Text(text, size='xs', fw=700)]
+    if count_id:
+        caption.append(dmc.Text(id=count_id, size='xs', fw=600))
     return dmc.Group([
-        dmc.Text(text, size='xs', fw=700),
+        dmc.Group(caption, gap=6, wrap='nowrap'),
         dmc.Button(button_text, id=button_id, size='compact-xs', variant='light'),
     ], justify='space-between', mb=4, wrap='nowrap')
 
@@ -126,7 +133,6 @@ def layout() -> html.Div:
                                                     for label in metrics.MCAP_LABELS], gap=4),
                                          id='f-bucket', multiple=True, value=[]),
                            style={'height': '30px', 'display': 'flex', 'alignItems': 'center'})]),
-        dmc.Text(id='filter-count', size='sm', fw=700, style={'marginLeft': 'auto', 'alignSelf': 'flex-end'}),
     ], gap=8, align='flex-end', px=12, pt=4, pb=4, style={'flexWrap': 'wrap'})
 
     factor_panel = dmc.Accordion([
@@ -169,7 +175,7 @@ def layout() -> html.Div:
 
     grids = html.Div([
         html.Div([
-            grid_title('Candidates', 'select all', 'btn-select-all'),
+            grid_title('Candidates', 'select all', 'btn-select-all', count_id='filter-count'),
             dag.AgGrid(
                 id='grid', columnDefs=[], rowData=[],
                 defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 85},
@@ -309,7 +315,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
 
     sel_rows = pool.loc[pool['Ticker'].isin(selection), SEL_FIELDS].copy()
     sel_rows.insert(0, 'sel', True)
-    count = f'{len(passed)} of {len(undecided)} candidates match'
+    count = f'{len(passed):,}/{len(undecided):,}'
     return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, f'selected: {len(selection)}', None
 
 
