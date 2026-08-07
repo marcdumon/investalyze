@@ -110,15 +110,15 @@ def layout() -> html.Div:
         return html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '14px', 'padding': '24px'})
 
     filter_row = dmc.Group([
-        dmc.TextInput(id='f-search', label='Search', placeholder='ticker or company', debounce=500, size='xs',
-                      leftSection=DashIconify(icon='tabler:search', width=14), style={'width': '190px'}),
-        dmc.MultiSelect(id='f-sector', label='Sector', data=sorted(df['sector'].unique()), placeholder='all',
-                        clearable=True, searchable=True, size='xs', style={'width': '190px'}),
-        dmc.MultiSelect(id='f-industry', label='Industry', data=[], placeholder='all',
-                        clearable=True, searchable=True, size='xs', style={'width': '210px'}),
-        dmc.NumberInput(id='f-mindvol', label='Min $vol (mn/d)', min=0, size='xs', style={'width': '110px'}),
-        dmc.NumberInput(id='f-minyears', label='Min years', min=0, size='xs', style={'width': '90px'}),
-        dmc.NumberInput(id='f-maxanom', label='Max anomalies', min=0, size='xs', style={'width': '110px'}),
+        dmc.TextInput(id='f-search', label='Search', placeholder='Ticker or company', debounce=500, size='xs',
+                      leftSection=DashIconify(icon='tabler:search', width=14), style={'width': '160px'}),
+        dmc.MultiSelect(id='f-sector', label='Sector', data=sorted(df['sector'].unique()), placeholder='All',
+                        clearable=True, searchable=True, size='xs', style={'width': '155px'}),
+        dmc.MultiSelect(id='f-industry', label='Industry', data=[], placeholder='All',
+                        clearable=True, searchable=True, size='xs', style={'width': '170px'}),
+        dmc.NumberInput(id='f-mindvol', label='Min $vol (mn/d)', min=0, size='xs', style={'width': '100px'}),
+        dmc.NumberInput(id='f-minyears', label='Min years', min=0, size='xs', style={'width': '85px'}),
+        dmc.NumberInput(id='f-maxanom', label='Max anomalies', min=0, size='xs', style={'width': '100px'}),
         html.Div([dmc.Text('Listing', size='xs', fw=500, mb=2),
                   dmc.SegmentedControl(id='f-active', value='all', size='xs', data=['all', 'active', 'delisted'])]),
         html.Div([dmc.Text('Market-cap bucket', size='xs', fw=500, mb=2),
@@ -127,7 +127,7 @@ def layout() -> html.Div:
                                          id='f-bucket', multiple=True, value=[]),
                            style={'height': '30px', 'display': 'flex', 'alignItems': 'center'})]),
         dmc.Text(id='filter-count', size='sm', fw=700, style={'marginLeft': 'auto', 'alignSelf': 'flex-end'}),
-    ], gap=10, align='flex-end', px=12, pt=8, pb=6, style={'flexWrap': 'wrap'})
+    ], gap=8, align='flex-end', px=12, pt=4, pb=4, style={'flexWrap': 'wrap'})
 
     factor_panel = dmc.Accordion([
         dmc.AccordionItem([
@@ -149,20 +149,22 @@ def layout() -> html.Div:
         dmc.Text(id='sel-count', size='xs', c='dimmed'),
         dmc.SegmentedControl(id='mode', value='raw', size='xs',
                              data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
-        dmc.TextInput(id='universe-name', placeholder='universe name', size='xs', style={'width': '150px'}),
-        dmc.Button('Save', id='btn-save', size='xs', variant='default',
-                   leftSection=DashIconify(icon='tabler:device-floppy', width=14)),
-        dmc.Select(id='universe-dd', data=list_universes(), placeholder='saved universes', clearable=True,
-                   size='xs', style={'width': '190px'}),
-        dmc.Button('Load', id='btn-load', size='xs', variant='default',
-                   leftSection=DashIconify(icon='tabler:folder-open', width=14)),
-        dmc.Button('Blacklist selected', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
+        dmc.TextInput(id='universe-name', placeholder='Universe name', size='xs', style={'width': '120px'}),
+        # Save/Load are icon-only: as labelled buttons the four universe controls cost 496px
+        # of the 862px row on their own, which forced the whole header onto a second line.
+        dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:device-floppy', width=16), id='btn-save',
+                                   size='input-xs', variant='default'), label='Save universe'),
+        dmc.Select(id='universe-dd', data=list_universes(), placeholder='Saved universes', clearable=True,
+                   size='xs', style={'width': '150px'}),
+        dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:folder-open', width=16), id='btn-load',
+                                   size='input-xs', variant='default'), label='Load universe'),
+        dmc.Button('Blacklist', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
                    leftSection=DashIconify(icon='tabler:trash', width=14)),
         dmc.Text(id='scr-blacklist-status', size='xs'),
         dmc.Button('Refresh', id='btn-refresh', size='xs', variant='subtle',
                    leftSection=DashIconify(icon='tabler:reload', width=14)),
         dmc.Text(id='save-status', size='xs', c='teal'),
-    ], gap=8, px=12, py=8,
+    ], gap=6, px=12, py=6, align='center',
        style={'borderBottom': '1px solid var(--mantine-color-default-border)', 'flexWrap': 'wrap'})
 
     grids = html.Div([
@@ -171,7 +173,8 @@ def layout() -> html.Div:
             dag.AgGrid(
                 id='grid', columnDefs=[], rowData=[],
                 defaultColDef={'sortable': True, 'filter': True, 'resizable': True, 'width': 85},
-                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
+                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy',
+                                 'rowHeight': 26, 'headerHeight': 28},
                 className='ag-theme-alpine-dark',
                 style={'flex': 1, 'width': '100%', 'minHeight': 0, '--ag-cell-horizontal-padding': '3px'},
             ),
@@ -181,12 +184,15 @@ def layout() -> html.Div:
             dag.AgGrid(
                 id='sel-grid', columnDefs=SEL_COLUMNS, rowData=[],
                 defaultColDef={'sortable': True, 'resizable': True},
-                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy'},
+                dashGridOptions={'singleClickEdit': True, 'animateRows': False, 'theme': 'legacy',
+                                 'rowHeight': 26, 'headerHeight': 28},
                 className='ag-theme-alpine-dark',
                 style={'flex': 1, 'width': '100%', 'minHeight': 0, '--ag-cell-horizontal-padding': '3px'},
             ),
         ], style={'width': '340px', 'flexShrink': 0, 'display': 'flex', 'flexDirection': 'column'}),
-    ], style={'display': 'flex', 'gap': '10px', 'flex': 1, 'minHeight': 0, 'padding': '8px 12px 0'})
+    # flex:1 fills the window when there is room; minHeight keeps the table a usable size
+    # once the blocks above it grow, and the page scrolls to reach whatever no longer fits.
+    ], style={'display': 'flex', 'gap': '10px', 'flex': 1, 'minHeight': '60vh', 'padding': '8px 12px 0'})
 
     return html.Div([
         dcc.Store(id='selection', data=[]),
@@ -200,7 +206,7 @@ def layout() -> html.Div:
                      size='xs', c='dimmed'),
             dmc.Text(id='sel-status', size='xs', c='teal'),
         ], gap=16, px=12, py=6),
-        html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '45vh',
+        html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '30vh',
                                              'flexShrink': 0}),
         dmc.Modal(
             id='scr-confirm-modal', title='Confirm', centered=True,
@@ -216,7 +222,7 @@ def layout() -> html.Div:
         ),
         dcc.Store(id='scr-blacklist-pending'),
         dcc.Interval(id='scr-blacklist-poll', interval=1000, disabled=True),
-    ], style={'display': 'flex', 'flexDirection': 'column', 'height': 'calc(100vh - 32px)'})
+    ], style={'display': 'flex', 'flexDirection': 'column', 'minHeight': 'calc(100vh - 32px)'})
 
 
 dash.register_page(__name__, path='/screener', name='Screener', layout=layout)

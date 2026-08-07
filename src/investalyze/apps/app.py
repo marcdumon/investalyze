@@ -60,7 +60,9 @@ app.layout = dmc.MantineProvider(
             navbar={'width': 152, 'breakpoint': 'sm'},
             padding='md',
         ),
-    ], style={'height': '100vh'}),
+    # minHeight, not height: pages fill the window when short but are free to grow taller
+    # than it, which is what lets the document scroll instead of clipping them.
+    ], style={'minHeight': '100vh'}),
 )
 
 clientside_callback(
