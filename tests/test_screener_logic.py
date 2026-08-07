@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from investalyze.apps.screener.logic import apply_filters, apply_metadata_filters, composite_score, compute_ranks
+from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, composite_score, compute_ranks,
+                                             spin_step)
 
 FRAME = pd.DataFrame({
     'Ticker': ['A', 'B', 'C'],
@@ -25,10 +26,37 @@ def test_ranks_oriented_and_nan_preserved():
 
 def test_filters_drop_nan_and_apply_bounds():
     ranked = compute_ranks(FRAME, COLS)
-    out = apply_filters(ranked, {'earnings_yield': (60.0, None)})
+    out = apply_filters(ranked, {'earnings_yield': (0.08, None)})
     assert list(out['Ticker']) == ['A']
     out = apply_filters(ranked, {'earnings_yield': (None, None)})   # inactive filter is a no-op
     assert len(out) == 3
+
+
+def test_filters_bound_raw_values_not_ranks():
+    ranked = compute_ranks(FRAME, COLS)
+    assert list(apply_filters(ranked, {'earnings_yield': (0.05, 0.10)})['Ticker']) == ['A', 'B']
+    assert list(apply_filters(ranked, {'earnings_yield': (None, 0.05)})['Ticker']) == ['B']
+    # 60 is a plausible percentile bound but no raw value reaches it, so nothing survives
+    assert apply_filters(ranked, {'earnings_yield': (60.0, None)}).empty
+
+
+def test_filters_accept_negative_bounds():
+    frame = pd.DataFrame({'Ticker': ['A', 'B', 'C'], 'earnings_yield': [-3.1, -0.5, 0.04]})
+    ranked = compute_ranks(frame, ['earnings_yield'])
+    assert list(apply_filters(ranked, {'earnings_yield': (-1.0, None)})['Ticker']) == ['B', 'C']
+    assert list(apply_filters(ranked, {'earnings_yield': (None, -1.0)})['Ticker']) == ['A']
+
+
+def test_spin_step_scales_to_the_factor_spread():
+    assert spin_step(pd.Series([0.0, 0.1326])) == pytest.approx(0.001)
+    assert spin_step(pd.Series([0.0, 0.5566])) == pytest.approx(0.01)
+    assert spin_step(pd.Series([0.0, 41.2041])) == pytest.approx(1.0)
+
+
+def test_spin_step_falls_back_when_spread_is_unusable():
+    assert spin_step(pd.Series([2.0, 2.0, 2.0])) == pytest.approx(0.01)
+    assert spin_step(pd.Series([np.nan, np.nan])) == pytest.approx(0.01)
+    assert spin_step(pd.Series([], dtype=float)) == pytest.approx(0.01)
 
 
 def test_composite_score_skips_nan():

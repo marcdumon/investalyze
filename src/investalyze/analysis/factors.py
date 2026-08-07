@@ -7,6 +7,8 @@ the latest quarter. Missing inputs or nonsensical denominators yield NaN. Factor
 natural raw values; consumers orient ranks with `HIGHER_IS_BETTER` so rank 100 always means best.
 """
 
+from typing import NamedTuple
+
 import duckdb
 import numpy as np
 import pandas as pd
@@ -25,6 +27,101 @@ FAMILIES: dict[str, list[str]] = {
 FACTORS: list[str] = [factor for family in FAMILIES.values() for factor in family]
 _LOWER_IS_BETTER = {'vol_252', 'beta_252', 'accruals', 'debt_to_equity', 'share_change_1y'}
 HIGHER_IS_BETTER: dict[str, bool] = {factor: factor not in _LOWER_IS_BETTER for factor in FACTORS}
+
+
+class FactorDoc(NamedTuple):
+    """What a factor measures and the expression it is computed from, for display next to its filter."""
+
+    what: str
+    formula: str
+
+
+TTM_NOTE = ('TTM = sum of the latest 4 restated quarters, prior TTM = quarters 5 to 8. '
+            'Balance items come from the latest quarter. Market cap = shares x last close.')
+
+FACTOR_DOCS: dict[str, FactorDoc] = {
+    'earnings_yield': FactorDoc(
+        'Profit attributable to common shareholders per unit of market value. The inverse of the P/E ratio.',
+        'Net Income (Common) TTM / market cap'),
+    'fcf_yield': FactorDoc(
+        'Cash left after capital spending, per unit of market value. Harder to manipulate than earnings.',
+        '(operating cash flow TTM - capital spending TTM) / market cap'),
+    'sales_yield': FactorDoc(
+        'Revenue per unit of market value. The inverse of the P/S ratio, useful where earnings are negative.',
+        'Revenue TTM / market cap'),
+    'book_to_market': FactorDoc(
+        'Accounting equity per unit of market value. The inverse of the P/B ratio.',
+        'Total Equity / market cap'),
+    'ebitda_ev': FactorDoc(
+        'Operating cash earnings per unit of enterprise value, so capital structure does not distort the comparison. '
+        'Blank unless both the numerator and enterprise value are positive.',
+        '(Operating Income TTM + D&A TTM) / (market cap + total debt - cash)'),
+
+    'ret_12_1': FactorDoc(
+        'Twelve-month price return skipping the most recent month, the standard momentum measure. '
+        'The skip avoids the short-term reversal that tends to follow a strong month.',
+        'close 22 sessions ago / close 253 sessions ago - 1'),
+    'ret_6m': FactorDoc(
+        'Six-month price return, on adjusted closes so splits and dividends do not distort it.',
+        'latest close / close 127 sessions ago - 1'),
+    'high_52w': FactorDoc(
+        'How close the price sits to its own 52-week high. 1.0 means at the high, 0.5 means half of it.',
+        'latest close / highest close of the trailing 253 sessions'),
+
+    'vol_252': FactorDoc(
+        'Annualised volatility of daily returns over the trailing year. Lower is better. '
+        'Blank below 200 daily returns.',
+        'stdev(daily returns) x sqrt(252)'),
+    'beta_252': FactorDoc(
+        f'Sensitivity to the market ({MARKET_TICKER}) over the trailing year. Lower is better. '
+        '1.0 moves with the index, above 1.0 amplifies it.',
+        'cov(stock returns, market returns) / var(market returns)'),
+
+    'roe': FactorDoc(
+        'Profit generated per unit of shareholder equity. Blank when equity is negative.',
+        'Net Income TTM / Total Equity'),
+    'roa': FactorDoc(
+        'Profit generated per unit of total assets, unaffected by how the assets are financed.',
+        'Net Income TTM / Total Assets'),
+    'gross_margin': FactorDoc(
+        'Share of revenue left after the direct cost of goods sold. A proxy for pricing power.',
+        'Gross Profit TTM / Revenue TTM'),
+    'op_margin': FactorDoc(
+        'Share of revenue left after operating costs, before interest and tax.',
+        'Operating Income TTM / Revenue TTM'),
+    'margin_trend': FactorDoc(
+        'Change in operating margin against the prior year, in margin points. Positive means margins are widening.',
+        'op_margin TTM - op_margin prior TTM'),
+    'accruals': FactorDoc(
+        'How much of reported profit is not backed by operating cash. Lower is better: a large gap means '
+        'earnings lean on accounting estimates rather than cash.',
+        '(Net Income TTM - operating cash flow TTM) / Total Assets'),
+    'debt_to_equity': FactorDoc(
+        'Borrowings per unit of equity, a leverage measure. Lower is better. Blank when equity is negative.',
+        '(short-term debt + long-term debt) / Total Equity'),
+    'interest_coverage': FactorDoc(
+        'How many times operating profit covers the interest bill. Below 1.0 means operating profit does not cover it.',
+        'Operating Income TTM / abs(Interest Expense TTM)'),
+
+    'revenue_yoy': FactorDoc(
+        'Revenue growth against the prior-year TTM. Blank unless the prior period was positive.',
+        'Revenue TTM / Revenue prior TTM - 1'),
+    'revenue_3y': FactorDoc(
+        'Compound annual revenue growth over three years, taken from fiscal-year rows rather than TTM windows.',
+        '(latest FY revenue / revenue 3 FYs earlier) ^ (1/3) - 1'),
+    'eps_yoy': FactorDoc(
+        'Growth in earnings per diluted share, so it captures dilution that revenue growth alone would hide.',
+        'EPS TTM / EPS prior TTM - 1, where EPS = Net Income (Common) / diluted shares'),
+    'fcf_yoy': FactorDoc(
+        'Growth in free cash flow against the prior-year TTM.',
+        'FCF TTM / FCF prior TTM - 1'),
+    'share_change_1y': FactorDoc(
+        'Change in diluted share count over a year. Lower is better: negative means buybacks, positive means dilution.',
+        'diluted shares latest quarter / diluted shares 4 quarters earlier - 1'),
+    'div_growth': FactorDoc(
+        'Growth in dividends actually paid, comparing the trailing 365 days with the 365 days before.',
+        'dividends last 365d / dividends prior 365d - 1'),
+}
 
 # source column -> short alias for the TTM aggregates
 _INCOME_TTM = {

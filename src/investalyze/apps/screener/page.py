@@ -1,7 +1,8 @@
-"""Screener page: metadata + factor-percentile filters over one pool, two-grid curation, saved universes.
+"""Screener page: metadata + factor-value filters over one pool, two-grid curation, saved universes.
 
 The pool (metrics metadata + factor columns) is built once on first visit through a short-lived
-read-only connection and cached at module level; Refresh rebuilds it. Factor ranks are recomputed
+read-only connection and cached at module level; Refresh rebuilds it. Factor filters bound each
+factor's raw value. Ranks, which drive the composite score and the Rank display mode, are recomputed
 over the metadata-filtered candidates, so a percentile always means 'among my current candidates'.
 While a job holds the DB's write lock the page shows a busy notice instead of a traceback.
 """
@@ -20,7 +21,8 @@ from investalyze.apps.control_panel.page import build_blacklist_argv
 from investalyze.apps.screener import metrics
 from investalyze.apps.screener.data import clear_cache, get_pool
 from investalyze.apps.screener.detail import safe_detail_children
-from investalyze.apps.screener.logic import apply_filters, apply_metadata_filters, composite_score, compute_ranks
+from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, composite_score, compute_ranks,
+                                             spin_step)
 from investalyze.apps.universes import list_universes, load_universe, save_universe
 
 IDENTITY_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'mcap_bn', 'mcap_bucket']
@@ -58,15 +60,43 @@ def grid_title(text: str, button_text: str, button_id: str, count_id: str | None
     ], justify='space-between', mb=4, wrap='nowrap')
 
 
-def factor_row(factor: str) -> dmc.Group:
-    """One sidebar row: factor name with min/max percentile inputs, kept on a single line."""
+def factor_row(factor: str, step: float) -> dmc.Group:
+    """One sidebar row: factor name with min/max value inputs, kept on a single line.
+
+    The inputs carry no min/max attribute of their own: factor values are unbounded and often
+    negative, so any clamp here would silently refuse legitimate bounds.
+
+    Args:
+        step: how much one spinner click moves the bound, sized to this factor's own spread.
+    """
     return dmc.Group([
-        dmc.Text(factor, size='xs', style={'width': '106px'}),
-        dmc.NumberInput(id={'type': 'fmin', 'factor': factor}, placeholder='min', min=0, max=100,
+        factor_help(factor),
+        dmc.NumberInput(id={'type': 'fmin', 'factor': factor}, placeholder='min', step=step,
                         size='xs', style={'width': '72px'}),
-        dmc.NumberInput(id={'type': 'fmax', 'factor': factor}, placeholder='max', min=0, max=100,
+        dmc.NumberInput(id={'type': 'fmax', 'factor': factor}, placeholder='max', step=step,
                         size='xs', style={'width': '72px'}),
     ], gap=6, wrap='nowrap')
+
+
+def factor_help(factor: str) -> dmc.HoverCard:
+    """The factor's name, explaining itself on hover.
+
+    The name doubles as the hover target rather than adding a help icon, so the definition costs
+    no width in a panel that already wraps.
+    """
+    doc = factors.FACTOR_DOCS[factor]
+    best = 'higher is better' if factors.HIGHER_IS_BETTER[factor] else 'lower is better'
+    return dmc.HoverCard([
+        dmc.HoverCardTarget(
+            dmc.Text(factor, size='xs',
+                     style={'width': '106px', 'cursor': 'help', 'textDecoration': 'underline dotted'}),
+        ),
+        dmc.HoverCardDropdown([
+            dmc.Group([dmc.Text(factor, fw=700, size='sm'), dmc.Text(best, size='xs', c='dimmed')], gap=8, mb=6),
+            dmc.Text(doc.what, size='xs'),
+            dmc.Code(doc.formula, block=True, mt=8, style={'fontSize': '11px', 'whiteSpace': 'pre-wrap'}),
+        ]),
+    ], width=380, shadow='md', openDelay=200, position='right', withArrow=True)
 
 
 def apply_action(
@@ -137,12 +167,15 @@ def layout() -> html.Div:
 
     factor_panel = dmc.Accordion([
         dmc.AccordionItem([
-            dmc.AccordionControl('Factor percentile filters & composite score', py=2),
+            dmc.AccordionControl('Factor value filters & composite score', py=2),
             dmc.AccordionPanel([
                 dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
-                                size='xs', clearable=True, mb=10, style={'maxWidth': '520px'}),
+                                size='xs', clearable=True, mb=6, style={'maxWidth': '520px'}),
+                dmc.Text(f'Hover a factor name for its definition and formula. {factors.TTM_NOTE}',
+                         size='xs', c='dimmed', mb=10),
                 dmc.Group([
-                    dmc.Stack([dmc.Text(family, size='xs', fw=700)] + [factor_row(f) for f in members], gap=4)
+                    dmc.Stack([dmc.Text(family, size='xs', fw=700)]
+                              + [factor_row(f, spin_step(df[f])) for f in members], gap=4)
                     for family, members in factors.FAMILIES.items()
                 ], gap=24, align='flex-start', style={'flexWrap': 'wrap'}),
             ]),

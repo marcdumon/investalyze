@@ -1,7 +1,9 @@
-"""Pure screening logic: cross-sectional percentile ranks, filters and the composite score.
+"""Pure screening logic: cross-sectional percentile ranks, raw-value filters and the composite score.
 
 Kept free of Dash imports so it is testable standalone; the page module wires it to callbacks.
 """
+
+import math
 
 import numpy as np
 import pandas as pd
@@ -23,21 +25,35 @@ def compute_ranks(df: pd.DataFrame, factor_cols: list[str] = FACTORS) -> pd.Data
 
 
 def apply_filters(df: pd.DataFrame, filters: dict[str, tuple[float | None, float | None]]) -> pd.DataFrame:
-    """Keep rows whose ranks fall inside every active (min, max) percentile bound.
+    """Keep rows whose raw factor values fall inside every active (min, max) bound.
 
-    A factor with both bounds None is inactive; an active bound excludes NaN ranks.
+    Bounds are in each factor's own units, so they read the same as the Raw display mode.
+    A factor with both bounds None is inactive; an active bound excludes NaN values.
     """
     mask = pd.Series(True, index=df.index)
     for factor, (lo, hi) in filters.items():
         if lo is None and hi is None:
             continue
-        rank = df[f'rank_{factor}']
-        mask &= rank.notna()
+        values = df[factor]
+        mask &= values.notna()
         if lo is not None:
-            mask &= rank >= lo
+            mask &= values >= lo
         if hi is not None:
-            mask &= rank <= hi
+            mask &= values <= hi
     return df[mask]
+
+
+def spin_step(values: pd.Series) -> float:
+    """Step for a factor's min/max spinner: the power of ten nearest a twentieth of its IQR.
+
+    Factors differ in scale by orders of magnitude, so a shared constant is either uselessly fine
+    for one end of the list or uselessly coarse for the other. Falls back to 0.01 when the spread
+    is unusable (all-NaN, constant, or a single value).
+    """
+    spread = values.quantile(0.75) - values.quantile(0.25)
+    if pd.isna(spread) or spread <= 0:
+        return 0.01
+    return float(10 ** math.floor(math.log10(spread / 20)))
 
 
 def composite_score(df: pd.DataFrame, selected: list[str]) -> pd.Series:

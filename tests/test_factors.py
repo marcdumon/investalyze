@@ -249,3 +249,11 @@ def test_build_factors_shape_and_content(con):
     assert aaa['roe'] == pytest.approx(0.22)
     bbb = _row(df, 'BBB')
     assert pd.isna(bbb['div_growth'])
+
+
+def test_every_factor_has_a_documented_definition_and_formula():
+    assert set(factors.FACTOR_DOCS) == set(factors.FACTORS)
+    for factor, doc in factors.FACTOR_DOCS.items():
+        assert doc.what.strip(), factor
+        assert doc.formula.strip(), factor
+        assert doc.what.rstrip().endswith('.'), factor
