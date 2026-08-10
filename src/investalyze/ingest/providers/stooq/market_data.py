@@ -1,4 +1,4 @@
-"""Stooq provider — bonds, currencies, indices (OHLCV). Manual bulk/update download.
+"""Stooq provider: bonds, currencies, indices (OHLCV). Manual bulk/update download.
 
 Owns its whole flow: fetch -> transform -> store (through storage.store). Data dirs
 are scaffolded separately by orchestrator.create_data_dirs (run once up front).
@@ -19,8 +19,8 @@ _TABLE = 'market_data'
 _KEY = ['Ticker', 'Date']
 
 
-# Stooq source categories we keep (bonds/currencies/indices); everything else
-# — equities (Yahoo owns them), money market, crypto — is out of scope.
+# MD> Stooq source categories we keep (bonds/currencies/indices). Everything else is out
+# of scope: equities (Yahoo owns them), money market, crypto.
 _IN_SCOPE: frozenset[str] = frozenset({'bonds', 'currencies', 'indices'})
 
 
@@ -46,7 +46,7 @@ def _asset_class_from_ticker(ticker: str) -> str | None:
     return None
 
 
-_BULK_ZIP = 'd_world_txt.zip'   # world only — d_us is equities, which Yahoo owns
+_BULK_ZIP = 'd_world_txt.zip'   # MD> world only: d_us is equities, which Yahoo owns
 _UPDATE_FILE = 'data_d.txt'
 
 
@@ -54,16 +54,16 @@ def _extract_bulk(raw: Path, zip_name: str = _BULK_ZIP) -> None:
     """Unzip the world bulk into `raw/` (producing `raw/data/...`) when needed.
 
     No-op if no zip is present (rely on an already-extracted tree) or if the
-    extracted tree is already newer than the zip. Otherwise extract — overwriting
+    extracted tree is already newer than the zip. Otherwise extract, overwriting
     a stale tree.
     """
     zip_path = raw / zip_name
     if not zip_path.exists():
-        log.debug(f'no bulk zip at {zip_path} — using existing tree')
+        log.debug(f'no bulk zip at {zip_path}, using existing tree')
         return
     tree = raw / 'data'
     if tree.exists() and tree.stat().st_mtime >= zip_path.stat().st_mtime:
-        log.debug(f'extracted tree newer than {zip_name} — skipping unzip')
+        log.debug(f'extracted tree newer than {zip_name}, skipping unzip')
         return
     log.info(f'extracting {zip_name}')
     with zipfile.ZipFile(zip_path) as zf:
@@ -88,7 +88,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict | None =
         _extract_bulk(raw, settings.get('bulk_zip', _BULK_ZIP))
         df = _read_tree(raw / 'data')
     rows = storage.store(con, _TABLE, df, key=_KEY)
-    log.info(f'done — {rows} rows in {_TABLE}')
+    log.info(f'done: {rows} rows in {_TABLE}')
     return rows
 
 
@@ -116,7 +116,7 @@ def _read_tree(root: Path) -> pd.DataFrame:
 
     Stooq nests its files as `.../daily/<region>/<category>/[sub]/<ticker>.txt`,
     but only the category folder matters here. We find category folders by name
-    anywhere under `root` (bonds / currencies / indices — see `_asset_class_from_category`),
+    anywhere under `root` (bonds / currencies / indices, see `_asset_class_from_category`),
     ignoring the frequency and region levels, and transform every `.txt` beneath
     each one, tagged with that folder's AssetClass.
     """
@@ -125,14 +125,14 @@ def _read_tree(root: Path) -> pd.DataFrame:
         asset_class = _asset_class_from_category(category_dir.name)
         if asset_class is None:
             continue
-        # zero-byte files exist in the real tree — skip them
+        # MD> zero-byte files exist in the real tree, skip them
         ticker_files = [f for f in sorted(category_dir.rglob('*.txt')) if f.stat().st_size > 0]
         before = len(frames)
         for ticker_file in ticker_files:
             frames.append(_transform(pd.read_csv(ticker_file), asset_class))
             log.debug(f'{ticker_file.name} read')
         rows = sum(len(f) for f in frames[before:])
-        log.info(f'{asset_class} ({category_dir.parent.name}) — {len(ticker_files)} files, {rows} rows')
+        log.info(f'{asset_class} ({category_dir.parent.name}): {len(ticker_files)} files, {rows} rows')
     if not frames:
         log.warning(f'no in-scope ticker files under {root}')
         return pd.DataFrame(columns=_CANONICAL_COLS)

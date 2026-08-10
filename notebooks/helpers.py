@@ -22,7 +22,7 @@ import pandas as pd
 from IPython.display import HTML, Markdown, display
 
 # ======================================================================
-# SHARED — used by more than one notebook
+# MD> SHARED: used by more than one notebook
 # ======================================================================
 
 
@@ -32,7 +32,7 @@ def fmt_number(x: object, sig: int = 4) -> object:
     Values >= 1 get a thousands separator and at most 4 decimals (1,234,567 / 593.57); values
     below 1 keep `sig` significant figures so tiny rates survive (0.00002, 0.000369) instead of
     rounding to zero. Trailing zeros and bare decimal points are trimmed (603 not 603.0000).
-    Bools and non-numbers (strings, dates) pass through untouched — safe on mixed/transposed frames.
+    Bools and non-numbers (strings, dates) pass through untouched, safe on mixed/transposed frames.
     """
     if pd.isna(x):  # type: ignore[arg-type]
         return ''
@@ -61,7 +61,7 @@ def _fmt_cell(x: object) -> object:
 
 
 def _is_numeric_col(col: pd.Series) -> bool:
-    """True if a column holds numbers — including object columns of mixed Int/None (financials)."""
+    """True if a column holds numbers, including object columns of mixed Int/None (financials)."""
     if pd.api.types.is_numeric_dtype(col):
         return not pd.api.types.is_bool_dtype(col)
     non_null = col.dropna()
@@ -146,7 +146,7 @@ def show_df_or_note(df: pd.DataFrame, transpose: bool = False, note: str = 'no r
 
 
 # ======================================================================
-# 1_explore_db — random-sample browser
+# MD> 1_explore_db: random-sample browser
 # ======================================================================
 
 PROVIDER_TABLES = {
@@ -172,10 +172,10 @@ def show_provider_samples(con: duckdb.DuckDBPyConnection, provider: str) -> None
     for table in PROVIDER_TABLES[provider]:
         if table in RESTATED_TABLES and table in present:
             for is_restated, label in ((False, 'as-reported'), (True, 'restated')):
-                show_section_header(f'{provider} — {table} ({label})', level=3)
+                show_section_header(f'{provider}: {table} ({label})', level=3)
                 show_df(sample_rows(con, table, where=f'IsRestated = {is_restated}'))
             continue
-        show_section_header(f'{provider} — {table}', level=3)
+        show_section_header(f'{provider}: {table}', level=3)
         if table not in present:
             show_note('not in the DB yet')
             continue
@@ -183,7 +183,7 @@ def show_provider_samples(con: duckdb.DuckDBPyConnection, provider: str) -> None
 
 
 # ======================================================================
-# 2_ticker_profile — per-ticker drill-down
+# MD> 2_ticker_profile: per-ticker drill-down
 # ======================================================================
 
 
@@ -229,7 +229,7 @@ def show_ticker_profile(con: duckdb.DuckDBPyConnection, ticker: str, min_fill: f
     """Everything we hold for `ticker`: metadata + a head/tail preview, table by table."""
     display(Markdown(f'# {ticker}'))
 
-    # identity card — one row, transposed
+    # MD> identity card: one row, transposed
     show_section_header('companies')
     show_df_or_note(get_ticker_rows(con, 'companies', ticker), transpose=True)
 
@@ -243,7 +243,7 @@ def show_ticker_profile(con: duckdb.DuckDBPyConnection, ticker: str, min_fill: f
     show_timeseries_section(con, 'dividends', ticker)
     show_timeseries_section(con, 'splits', ticker)
 
-    # fundamentals — split each statement into as-reported vs restated
+    # MD> fundamentals: split each statement into as-reported vs restated
     for table in ('income', 'balance', 'cashflow'):
         show_section_header(table)
         df = get_ticker_rows(con, table, ticker).sort_values(['Fiscal Year', 'Fiscal Period'])

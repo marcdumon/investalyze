@@ -2,9 +2,9 @@
 
 Pure: takes plain paths/values, knows nothing about config (the orchestrator
 owns that). A few small jobs, deliberately so:
-  1. connect       — DuckDB connection (one place, one policy)
-  2. introspection — table_exists / count_rows
-  3. store         — the single helper providers store through (DRY DB writes)
+  1. connect:       DuckDB connection (one place, one policy)
+  2. introspection: table_exists / count_rows
+  3. store:         the single helper providers store through (DRY DB writes)
 
 Split this module only if one of these grows enough to earn its own file.
 """
@@ -50,7 +50,7 @@ def store(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: lis
     """Merge-upsert `df` into `table` on `key`. The one path output reaches the DB.
 
     Creates the table from the frame's schema on first write, then upserts:
-    matched keys update their non-key columns, new keys insert. Idempotent —
+    matched keys update their non-key columns, new keys insert. Idempotent:
     re-ingesting full history or a daily update both converge. Providers
     decide WHAT/WHEN to store; this owns HOW. Returns the table's row count.
     """

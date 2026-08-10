@@ -40,5 +40,5 @@ def test_rebuild_is_idempotent(tmp_path):
     con = duckdb.connect(str(tmp_path / 'test.duckdb'))
     _seed(con)
     rebuild_companies(con, tmp_path, {})
-    second = rebuild_companies(con, tmp_path, {})   # CREATE OR REPLACE — safe re-run
+    second = rebuild_companies(con, tmp_path, {})   # MD> CREATE OR REPLACE, safe re-run
     assert second == {'rows': 3, 'in_yahoo': 2, 'in_simfin': 2, 'both': 1}

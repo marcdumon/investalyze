@@ -1,4 +1,4 @@
-"""Tests for config.read — TOML settings with built-in defaults."""
+"""Tests for config.read: TOML settings with built-in defaults."""
 from pathlib import Path
 
 from investalyze.ingest import config

@@ -33,7 +33,7 @@ def test_dividend_back_adjusts_prior_days():
 
 
 def test_splits_are_ignored_already_adjusted_in_close():
-    # a split column must NOT move AC — Close is already split-adjusted upstream
+    # MD> a split column must NOT move AC: Close is already split-adjusted upstream
     dates = ['2024-01-01', '2024-01-02', '2024-01-03']
     close = _series(dates, [10.0, 11.0, 6.0])
     splits = _series(dates, [0.0, 0.0, 2.0])

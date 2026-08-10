@@ -1,16 +1,16 @@
 # investalyze.ingest configuration.
-# Every key is optional — built-in defaults apply when omitted or when this file
+# MD> Every key is optional: built-in defaults apply when omitted or when this file
 # is absent. Secrets (e.g. the SimFin API key) come from the environment, NOT here.
 
 data_root = "data"                 # dir holding provider trees + the DuckDB
 db        = "investalyze.duckdb"    # DB filename under data_root
 log_level = "INFO"                  # DEBUG | INFO | WARNING | ERROR | CRITICAL
 
-# Downloads are captcha-protected — fetch manually in a browser, drop into raw/.
-# Bulk history — http://stooq.com/db/h/
+# MD> Downloads are captcha-protected: fetch manually in a browser, drop into raw/.
+# Bulk history: http://stooq.com/db/h/
 #   - download the World, Daily, Ascii file: d_world_txt.zip
-#     (skip the US file d_us_txt.zip — those are equities -> Yahoo)
-# Daily update — http://stooq.com/db/
+#     (skip the US file d_us_txt.zip, those are equities -> Yahoo)
+# Daily update: http://stooq.com/db/
 #   - click `Setting Files Content`: tick `World` (skip `U.S.`), `Save configuration`, `Close`
 #   - pick the days (or `All days Select`, bottom-left), then click `N_d` to get data_d.txt
 [stooq]

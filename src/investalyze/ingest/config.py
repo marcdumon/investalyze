@@ -2,7 +2,7 @@
 
 Reads `ingest.toml` (paths + per-provider settings) into a `Config`, with
 built-in defaults so the package runs with no config file at all. Secrets (e.g.
-the SimFin API key) are NOT here — they come from the environment.
+the SimFin API key) are NOT here: they come from the environment.
 """
 
 import tomllib

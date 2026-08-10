@@ -26,7 +26,7 @@ def test_specs_cover_the_locked_matrix():
     assert 'us-income-annual-full-asreported.zip' in names
     assert 'us-companies.zip' in names
     assert 'industries.zip' in names
-    assert 'us-income-annual.zip' not in names           # 'derived' variant — excluded
+    assert 'us-income-annual.zip' not in names           # MD> 'derived' variant, excluded
     assert not any(s.market == 'de' for s in specs)       # us only
     assert {s.refresh_days for s in specs if s.dataset == 'industries'} == {30}
 

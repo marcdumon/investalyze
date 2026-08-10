@@ -1,4 +1,4 @@
-"""SimFin provider — fundamentals (income/balance/cashflow) + company metadata.
+"""SimFin provider: fundamentals (income/balance/cashflow) + company metadata.
 
 US market only. Both vintages (as-reported + restated) fold into an `IsRestated`
 column, annual + quarterly into a `Period` column. Bulk REST download (api-key ->
@@ -114,7 +114,7 @@ def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
     for spec in specs:
         dest = raw_dir / spec.filename
         if not _needs_download(dest, spec.refresh_days):
-            log.debug(f'{spec.filename} fresh — skip')
+            log.debug(f'{spec.filename} fresh, skip')
             continue
         log.info(f'downloading {spec.filename}')
         try:
@@ -140,7 +140,7 @@ def _read_statement(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path, st
     for variant, period, is_restated in _VARIANTS:
         zp = raw_dir / f'{_MARKET}-{statement}-{variant}.zip'
         if not zp.exists():
-            log.warning(f'missing {zp.name} — skip')
+            log.warning(f'missing {zp.name}, skip')
             continue
         csv = _extract(zp, tmp)
         parts.append(
@@ -163,7 +163,7 @@ def _read_companies(con: duckdb.DuckDBPyConnection, raw_dir: Path, tmp: Path) ->
     czip = raw_dir / f'{_MARKET}-companies.zip'
     izip = raw_dir / 'industries.zip'
     if not czip.exists() or not izip.exists():
-        log.warning('missing companies/industries zip — skip companies')
+        log.warning('missing companies/industries zip, skip companies')
         return pd.DataFrame()
     ccsv = _extract(czip, tmp)
     icsv = _extract(izip, tmp)
@@ -199,7 +199,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         for statement in _STATEMENTS:
             df = _read_statement(con, raw_dir, tmp, statement)
             if df.empty:
-                log.warning(f'no data for {statement} — skip')
+                log.warning(f'no data for {statement}, skip')
                 continue
             storage.store(con, statement, df, key=_KEY_FUND)
             log.info(f'{statement}: {len(df)} rows')
@@ -209,5 +209,5 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             log.info(f'companies: {len(companies)} rows')
     counts = {t: storage.count_rows(con, t) for t in _STATEMENTS + ['_simfin_companies'] if storage.table_exists(con, t)}
     total = sum(counts.values())
-    log.info(f'done — {total} rows across simfin tables ({counts})')
+    log.info(f'done: {total} rows across simfin tables ({counts})')
     return total

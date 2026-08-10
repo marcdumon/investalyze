@@ -1,4 +1,4 @@
-"""Yahoo provider — stock prices (raw OHLCV + adjusted close), dividends, splits.
+"""Yahoo provider: stock prices (raw OHLCV + adjusted close), dividends, splits.
 
 Owns its whole flow: read the ticker universe -> fetch via yfinance -> transform ->
 compute adjusted close -> sanity-check vs Yahoo -> store through storage.store. The
@@ -60,7 +60,7 @@ def _calc_adjusted_close(close: pd.Series, dividends: pd.Series) -> pd.Series:
     """Back-adjusted close from raw close + dividends (total-return method).
 
     Dividends ONLY: yfinance's Close is already split-adjusted, so splits must not
-    be re-applied here (doing so double-counts them — e.g. EZGO's three reverse
+    be re-applied here (doing so double-counts them, e.g. EZGO's three reverse
     splits gave a 150000x error). Both inputs share one ascending Date index;
     `dividends` is 0 where there is no ex-date event.
     """
@@ -147,7 +147,7 @@ def _recompute_ac(con: duckdb.DuckDBPyConnection, ticker: str) -> None:
 def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
     """Load Yahoo stock prices/dividends/splits into the DB. Returns the prices row count.
 
-    `settings` is the provider's `[yahoo]` config (no fallback defaults — a missing key raises).
+    `settings` is the provider's `[yahoo]` config (no fallback defaults, a missing key raises).
     """
     raw_dir = data_root / 'yahoo' / 'raw'
     state_dir = data_root / 'yahoo' / 'state'
@@ -168,9 +168,10 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
     flagged: list[dict] = []
     last_dates = _get_last_dates(con) if update else {}
     if update:
-        # group by staleness so one batch's fetch window isn't dragged back by a laggard that only
-        # shares the batch because of ticker.csv's file order; never-fetched tickers ('') sort first
-        # and end up batched together too, which is fine — they need `start=None` (full history) anyway.
+        # MD> group by staleness so one batch's fetch window isn't dragged back by a laggard
+        # that only shares the batch because of ticker.csv's file order; never-fetched tickers ('')
+        # sort first and end up batched together too, which is fine: they need `start=None` (full
+        # history) anyway.
         todo = sorted(todo, key=lambda s: last_dates.get(s, ''))
     batches = _chunk(todo, settings['batch_size'])
     # fetch + save one batch at a time so progress commits as we go (an interrupted run resumes).
@@ -204,7 +205,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
                 batch_splits.append(splits)
             if update and (frame['Dividends'] > 0).any():
                 recompute.append(sym)
-        # one merge per table per batch (vs one per ticker) — the merge scans the growing
+        # MD> one merge per table per batch (vs one per ticker): the merge scans the growing
         # target once instead of len(batch) times, which dominated wall time.
         if batch_prices:
             storage.store(con, _PRICES, pd.concat(batch_prices, ignore_index=True), key=_KEY)
@@ -228,14 +229,14 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
             pd.DataFrame(flagged).to_csv(state_dir / 'ac_discrepancies.csv', index=False)
         batch_blacklisted = newly_blacklisted[blacklisted_before:]
         since = f'from {start}' if start else 'full history'
-        log.info(f'batch {i + 1}/{len(batches)} {since} — saved {len(batch) - len(batch_blacklisted)} '
+        log.info(f'batch {i + 1}/{len(batches)} {since}: saved {len(batch) - len(batch_blacklisted)} '
                  f'blacklisted {len(batch_blacklisted)} (n={len(todo)})')
         if batch_blacklisted:
-            log.warning(f'no data for {", ".join(batch_blacklisted)} — blacklisted')
+            log.warning(f'no data for {", ".join(batch_blacklisted)}, blacklisted')
         if settings['sleep'] and i < len(batches) - 1:
             time.sleep(settings['sleep'])
 
-    log.info(f'done — {len(todo) - len(newly_blacklisted)} saved, {len(newly_blacklisted)} blacklisted, {len(flagged)} AC-flagged')
+    log.info(f'done: {len(todo) - len(newly_blacklisted)} saved, {len(newly_blacklisted)} blacklisted, {len(flagged)} AC-flagged')
     return storage.count_rows(con, _PRICES)
 
 
@@ -250,7 +251,7 @@ def _prepare_ticker(
     """
     if frame.empty:
         newly_blacklisted.append(sym)
-        log.debug(f'{sym} no data — blacklisted')
+        log.debug(f'{sym} no data, blacklisted')
         return None
     prices = _to_prices(sym, frame)
     divs = _to_dividends(sym, frame)
@@ -267,9 +268,9 @@ def _prepare_ticker(
 def recheck_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict:
     """Retry every blacklisted ticker; revive successes, age out chronic failures, prune ticker.csv.
 
-    `con` is unused here — kept so this matches the (con, data_root, settings) shape every
+    `con` is unused here, kept so this matches the (con, data_root, settings) shape every
     housekeeping task is dispatched with. `settings` is the `[yahoo]` config: uses `ticker_file`,
-    `batch_size`, `sleep` (same as `run`) plus `blacklist_max_attempts` (no fallback — missing
+    `batch_size`, `sleep` (same as `run`) plus `blacklist_max_attempts` (no fallback, missing
     raises `KeyError`).
     """
     raw_dir = data_root / 'yahoo' / 'raw'

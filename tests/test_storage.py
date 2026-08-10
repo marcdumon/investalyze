@@ -1,4 +1,4 @@
-"""Tests for storage.store — the single merge/upsert path into DuckDB."""
+"""Tests for storage.store: the single merge/upsert path into DuckDB."""
 from datetime import date
 
 import duckdb

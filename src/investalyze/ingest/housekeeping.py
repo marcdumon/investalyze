@@ -1,6 +1,6 @@
 """The housekeeping runner: open the shared DB, then run each selected maintenance task.
 
-Mirrors orchestrator.py's shape — a registry of name -> (provider name, task callable), one
+Mirrors orchestrator.py's shape: a registry of name -> (provider name, task callable), one
 place that opens the DB connection. Adding a task = one new function + one registry entry.
 """
 

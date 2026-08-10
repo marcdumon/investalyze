@@ -1,4 +1,4 @@
-"""Yahoo provider — company profile + officers, via `yf.Ticker(t).info`.
+"""Yahoo provider: company profile + officers, via `yf.Ticker(t).info`.
 
 Independent of `price_data.py` (prices/dividends/splits): no bulk endpoint for `.info`
 (unlike `yf.download`), so tickers are fetched over a small thread pool (`workers`) instead
@@ -52,7 +52,7 @@ def _fetch_info(symbol: str) -> dict:
 
     Broad except: yfinance raises a variety of unrelated exception types (HTTP errors,
     JSON decode errors, malformed-response KeyErrors) for a ticker with no profile data;
-    all of them mean the same thing here — treat it like an empty result.
+    all of them mean the same thing here: treat it like an empty result.
     """
     try:
         info = yf.Ticker(symbol).info
@@ -113,8 +113,8 @@ def _is_due(fetched_on: date | None, refresh_days: int, today: date) -> bool:
 def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, update: bool = False) -> int:
     """Fetch + store Yahoo company profile + officers for due tickers. Returns the company_profile row count.
 
-    `settings` is the `[yahoo-meta]` config (no fallback defaults — a missing key raises). `update`
-    is accepted for signature parity with every other provider's `run` but unused — there is no
+    `settings` is the `[yahoo-meta]` config (no fallback defaults, a missing key raises). `update`
+    is accepted for signature parity with every other provider's `run` but unused: there is no
     incremental mode here, only "due" (no row yet, or `FetchedOn` stale) vs "not due". `workers`
     threads fetch concurrently (no bulk `.info` endpoint to batch through instead); each ticker is
     still written (DB row or blacklist entry) as soon as its fetch completes, in the main thread, so
@@ -148,7 +148,7 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
         for n, (sym, info) in enumerate(pool.map(fetch, todo), start=1):
             log.info(f'fetching {sym} ({n}/{len(todo)})')
             if not info:
-                log.debug(f'{sym} no metadata — blacklisted')
+                log.debug(f'{sym} no metadata, blacklisted')
                 today_iso = today.isoformat()
                 new_row = pd.DataFrame([{
                     'ticker': sym, 'market': market_by_ticker.get(sym, ''), 'attempts': 1,
@@ -164,17 +164,17 @@ def run(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict, *, upda
                     storage.store(con, _OFFICERS, officers, key=_OFFICERS_KEY)
                 saved += 1
 
-    log.info(f'done — {saved} saved, {blacklisted} blacklisted')
+    log.info(f'done: {saved} saved, {blacklisted} blacklisted')
     return storage.count_rows(con, _PROFILE)
 
 
 def recheck_meta_blacklist(con: duckdb.DuckDBPyConnection, data_root: Path, settings: dict) -> dict:
     """Retry every yahoo-meta-blacklisted ticker; revive successes, age out chronic failures.
 
-    `con` is unused — kept so this matches the `(con, data_root, settings)` shape every housekeeping
+    `con` is unused, kept so this matches the `(con, data_root, settings)` shape every housekeeping
     task is dispatched with. `settings` is the `[yahoo-meta]` config: uses `sleep`, `workers`,
-    `blacklist_max_attempts` (no fallback — missing raises `KeyError`). Unlike the price provider's
-    `recheck_blacklist`, a revived ticker needs no further bookkeeping here — `yahoo-meta` has no
+    `blacklist_max_attempts` (no fallback, missing raises `KeyError`). Unlike the price provider's
+    `recheck_blacklist`, a revived ticker needs no further bookkeeping here: `yahoo-meta` has no
     ticker list of its own to prune; the next `run` picks a revived ticker up naturally
     once it's off this blacklist. `meta_blacklist.csv`/`meta_dead.csv` are rewritten after every
     ticker (not just at the end, and still only from the main thread as each fetch completes), so

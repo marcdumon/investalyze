@@ -2,7 +2,7 @@
 
 Each provider fetches + stores itself (storing through storage.store). Adding a
 provider = one new folder under providers/ + one entry in PROVIDERS here. This is
-also the one place that touches config — storage stays config-free plumbing.
+also the one place that touches config: storage stays config-free plumbing.
 """
 
 import logging
@@ -37,9 +37,9 @@ PROVIDER_DESCRIPTIONS: dict[str, str] = {
 }
 
 SUBDIRS: tuple[str, ...] = ('raw', 'processed', 'state')
-# Providers that reuse another provider's data tree instead of owning one. yahoo-meta
+# MD> Providers that reuse another provider's data tree instead of owning one. yahoo-meta
 # reads yahoo's ticker.csv + blacklist and writes its own state alongside them under
-# data/yahoo/state/ (meta_blacklist.csv / meta_dead.csv) — it has no tree of its own.
+# data/yahoo/state/ (meta_blacklist.csv / meta_dead.csv): it has no tree of its own.
 NO_DIR_PROVIDERS: frozenset[str] = frozenset({'yahoo-meta'})
 
 
@@ -48,7 +48,7 @@ def create_data_dirs(config: Config) -> None:
 
     Run this ONCE, up front, so source files can be dropped into each provider's
     `raw/` before the first load. Idempotent. Providers in `NO_DIR_PROVIDERS` are
-    skipped — they live under another provider's tree.
+    skipped: they live under another provider's tree.
     """
     for provider in PROVIDERS:
         if provider in NO_DIR_PROVIDERS:

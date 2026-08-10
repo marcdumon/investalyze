@@ -1,7 +1,7 @@
 """Console logging for the ingest: one colored StreamHandler, noisy libraries tamed.
 
 `configure_logging` is called once at the CLI edge; everything else just uses
-`logging.getLogger(...)`. The module name is safe — `import logging` here resolves
+`logging.getLogger(...)`. The module name is safe: `import logging` here resolves
 to the stdlib (absolute import), same as the reference repo.
 """
 

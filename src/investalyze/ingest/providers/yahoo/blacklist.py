@@ -2,7 +2,7 @@
 
 Both `price_data.py` and `meta_data.py` track failed tickers in their own blacklist/dead CSVs
 under `data/yahoo/state/`; this module owns the shared shape and reading. Writing stays with
-each provider — their retry/promotion logic differs enough to not be worth unifying.
+each provider: their retry/promotion logic differs enough to not be worth unifying.
 """
 
 from pathlib import Path

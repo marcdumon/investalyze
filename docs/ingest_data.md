@@ -1,4 +1,4 @@
-# Data Reference — `investalyze.ingest`
+# Data Reference: `investalyze.ingest`
 
 Living document. Single source of truth for: what data we have, where it comes from, how it's
 cleaned (ETL), and how it lands in the DB. Update this as decisions are made.
@@ -14,7 +14,7 @@ Each asset class has **exactly one** source. No multi-source overlap on the same
 | Provider | Owns | Datasets |
 |----------|------|----------|
 | **Yahoo** (`yfinance`) | Stock prices | OHLCV, dividends, splits |
-| **SimFin** (bulk REST) | Fundamentals | income, balance, cashflow — **as-filed + restated** (US) |
+| **SimFin** (bulk REST) | Fundamentals | income, balance, cashflow: **as-filed + restated** (US) |
 | **Stooq** (manual download) | Bonds, currencies, indices | OHLC(V) |
 
 Design rule ✅: a provider is a self-contained module. Adding a 4th provider must not touch the
@@ -27,24 +27,24 @@ others. More providers expected later.
 
 ## 2. Provider detail
 
-### 2.1 Yahoo — stock prices ✅ (built)
+### 2.1 Yahoo: stock prices ✅ (built)
 - **Acquire:** `yfinance`, batched `yf.download(auto_adjust=False, actions=True, group_by='ticker')`.
   `batch_size`/`sleep` come from `[yahoo]` in `ingest.toml`. Dividends/splits come from the same
-  download (`Dividends`, `Stock Splits` columns) — no separate `yf.Ticker.actions` call.
+  download (`Dividends`, `Stock Splits` columns), no separate `yf.Ticker.actions` call.
 - **Fields:** `Open, High, Low, Close, Volume` → stored as `O, H, L, C, V`; `Dividends`/`Stock Splits`
   → `dividends`/`splits` event tables.
 - **Adjustment** ✅: store **raw** OHLCV + our own derived adjusted close (`AC`), back-adjusted from
   raw close + events (not Yahoo's, not `auto_adjust`). Validated against Yahoo's `Adj Close` at
   `ac_tolerance` (0.1%) during ingest. A new dividend/split rewrites the ticker's whole `AC` history,
   recomputed cheaply from stored raw + events (no re-download).
-- **Update:** incremental — one batched call per batch starting `refetch_days` (`ingest.toml [yahoo]`,
+- **Update:** incremental, one batched call per batch starting `refetch_days` (`ingest.toml [yahoo]`,
   default 7) before the earliest stored date across the batch (full history if any ticker is new).
   The trailing overlap deliberately re-fetches the last few days so a **provisional** close (e.g. an
   11am run stores the intraday price as that day's `C`) and any later provider revision get overwritten
-  by the finalized values on the next update — idempotent via merge upsert on `[Ticker, Date]`.
+  by the finalized values on the next update, idempotent via merge upsert on `[Ticker, Date]`.
   *Caveat:* this self-heals only going forward. Rows written before this behaviour existed (the old
   logic started at `last + 1 day` and never re-touched the provisional day) are sealed stale and fall
-  outside the window — reconcile them once with a full (non-`--update`) reload.
+  outside the window: reconcile them once with a full (non-`--update`) reload.
 - **Symbol mapping:** canonical ticker → Yahoo symbol can differ (e.g. preferred `ARRY_A` →
   `ARRY-PA`). For equities the canonical usually equals the Yahoo symbol.
 - **State** ✅: delisted / no-data tickers recorded in `state/price_blacklist.csv` (with an `attempts`
@@ -55,27 +55,27 @@ others. More providers expected later.
 - **Metadata** ✅ (built): a separate provider, `yahoo-meta` (`python -m investalyze.ingest -p
   yahoo-meta`), fetches `yf.Ticker(t).info` per ticker -> `_yahoo_companies` (one row/ticker: address,
   website, industry/sector, business summary, employee count, governance risk scores) +
-  `company_officers` (one row/officer) — see §7. Reuses this provider's ticker universe and
+  `company_officers` (one row/officer), see §7. Reuses this provider's ticker universe and
   blacklist/dead exclusions; tracks its own metadata-fetch failures independently in
-  `data/yahoo/state/meta_blacklist.csv` / `meta_dead.csv` (no subdir of its own — it lives under
+  `data/yahoo/state/meta_blacklist.csv` / `meta_dead.csv` (no subdir of its own, it lives under
   the price provider's tree). Refreshed per ticker once its `FetchedOn` is older than
   `refresh_days_meta` (`ingest.toml [yahoo-meta]`).
 
-### 2.2 SimFin — fundamentals ✅ (built)
+### 2.2 SimFin: fundamentals ✅ (built)
 - **Acquire:** bulk ZIPs from SimFin REST API (auth `api-key` header → presigned S3 redirect; auth not
   forwarded to S3), refreshed by file age (`refresh_days_fundamentals`, `refresh_days_meta`). No
-  incremental feed — `--update` is governed by file age, same as a full run. API key from env
+  incremental feed, `--update` is governed by file age, same as a full run. API key from env
   **`SIMFIN_API_KEY`** (e.g. `.env`), never config.
-- **Scope:** `us` market only (de excluded — re-addable, the `Market` column + keys already carry it).
-  Statements `income`, `balance`, `cashflow`. `derived` (SimFin's pre-computed ratios) **excluded** —
+- **Scope:** `us` market only (de excluded: re-addable, the `Market` column + keys already carry it).
+  Statements `income`, `balance`, `cashflow`. `derived` (SimFin's pre-computed ratios) **excluded**:
   recomputable downstream.
 - **Vintages** ✅: as-reported (original) + restated (latest revised), folded into one boolean
   `IsRestated` column (`False`/`True`), NOT separate `_restated` tables. Verified the two vintages are
   schema-identical per statement (income 68 / balance 95 / cashflow 62 cols), so the union folds with
   no NULL columns.
 - **Granularity:** Annual (`A`) + Quarterly (`Q`), in one `Period` column.
-- **Tables:** `income`/`balance`/`cashflow` — wide source columns **verbatim** + added `Market`,
-  `Period`, `IsRestated`, `Src` (`simfin`), `SrcId` (renamed `SimFinId`). `_simfin_companies` —
+- **Tables:** `income`/`balance`/`cashflow`: wide source columns **verbatim** + added `Market`,
+  `Period`, `IsRestated`, `Src` (`simfin`), `SrcId` (renamed `SimFinId`). `_simfin_companies`:
   per-market companies `LEFT JOIN industries` (Industry/Sector folded in); the raw SimFin metadata
   table, merged into the combined `companies` table by the `companies` housekeeping task. Merge keys:
   fundamentals `[Ticker, Market, Period, IsRestated, 'Fiscal Year', 'Fiscal Period']`,
@@ -85,19 +85,19 @@ others. More providers expected later.
   `IsRestated`).
 - **Format:** semicolon-delimited CSVs inside the zips; wide, source-defined columns (kept verbatim).
 
-### 2.3 Stooq — bonds, currencies, indices ✅
+### 2.3 Stooq: bonds, currencies, indices ✅
 - **Acquire:** NOT programmatic. User manually downloads from stooq.com and drops files in raw dir.
   **Two inputs, two read paths** ✅ (both → `market_data`, both saved via the merge/upsert so they converge):
   | Input | Use | Format | AssetClass from |
   |-------|-----|--------|-----------------|
   | **`d_world_txt.zip`** (bulk) | full history | folder tree `world/<category>/[sub]/<ticker>.txt` | **folder name** (`_asset_class_from_category`) |
   | **`data_d.txt`** (flat) | daily update | one file, all instruments, no category | **ticker pattern** (`_asset_class_from_ticker`) |
-  - **Skip `d_us_txt.zip`** ✅ — that's US equities (Yahoo owns them).
+  - **Skip `d_us_txt.zip`** ✅: that's US equities (Yahoo owns them).
 - **Raw row format:** `<TICKER>,<PER>,<DATE>,<TIME>,<OPEN>,<HIGH>,<LOW>,<CLOSE>,<VOL>,<OPENINT>`,
   comma-delimited; date `YYYYMMDD`; VOL always 0.
 - **Ticker-pattern classification** (flat file, no folders) ✅:
   `.B`→bonds · `^`→indices · bare 6-letter alpha→currencies · drop `.US`/`.V`/other.
-  Fuzzy at edges ❓ — the ~1,248 "other" (money market/commodities) and the 6-letter=fx assumption.
+  Fuzzy at edges ❓: the ~1,248 "other" (money market/commodities) and the 6-letter=fx assumption.
 - **Bonds = two series** ✅: yield (`10YUSY.B`) + price (`10YUSP.B`), both `AssetClass='bonds'`,
   distinguished by ticker (Y vs P). Exchange suffix `.B` stripped in transform → `10YUSY` / `10YUSP`.
 
@@ -108,8 +108,8 @@ others. More providers expected later.
 - `universe.csv` columns: `Ticker` (canonical), `Market`, `stooq_ticker`, `yahoo_ticker`.
 - Old seed: built from Stooq `markets.csv`, deduped by **market tier** (equities outrank
   crypto/fx/bonds so an equity never gets shadowed by a colliding crypto symbol).
-- `BANNED_MARKETS = {cryptocurrencies}` — never seeded, fetched, or stored.
-- 🔶 With the new clean asset-class split, the universe model may change — the canonical ticker and
+- `BANNED_MARKETS = {cryptocurrencies}`: never seeded, fetched, or stored.
+- 🔶 With the new clean asset-class split, the universe model may change: the canonical ticker and
   per-asset-class identity need redesign (separate equity vs bond/fx/index namespaces?).
 
 ---
@@ -141,7 +141,7 @@ default: all).
 | Task | Does |
 |------|------|
 | `yahoo-blacklist` | Retries every ticker in `data/yahoo/state/price_blacklist.csv`. Tickers that return data again are removed from the blacklist and added back to `ticker.csv` (picked up by the next regular ingest run, not ingested by housekeeping itself). Tickers still empty get `attempts` incremented; past `blacklist_max_attempts` (`ingest.toml [yahoo]`, default 5) they move to `data/yahoo/state/price_dead.csv` and are never retried again. `ticker.csv` is pruned of anything still blacklisted or now dead on every run. |
-| `yahoo-meta-blacklist` | Same recheck/age-out pattern as `yahoo-blacklist`, against `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` (independent of the price provider's lists — `yahoo-meta` tracks its own metadata-fetch failures, alongside them in the same dir). A revived ticker is simply unblacklisted; the next `yahoo-meta` run re-fetches it naturally (no ticker.csv of its own to prune). |
+| `yahoo-meta-blacklist` | Same recheck/age-out pattern as `yahoo-blacklist`, against `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` (independent of the price provider's lists: `yahoo-meta` tracks its own metadata-fetch failures, alongside them in the same dir). A revived ticker is simply unblacklisted; the next `yahoo-meta` run re-fetches it naturally (no ticker.csv of its own to prune). |
 | `companies` | Rebuilds the combined `companies` table (`CREATE OR REPLACE`) from `_yahoo_companies` `FULL OUTER JOIN _simfin_companies` on `Ticker`. One row per ticker with `InYahoo`/`InSimfin` flags; Yahoo wins the overlapping fields (Industry, Sector, NrEmployees, BusinessSummary). |
 
 ---
@@ -153,7 +153,7 @@ The DB is shared and lives outside every provider tree. A provider never touches
 
 ```
 data/
-├── investalyze.duckdb          # the one DB — shared, outside provider trees
+├── investalyze.duckdb          # the one DB, shared, outside provider trees
 ├── universe.csv                # cross-provider registry (or move into DB) 🔶
 ├── yahoo/
 │   ├── raw/                     # immutable landed source artifacts (never mutated)
@@ -168,29 +168,29 @@ data/
 
 - **Dirs are scaffolded once, up front** ✅ by `orchestrator.create_data_dirs(config)` (terminal:
   `python -m investalyze.ingest setup`). It builds `data/<provider>/{raw,processed,state}/` for every
-  **registered** provider, idempotently — run it, then drop the manual source files into `raw/`.
+  **registered** provider, idempotently: run it, then drop the manual source files into `raw/`.
   (Storage stays config-free plumbing; the orchestrator is the one place that reads config.)
 - `raw/` immutable · `processed/` regenerable · `state/` holds all resume/freshness/log metadata
-  (kept out of raw & processed so neither carries side-effect state — fixes the old scattered-JSON mess).
+  (kept out of raw & processed so neither carries side-effect state: fixes the old scattered-JSON mess).
 
-> The investalyze `data` dir is **decoupled** from the old project's data — fresh start, no inherited files.
+> The investalyze `data` dir is **decoupled** from the old project's data: fresh start, no inherited files.
 
 ---
 
 ## 7. DB architecture 🔶 (evolving)
 
 - **Engine:** DuckDB. **Target file:** `data/investalyze.duckdb` ✅ (fresh, decoupled from `irp.duckdb`).
-- **Price data is split by role, not unified** ✅ — main vs secondary, one source per table:
+- **Price data is split by role, not unified** ✅, main vs secondary, one source per table:
 
   | Table | Source | Role | Columns |
   |-------|--------|------|---------|
-  | `prices` ✅ | Yahoo | **main** — prediction target, joins fundamentals | Ticker, Date, O, H, L, C, V, AC |
-  | **`market_data`** ✅ | Stooq | **secondary / features** — bonds, indices, currencies | `Ticker, Date, O, H, L, C, AssetClass` |
-  | `income`/`balance`/`cashflow` ✅ | SimFin | **fundamentals** — wide statements | source cols + Market, Period, IsRestated, Src, SrcId |
-  | `companies` ✅ | **combined** (Yahoo + SimFin) | **metadata** — one merged row per ticker, rebuilt by the `companies` housekeeping task | Ticker, InYahoo, InSimfin, Industry, Sector, NrEmployees, CompanyName, Address, City, State, Zip, Country, ISIN, CIK, Website, IRWebsite, BusinessSummary |
-  | `_yahoo_companies` ✅ | Yahoo | **raw metadata** — profile fields from `yf.Ticker.info` (one row/ticker) | Ticker, Src, Address1, City, State, Zip, Country, Website, Industry, Sector, BusinessSummary, FullTimeEmployees, AuditRisk, BoardRisk, CompensationRisk, ShareholderRightsRisk, OverallRisk, IRWebsite, FetchedOn |
-  | `_simfin_companies` ✅ | SimFin | **raw metadata** — companies ⨝ industries | Ticker, SrcId, Src, Market, Industry, Sector, CompanyName, IndustryId, ISIN, FinancialYearEndMonth, NumberEmployees, BusinessSummary, CIK, MainCurrency |
-  | `company_officers` ✅ | Yahoo | **metadata** — one row per officer | Ticker, Src, Name, Title, Age, YearBorn, FiscalYear, TotalPay, ExercisedValue, UnexercisedValue |
+  | `prices` ✅ | Yahoo | **main**, prediction target, joins fundamentals | Ticker, Date, O, H, L, C, V, AC |
+  | **`market_data`** ✅ | Stooq | **secondary / features**, bonds, indices, currencies | `Ticker, Date, O, H, L, C, AssetClass` |
+  | `income`/`balance`/`cashflow` ✅ | SimFin | **fundamentals**, wide statements | source cols + Market, Period, IsRestated, Src, SrcId |
+  | `companies` ✅ | **combined** (Yahoo + SimFin) | **metadata**, one merged row per ticker, rebuilt by the `companies` housekeeping task | Ticker, InYahoo, InSimfin, Industry, Sector, NrEmployees, CompanyName, Address, City, State, Zip, Country, ISIN, CIK, Website, IRWebsite, BusinessSummary |
+  | `_yahoo_companies` ✅ | Yahoo | **raw metadata**, profile fields from `yf.Ticker.info` (one row/ticker) | Ticker, Src, Address1, City, State, Zip, Country, Website, Industry, Sector, BusinessSummary, FullTimeEmployees, AuditRisk, BoardRisk, CompensationRisk, ShareholderRightsRisk, OverallRisk, IRWebsite, FetchedOn |
+  | `_simfin_companies` ✅ | SimFin | **raw metadata**, companies ⨝ industries | Ticker, SrcId, Src, Market, Industry, Sector, CompanyName, IndustryId, ISIN, FinancialYearEndMonth, NumberEmployees, BusinessSummary, CIK, MainCurrency |
+  | `company_officers` ✅ | Yahoo | **metadata**, one row per officer | Ticker, Src, Name, Title, Age, YearBorn, FiscalYear, TotalPay, ExercisedValue, UnexercisedValue |
 
   `dividends(Ticker, Date, Dividend)` and `splits(Ticker, Date, Ratio)` carry the events. `AC` is
   our adjusted close, computed from raw close + events (not Yahoo's, not stored adjusted) and
@@ -198,7 +198,7 @@ data/
 
   - **Short column names** ✅: `O/H/L/C` (not Open/High/Low/Close).
   - `market_data` has **no volume** (always 0 for these instruments).
-  - **`AssetClass`** ∈ {bonds, currencies, indices} — derived from the Stooq source category dir.
+  - **`AssetClass`** ∈ {bonds, currencies, indices}, derived from the Stooq source category dir.
   - **Bonds = two tickers**: yield (`10YUSY`) + price (`10YUSP`), both `AssetClass='bonds'`.
 - **Fundamentals** ✅: one table per statement, both vintages in a boolean `IsRestated` column (the old
   `_restated` shadow tables are retired). Point-in-time via `Publish Date`/`Restated Date` + `IsRestated`.
