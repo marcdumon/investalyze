@@ -1,13 +1,17 @@
-# investalyze — Manual
+# investalyze: Manual
 
-User guide for the `investalyze` repo. Work in progress — built in parts; each part is documented
-here as it lands. **Part 1: ingest** (getting market data into the DB), **cleaning**
-(persistent manual fixes for bad vendor data) and **quality** (anomaly detection over the
-ingested data).
+User guide for the `investalyze` repo, built in parts and documented here as each lands.
+
+**Part 1, the CLIs**: **ingest** (getting market data into the DB), **cleaning** (persistent
+manual fixes for bad vendor data) and **quality** (anomaly detection over the ingested data).
+
+**Part 2, the apps**: a four-page Dash UI over the same data. See
+[Apps: the Dash UI](#apps-the-dash-ui), which is also the easier way to drive everything in
+Part 1.
 
 ---
 
-## Ingest — load market data
+## Ingest: load market data
 
 Paths come from `ingest.toml`. Typical flow:
 
@@ -16,7 +20,7 @@ Paths come from `ingest.toml`. Typical flow:
 python -m investalyze.ingest setup
 
 # 2. manually download the source files and drop them in data/<provider>/raw/
-#    (Stooq is captcha-protected — URLs and steps are in ingest.toml)
+#    (Stooq is captcha-protected, URLs and steps are in ingest.toml)
 
 # 3. load the full history
 python -m investalyze.ingest
@@ -36,7 +40,7 @@ Options:
 
 ---
 
-## Yahoo metadata — company profile & officers
+## Yahoo metadata: company profile & officers
 
 A separate provider, included in the default `python -m investalyze.ingest` run like any
 other; run it on its own with:
@@ -45,15 +49,15 @@ other; run it on its own with:
 python -m investalyze.ingest -p yahoo-meta
 ```
 
-Fetches `yf.Ticker(t).info` per ticker into two tables — `_yahoo_companies` (address,
+Fetches `yf.Ticker(t).info` per ticker into two tables: `_yahoo_companies` (address,
 website, industry/sector, business summary, employee count, governance risk scores) and
 `company_officers` (one row per officer). Reuses the Yahoo price provider's ticker list
 and blacklist/dead exclusions, but tracks its own metadata-fetch failures independently
-in `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — alongside the price provider's
+in `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv`, alongside the price provider's
 state, with no subdir of its own (see Housekeeping below).
 
 A ticker is only re-fetched once its stored `FetchedOn` is older than
-`refresh_days_meta` (`ingest.toml [yahoo-meta]`) — running this repeatedly is cheap once
+`refresh_days_meta` (`ingest.toml [yahoo-meta]`), running this repeatedly is cheap once
 the DB is populated.
 
 ---
@@ -62,13 +66,13 @@ the DB is populated.
 
 Maintenance tasks run separately from the regular provider ingest. Three kinds:
 
-- **Blacklist rechecks** — each provider that can blacklist a ticker (a fetch failure,
+- **Blacklist rechecks**: each provider that can blacklist a ticker (a fetch failure,
   retried and tracked) gets a task that rechecks its blacklist: revives tickers that now
   succeed, ages out ones that still fail, and moves a ticker to its dead list past the
   provider's `blacklist_max_attempts`.
-- **Combined-table rebuild** — `companies` merges the per-source `_yahoo_companies` +
+- **Combined-table rebuild**: `companies` merges the per-source `_yahoo_companies` +
   `_simfin_companies` raw metadata tables into one row per ticker.
-- **Ticker identification rebuild** — `market_instruments` gives every `market_data` ticker
+- **Ticker identification rebuild**: `market_instruments` gives every `market_data` ticker
   (indices, bonds, currencies) a name and country, the equivalent of `companies` for
   non-stock instruments. Indices are manually curated in `stooq_tickers.toml` (arbitrary vendor
   symbols, no decodable structure); bonds and currencies follow systematic Stooq ticker patterns
@@ -91,8 +95,8 @@ Current tasks:
 
 | Task | Does |
 |------|------|
-| `yahoo-blacklist` | Rechecks `data/yahoo/state/price_blacklist.csv`/`price_dead.csv` — the Yahoo price provider's failed tickers. |
-| `yahoo-meta-blacklist` | Rechecks `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv` — the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
+| `yahoo-blacklist` | Rechecks `data/yahoo/state/price_blacklist.csv`/`price_dead.csv`, the Yahoo price provider's failed tickers. |
+| `yahoo-meta-blacklist` | Rechecks `data/yahoo/state/meta_blacklist.csv`/`meta_dead.csv`, the Yahoo metadata provider's failed tickers (independent of the price provider's lists, but in the same dir). |
 | `companies` | Rebuilds the combined `companies` table from `_yahoo_companies` + `_simfin_companies` (full outer join on Ticker; Yahoo wins overlapping fields). |
 | `market-instruments` | Rebuilds `market_instruments`, name/country per market_data ticker (indices, bonds, currencies), see `stooq_tickers.toml`. |
 
@@ -183,7 +187,7 @@ check function for tuned re-runs from a notebook):
 | `nonpositive_price` | error | O/H/L/C/AC <= 0 in `prices`; O/H/L/C <= 0 in `market_data` except bonds (yields, negative is fine). |
 | `ohlc_inconsistent` | error | H < L, or O or C outside [L, H]; both tables, all asset classes. |
 | `negative_volume` | error | Volume < 0 (guard, currently clean). |
-| `bond_yield_bound` | warn | Bond abs(C) > 50: likely a price-quoted series misfiled as a yield. |
+| `bond_yield_bound` | warn | Yield-quoted bond abs(C) > 50: likely a price-quoted series misfiled as a yield. Stooq's `P`-suffixed bond-price series are excluded, since they sit near par by definition. |
 | `extreme_return` | warn | Close more than doubles or halves overnight with no same-day split; tagged `(spike-and-revert)` when the next close jumps back. |
 | `stale_run` | warn | 20+ consecutive identical closes; one finding per run, dated at its end. |
 | `date_gap` | warn | More than 30 days between consecutive rows of a ticker. |
@@ -204,3 +208,114 @@ identity is additive) and tolerate `greatest(1% of the total, 100k)` to skip rou
 Review findings in `notebooks/3_data_quality.ipynb`: a per-check summary, then per check the
 worst tickers and sample rows. Confirmed data bug → quirks-log entry → `cleaning.toml` →
 `apply` → re-run the checks.
+
+---
+
+## Apps: the Dash UI
+
+```bash
+python -m investalyze.apps          # then open http://127.0.0.1:8050
+```
+
+One server, four pages, a shared shell with a light/dark toggle in the sidebar. Every page
+reads through a short-lived read-only connection.
+
+DuckDB allows a single writer, so a running job locks the DB. Pages that hit it show a
+"database busy" notice instead of a traceback, and notebook kernels holding the DB will block
+jobs started from the UI. Close them first.
+
+| Page | Path | For |
+|------|------|-----|
+| Control Panel | `/` | Run ingest, housekeeping, quality and cleaning; watch the job log. |
+| Screener | `/screener` | Filter the universe down to a saved list of tickers. |
+| Data Quality | `/quality` | Triage anomalies into the quality log or a staged cleaning fix. |
+| Stock | `/ticker` | One ticker in depth: performance, fundamentals, statements, peers, risk. |
+
+---
+
+### Control Panel
+
+The CLI commands documented above, as buttons, with live output. Three status cards across the
+top (Freshness, Row counts, Anomalies) refresh on a 1 second poll.
+
+Command cards, each labelled with what it writes:
+
+| Card | Runs | Writes |
+|------|------|--------|
+| Ingest | Provider chips, none checked = all | Price + fundamentals tables |
+| Housekeeping | Task chips (blacklist rechecks, derived-table rebuilds) | Derived tables |
+| New listings | NASDAQ/NYSE listings scan | `ticker.csv` (new tickers added automatically) |
+| Blacklist ticker | Deletes a ticker's data and blocks it from future scans | Every table, plus the blacklist |
+| Quality checks | Check chips, grouped error / warn | `anomalies` only |
+| Cleaning | Preview, then apply `cleaning.toml` | The rows each fix targets |
+
+One job runs at a time. The console streams its log, offers Cancel, and keeps a History
+accordion of finished runs. Below the cards sit two review grids: listings candidates (new,
+reactivated-safe, reactivated-collision, the last needing a manual rename) and blacklisted
+tickers, searchable, with an unblacklist action.
+
+---
+
+### Screener
+
+Narrows the pool to a ticker list you save and reuse. Two grids: Candidates on the left with a
+`matched/total` count, Selected on the right. Checking a row moves it across; unchecking sends
+it back.
+
+Filtering happens in two layers.
+
+1. **Metadata filter bar**: search, sector, industry, minimum dollar volume, minimum years of
+   history, maximum anomaly count, listing state, market-cap buckets.
+2. **Factor value filters** (the accordion): a min and a max per factor, in the factor's own
+   units. Hover a factor name for what it measures and the expression it is computed from.
+   Spinner steps and displayed precision are sized per factor, so `interest_coverage` steps by
+   1 while `margin_trend` steps by 0.001. "Clear bounds" blanks all 48 inputs.
+
+Ranks are percentiles over the metadata-filtered candidates, so a percentile always means
+"among my current candidates". They drive two things: the Rank display mode, and the composite
+score, an equal-weight mean of whichever factors you pick.
+
+Other controls: Raw / Rank display toggle, Save and Load for named universes, Blacklist for the
+current selection, and Refresh to rebuild the cached pool. Clicking a row opens a detail panel
+below; clicking a Ticker cell opens that ticker's Stock page in a new tab.
+
+**Saved universes** are plain `data/universes/<name>.csv` files, and they are the handoff to the
+rest of the repo:
+
+```bash
+python -m investalyze.ingest blacklist-ticker --universe <name> --reason '...'
+```
+
+The Stock page can use one as its peer group, and `experiments/dataset.py:load_universe` reads
+them into notebooks.
+
+---
+
+### Data Quality
+
+Triage for the `anomalies` table. Open findings on the left (filter by check, table, severity,
+ticker), evidence and two forms on the right. Both forms act on the checked rows, falling back
+to the clicked row when none are checked.
+
+**Log finding(s)** writes to `quality_log.toml` with a tag: `real-problem`, `false-alarm`,
+`investigate`, `known` or `fix-staged`. Logged findings drop off the open list.
+
+**Stage cleaning fix** queues an entry in `cleaning.toml` and logs the rows as `fix-staged`.
+Actions: delete rows, delete date range, delete entire ticker history, correct a value, clear a
+value, rebuild adjusted close. Staging only queues the fix. Run it from Control Panel → Cleaning.
+
+---
+
+### Stock
+
+One ticker end to end, reachable directly at `/ticker?symbol=AAPL`. Pick a ticker by symbol or
+company name; the arrows step through the current list.
+
+Sections, linked from the sticky bar: performance (price history, trailing returns, optional
+multi-select benchmarks), fundamentals history (TTM flows from restated quarters, balance items
+point-in-time), statements (income, balance, cashflow; annual or quarterly; click a line item to
+chart it), factor profile and peer comparison, and risk.
+
+The peer basis is selectable: industry, sector, or any saved universe. It sets the group behind
+the percentiles and the violins, so peer percentiles mean whatever you chose. A ticker can also
+be blacklisted from here.
