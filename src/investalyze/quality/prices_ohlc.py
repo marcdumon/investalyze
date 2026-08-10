@@ -4,6 +4,7 @@ import duckdb
 import pandas as pd
 
 MAX_ABS_YIELD = 50.0  # bond rows are yields in percent; levels beyond this look price-quoted
+BOND_PRICE_SUFFIX = 'P'
 
 # NULL-safe Details: price fields can be NULL, and a plain || would null the whole string.
 # Rounded to 4 decimals: vendor prices come in as float32 cast to double, which otherwise prints
@@ -51,9 +52,15 @@ def negative_volume(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 def bond_yield_bound(con: duckdb.DuckDBPyConnection, *, max_abs_yield: float = MAX_ABS_YIELD) -> pd.DataFrame:
-    """Bond rows whose |close| exceeds `max_abs_yield`: likely price-quoted series filed as yields."""
+    """Bond rows quoted as yields whose |close| exceeds `max_abs_yield`: likely a price series filed as yields.
+
+    Stooq publishes each bond twice, as a yield (ticker ending `Y`) and as a bond price (ending
+    `P`). Price series sit near par, so all of them clear any plausible yield bound and reported
+    every row they have. Excluding that suffix, rather than accepting only `Y`, keeps a bond whose
+    naming does not match the convention under scrutiny.
+    """
     return con.execute("""
         SELECT 'market_data' AS SrcTable, Ticker, Date, NULL::VARCHAR AS Key, 'C=' || C AS Details
         FROM market_data
-        WHERE AssetClass = 'bonds' AND abs(C) > ?
-    """, [max_abs_yield]).df()
+        WHERE AssetClass = 'bonds' AND right(Ticker, 1) <> ? AND abs(C) > ?
+    """, [BOND_PRICE_SUFFIX, max_abs_yield]).df()

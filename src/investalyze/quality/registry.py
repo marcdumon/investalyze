@@ -47,7 +47,7 @@ CHECK_DESCRIPTIONS: dict[str, str] = {
     'nonpositive_price': 'O/H/L/C/AC <= 0 in prices; O/H/L/C <= 0 in market_data (non-bonds)',
     'ohlc_inconsistent': 'H < L, or O/C outside [L, H]',
     'negative_volume': 'Volume < 0',
-    'bond_yield_bound': 'bond |C| > 50',
+    'bond_yield_bound': 'yield-quoted bond |C| > 50',
     'extreme_return': 'close doubles/halves overnight with no same-day split',
     'stale_run': '20+ consecutive identical closes',
     'date_gap': 'more than 30 days between consecutive rows',

@@ -26,6 +26,8 @@ def con() -> duckdb.DuckDBPyConnection:
         ('EURUSD', '2026-01-02', -1.1, -1.0, -1.2, -1.05, 'currencies'),  # negative but OHLC-consistent
         ('10YCHY', '2026-01-02', -0.5, -0.4, -0.6, -0.5, 'bonds'),        # negative yield: genuine
         ('10YBAD', '2026-01-02', 0.7, 0.5, 0.9, 0.7, 'bonds'),            # High below Low
+        ('20YGRY', '2026-01-02', 60.0, 61.0, 59.0, 60.5, 'bonds'),        # yield-quoted, implausible level
+        ('10YUSP', '2026-01-02', 99.0, 100.0, 98.0, 99.5, 'bonds'),       # price-quoted (P), near par
         ('PRBOND', '2026-01-02', 99.0, 100.0, 98.0, 99.5, 'bonds'),       # yield-implausible level
         ('^SPX', '2026-01-02', 5000.0, 5100.0, 4950.0, 5050.0, 'indices'),
     ]
@@ -69,7 +71,19 @@ def test_negative_volume_flags_only_negative_volume(con):
 
 def test_bond_yield_bound_flags_only_bonds_beyond_bound(con):
     df = prices_ohlc.bond_yield_bound(con)
-    assert sorted(df['Ticker']) == ['PRBOND']
+    assert sorted(df['Ticker']) == ['20YGRY', 'PRBOND']
+
+
+def test_bond_yield_bound_skips_price_quoted_series(con):
+    """A `P`-suffixed bond sits near par by definition, so the yield bound says nothing about it."""
+    df = prices_ohlc.bond_yield_bound(con)
+    assert '10YUSP' not in set(df['Ticker'])
+
+
+def test_bond_yield_bound_still_checks_unconventional_names(con):
+    # PRBOND ends in neither Y nor P, so the suffix carries no claim and the bound still applies
+    df = prices_ohlc.bond_yield_bound(con)
+    assert 'PRBOND' in set(df['Ticker'])
 
 
 def test_bond_yield_bound_threshold_is_tunable(con):
