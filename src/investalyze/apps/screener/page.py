@@ -19,10 +19,10 @@ from investalyze.analysis import factors
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.apps.control_panel.page import build_blacklist_argv
 from investalyze.apps.screener import metrics
-from investalyze.apps.screener.data import clear_cache, get_pool
+from investalyze.apps.screener.data import clear_cache, get_pool, get_scales
 from investalyze.apps.screener.detail import safe_detail_children
-from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, composite_score, compute_ranks,
-                                             spin_step)
+from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, collect_bounds, composite_score,
+                                             compute_ranks)
 from investalyze.apps.universes import list_universes, load_universe, save_universe
 
 IDENTITY_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'mcap_bn', 'mcap_bucket']
@@ -143,6 +143,7 @@ def layout() -> html.Div:
     """Build the screener page. The pool is loaded (and cached) on first visit."""
     try:
         df = get_pool()
+        scales = get_scales()
     except duckdb.Error:
         return html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '14px', 'padding': '24px'})
 
@@ -169,13 +170,16 @@ def layout() -> html.Div:
         dmc.AccordionItem([
             dmc.AccordionControl('Factor value filters & composite score', py=2),
             dmc.AccordionPanel([
-                dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
-                                size='xs', clearable=True, mb=6, style={'maxWidth': '520px'}),
+                dmc.Group([
+                    dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
+                                    size='xs', clearable=True, style={'width': '520px'}),
+                    dmc.Button('Clear bounds', id='btn-clear-bounds', size='compact-xs', variant='default'),
+                ], gap=8, align='flex-end', mb=6),
                 dmc.Text(f'Hover a factor name for its definition and formula. {factors.TTM_NOTE}',
                          size='xs', c='dimmed', mb=10),
                 dmc.Group([
                     dmc.Stack([dmc.Text(family, size='xs', fw=700)]
-                              + [factor_row(f, spin_step(df[f])) for f in members], gap=4)
+                              + [factor_row(f, scales[f].step) for f in members], gap=4)
                     for family, members in factors.FAMILIES.items()
                 ], gap=24, align='flex-start', style={'flexWrap': 'wrap'}),
             ]),
@@ -294,8 +298,12 @@ def industry_options(sectors: list[str] | None) -> list[str]:
     Input('selection', 'data'),
 )
 def update_grid(search, sectors, industries, buckets, min_dvol, min_years, active, max_anom,
-                fmin_values, fmax_values, score_factors, mode, refresh_clicks, selection):
-    """Rebuild both grids for the current filters, score selection, display mode and curation state."""
+                _fmin_values, _fmax_values, score_factors, mode, refresh_clicks, selection):
+    """Rebuild both grids for the current filters, score selection, display mode and curation state.
+
+    The factor bounds are read back off ctx.inputs_list by id, so the two pattern-matching arguments
+    serve only to trigger this callback.
+    """
     # dmc.NumberInput reports '' when cleared; the filters expect None for "no bound"
     min_dvol = min_dvol if min_dvol not in (None, '') else None
     min_years = min_years if min_years not in (None, '') else None
@@ -304,6 +312,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
         clear_cache()
     try:
         pool = get_pool()
+        scales = get_scales()
     except duckdb.Error:
         notice = html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '8px 12px'})
         return [], [], [], '', '', notice
@@ -312,15 +321,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
                                         min_dvol, min_years, active, max_anom)
     ranked = compute_ranks(candidates)
-
-    # pattern-matching inputs arrive in layout order; recover each one's factor from its id
-    filters: dict[str, tuple[float | None, float | None]] = {}
-    for spec, value in zip(ctx.inputs_list[8], fmin_values):
-        filters[spec['id']['factor']] = (value if value not in (None, '') else None, None)
-    for spec, value in zip(ctx.inputs_list[9], fmax_values):
-        lo, _ = filters.get(spec['id']['factor'], (None, None))
-        filters[spec['id']['factor']] = (lo, value if value not in (None, '') else None)
-    passed = apply_filters(ranked, filters)
+    passed = apply_filters(ranked, collect_bounds(ctx.inputs_list))
 
     chosen = score_factors or []
     if chosen:
@@ -336,7 +337,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
             display[factor] = display[f'rank_{factor}'].round(0)
     else:
         for factor in factors.FACTORS:
-            display[factor] = display[factor].round(4)
+            display[factor] = display[factor].round(scales[factor].decimals)
 
     fields = IDENTITY_FIELDS + (['score'] if chosen else []) + factors.FACTORS
     rows = display[fields].copy()
@@ -350,6 +351,22 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     sel_rows.insert(0, 'sel', True)
     count = f'{len(passed):,}/{len(undecided):,}'
     return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, f'selected: {len(selection)}', None
+
+
+@callback(
+    Output({'type': 'fmin', 'factor': ALL}, 'value'), Output({'type': 'fmax', 'factor': ALL}, 'value'),
+    Input('btn-clear-bounds', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def clear_bounds(_n_clicks):
+    """Blank every factor bound at once, since the panel holds two inputs for each of 24 factors.
+
+    The inputs are blanked with '' rather than None: None leaves dmc.NumberInput showing its old
+    text even though the callback has already dropped the bound, so the panel would contradict the
+    grid. collect_bounds reads '' as no bound.
+    """
+    blank = [''] * len(factors.FACTORS)
+    return blank, blank
 
 
 @callback(

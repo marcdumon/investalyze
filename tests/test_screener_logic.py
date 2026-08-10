@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, composite_score, compute_ranks,
-                                             spin_step)
+from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filters, collect_bounds, composite_score,
+                                             compute_ranks, factor_scale)
 
 FRAME = pd.DataFrame({
     'Ticker': ['A', 'B', 'C'],
@@ -47,16 +47,48 @@ def test_filters_accept_negative_bounds():
     assert list(apply_filters(ranked, {'earnings_yield': (None, -1.0)})['Ticker']) == ['A']
 
 
-def test_spin_step_scales_to_the_factor_spread():
-    assert spin_step(pd.Series([0.0, 0.1326])) == pytest.approx(0.001)
-    assert spin_step(pd.Series([0.0, 0.5566])) == pytest.approx(0.01)
-    assert spin_step(pd.Series([0.0, 41.2041])) == pytest.approx(1.0)
+def test_factor_scale_steps_and_precision_follow_the_spread():
+    assert factor_scale(pd.Series([0.0, 0.1326])) == (pytest.approx(0.001), 4)
+    assert factor_scale(pd.Series([0.0, 0.5566])) == (pytest.approx(0.01), 3)
+    assert factor_scale(pd.Series([0.0, 41.2041])) == (pytest.approx(1.0), 1)
 
 
-def test_spin_step_falls_back_when_spread_is_unusable():
-    assert spin_step(pd.Series([2.0, 2.0, 2.0])) == pytest.approx(0.01)
-    assert spin_step(pd.Series([np.nan, np.nan])) == pytest.approx(0.01)
-    assert spin_step(pd.Series([], dtype=float)) == pytest.approx(0.01)
+def test_factor_scale_precision_outlives_one_step():
+    # a value smaller than the step still shows its magnitude rather than rounding to zero
+    scale = factor_scale(pd.Series([0.0, 41.2041]))
+    assert round(1.279542, scale.decimals) == pytest.approx(1.3)
+
+
+def test_factor_scale_falls_back_when_spread_is_unusable():
+    assert factor_scale(pd.Series([2.0, 2.0, 2.0])) == (pytest.approx(0.01), 2)
+    assert factor_scale(pd.Series([np.nan, np.nan])) == (pytest.approx(0.01), 2)
+    assert factor_scale(pd.Series([], dtype=float)) == (pytest.approx(0.01), 2)
+
+
+# ---------- bound collection from pattern-matching inputs ----------
+
+def _spec(kind: str, factor: str, value):
+    """One entry as Dash puts it in ctx.inputs_list for a pattern-matching input."""
+    return {'id': {'type': kind, 'factor': factor}, 'property': 'value', 'value': value}
+
+
+def test_collect_bounds_pairs_min_and_max_by_factor():
+    inputs = [
+        'a-scalar-input',
+        [_spec('fmin', 'roe', 0.1), _spec('fmin', 'vol_252', None)],
+        [_spec('fmax', 'roe', None), _spec('fmax', 'vol_252', 0.4)],
+    ]
+    assert collect_bounds(inputs) == {'roe': (0.1, None), 'vol_252': (None, 0.4)}
+
+
+def test_collect_bounds_ignores_input_order_and_blanks():
+    # the fmax group arrives first and a cleared NumberInput reports '' rather than None
+    inputs = [[_spec('fmax', 'roe', 2.0)], [_spec('fmin', 'roe', '')], ['unrelated-group']]
+    assert collect_bounds(inputs) == {'roe': (None, 2.0)}
+
+
+def test_collect_bounds_is_empty_without_factor_inputs():
+    assert collect_bounds(['search-value', None, [{'id': {'type': 'other'}, 'value': 3}]]) == {}
 
 
 def test_composite_score_skips_nan():

@@ -4,6 +4,7 @@ Kept free of Dash imports so it is testable standalone; the page module wires it
 """
 
 import math
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -43,17 +44,51 @@ def apply_filters(df: pd.DataFrame, filters: dict[str, tuple[float | None, float
     return df[mask]
 
 
-def spin_step(values: pd.Series) -> float:
-    """Step for a factor's min/max spinner: the power of ten nearest a twentieth of its IQR.
+class FactorScale(NamedTuple):
+    """How one factor is presented: the increment of its bound spinners and the decimals it displays."""
 
-    Factors differ in scale by orders of magnitude, so a shared constant is either uselessly fine
-    for one end of the list or uselessly coarse for the other. Falls back to 0.01 when the spread
-    is unusable (all-NaN, constant, or a single value).
+    step: float
+    decimals: int
+
+
+def factor_scale(values: pd.Series) -> FactorScale:
+    """Spinner step and display precision for a factor, both sized to a twentieth of its IQR.
+
+    Factors differ in scale by orders of magnitude, so shared constants are either uselessly fine at
+    one end of the list or uselessly coarse at the other. The step is the power of ten at or below
+    that twentieth; the precision carries one digit further, so two adjacent steps still read apart
+    and a small non-zero value such as a 0.002 momentum keeps its magnitude. Falls back to a step of
+    0.01 shown at 2 decimals when the spread is unusable (all-NaN, constant, or a single value).
     """
     spread = values.quantile(0.75) - values.quantile(0.25)
     if pd.isna(spread) or spread <= 0:
-        return 0.01
-    return float(10 ** math.floor(math.log10(spread / 20)))
+        return FactorScale(0.01, 2)
+    exponent = math.floor(math.log10(spread / 20))
+    return FactorScale(float(10 ** exponent), min(6, max(0, 1 - exponent)))
+
+
+def collect_bounds(inputs_list: list) -> dict[str, tuple[float | None, float | None]]:
+    """Pair each factor's min and max bound out of a callback's pattern-matching input groups.
+
+    Reads the factor off each input's own id dict rather than trusting argument order, so inserting
+    an Input above the factor filters leaves their binding intact. A blank input reads as no bound.
+
+    Args:
+        inputs_list: Dash's `ctx.inputs_list`, whose pattern-matching entries are lists of
+            `{'id': {'type': 'fmin'|'fmax', 'factor': ...}, 'value': ...}` specs.
+    """
+    bounds: dict[str, list[float | None]] = {}
+    for group in inputs_list:
+        if not isinstance(group, list):
+            continue
+        for spec in group:
+            identifier = spec.get('id', {}) if isinstance(spec, dict) else {}
+            if identifier.get('type') not in ('fmin', 'fmax'):
+                continue
+            value = spec.get('value')
+            slot = 0 if identifier['type'] == 'fmin' else 1
+            bounds.setdefault(identifier['factor'], [None, None])[slot] = value if value not in (None, '') else None
+    return {factor: (lo, hi) for factor, (lo, hi) in bounds.items()}
 
 
 def composite_score(df: pd.DataFrame, selected: list[str]) -> pd.Series:
