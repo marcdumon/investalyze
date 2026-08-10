@@ -84,60 +84,54 @@ def test_list_tickers_rejects_unknown_class():
         segments.list_tickers(con, classes=['stock'])  # typo: should be 'stocks'
 
 
-@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_list_tickers_stocks():
-    con = storage.connect(Path('data'), read_only=True)
+@pytest.fixture
+def live_db():
+    """Read-only connection to the real DB, skipped when the file is absent or a writer holds it.
+
+    DuckDB refuses even a read-only connection while an ingest job or the dev server holds the
+    write lock, which would otherwise turn these tests red for a reason outside the code they cover.
+    """
+    if not _DB.exists():
+        pytest.skip('requires the live investalyze.duckdb')
     try:
-        tickers = segments.list_tickers(con, classes=['stocks'])
+        con = storage.connect(Path('data'), read_only=True)
+    except duckdb.IOException as exc:
+        pytest.skip(f'investalyze.duckdb is locked by another process: {exc}')
+    try:
+        yield con
     finally:
         con.close()
+
+
+def test_list_tickers_stocks(live_db):
+    tickers = segments.list_tickers(live_db, classes=['stocks'])
     assert 'AAPL' in tickers
     assert tickers == sorted(tickers)
 
 
-@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_list_tickers_mixed_classes():
-    con = storage.connect(Path('data'), read_only=True)
-    try:
-        tickers = segments.list_tickers(con, classes=['stocks', 'indices'])
-    finally:
-        con.close()
+def test_list_tickers_mixed_classes(live_db):
+    tickers = segments.list_tickers(live_db, classes=['stocks', 'indices'])
     assert 'AAPL' in tickers
     assert '^DJI' in tickers
 
 
-@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_get_series_stocks_uses_ac():
-    con = storage.connect(Path('data'), read_only=True)
-    try:
-        df = segments.get_series(con, ['AAPL'])
-    finally:
-        con.close()
+def test_get_series_stocks_uses_ac(live_db):
+    df = segments.get_series(live_db, ['AAPL'])
     assert not df.empty
     assert set(df['AssetClass'].unique()) == {'stocks'}
     assert df['Price'].notna().all()
     assert df['Ticker'].is_monotonic_increasing
 
 
-@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_get_series_market_and_mixed():
-    con = storage.connect(Path('data'), read_only=True)
-    try:
-        idx = segments.get_series(con, ['^DJI'])
-        mixed = segments.get_series(con, ['AAPL', '^DJI'])
-    finally:
-        con.close()
+def test_get_series_market_and_mixed(live_db):
+    idx = segments.get_series(live_db, ['^DJI'])
+    mixed = segments.get_series(live_db, ['AAPL', '^DJI'])
     assert set(idx['AssetClass'].unique()) == {'indices'}
     assert set(mixed['AssetClass'].unique()) == {'stocks', 'indices'}
 
 
-@pytest.mark.skipif(not _DB.exists(), reason='requires the live investalyze.duckdb')
-def test_build_segments_returns_raw_values_from_db():
-    con = storage.connect(Path('data'), read_only=True)
-    try:
-        series = segments.get_series(con, ['AAPL'])
-    finally:
-        con.close()
+def test_build_segments_returns_raw_values_from_db(live_db):
+    series = segments.get_series(live_db, ['AAPL'])
     W, meta = segments.build_segments(series, window_length=25, stride=20)
     assert W.shape[0] == 25  # window_length rows
     assert not meta.empty
