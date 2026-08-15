@@ -18,6 +18,8 @@ import numbers
 from pathlib import Path
 
 import duckdb
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from IPython.display import HTML, Markdown, display
 
@@ -60,6 +62,34 @@ def _fmt_cell(x: object) -> object:
     return fmt_number(x)
 
 
+def _fmt_cell_fixed(x: object, decimals: int) -> object:
+    """Cell formatter pinning every number to `decimals` places, so a column lines up on the point."""
+    if x is pd.NaT:
+        return ''
+    if isinstance(x, pd.Timestamp):
+        return '' if pd.isna(x) else x.strftime('%Y-%m-%d')
+    if pd.isna(x):  # type: ignore[arg-type]
+        return ''
+    if isinstance(x, bool) or not isinstance(x, numbers.Number):
+        return x
+    return f'{x:,.{decimals}f}'
+
+
+def _fixed_formats(df: pd.DataFrame, num_cols: list, decimals: int) -> dict:
+    """Per-column formatters pinning each numeric column to a single width.
+
+    Integer columns get no decimal part, so a count sits readably beside a measured quantity in the
+    same table. The test is the column's dtype rather than whether its values happen to be whole: a
+    measured column that comes out exactly 1.0 on every row is still a measurement, and rendering it
+    as `1` next to `1.7292` in the neighbouring column reads as an inconsistency.
+    """
+    formats = {}
+    for column in num_cols:
+        integral = bool(pd.api.types.is_integer_dtype(df[column]))
+        formats[column] = lambda x, places=(0 if integral else decimals): _fmt_cell_fixed(x, places)
+    return formats
+
+
 def _is_numeric_col(col: pd.Series) -> bool:
     """True if a column holds numbers, including object columns of mixed Int/None (financials)."""
     if pd.api.types.is_numeric_dtype(col):
@@ -71,20 +101,34 @@ def _is_numeric_col(col: pd.Series) -> bool:
 MONO_FONT = '"JetBrainsMono Nerd Font Mono", monospace'
 
 
-def show_df(df: pd.DataFrame) -> None:
+def show_df(df: pd.DataFrame, *, decimals: int | None = None) -> None:
     """Display a DataFrame: dates as YYYY-MM-DD, numbers formatted + right-aligned, text left-aligned.
 
     Numeric columns (incl. object columns of mixed Int/None) are right-aligned; everything else
     (text, dates, the object-typed transposed identity cards) is left-aligned. Rendered monospace
     (Styler tables carry no `dataframe` class, so a global `.dataframe` font rule can't reach them).
+
+    The row index is formatted too, so a DatetimeIndex prints as YYYY-MM-DD rather than carrying a
+    00:00:00 time part that no daily series has.
+
+    `decimals` pins every value in a numeric column to the same width, so the column lines up on the
+    decimal point. Left at None, numbers go through `fmt_number`, which trims trailing zeros and so
+    leaves a column ragged when its values differ in precision.
     """
     num_cols = [c for c in df.columns if _is_numeric_col(df[c])]
+    if decimals is not None and pd.api.types.is_float_dtype(df.index):
+        index_formatter = lambda x: _fmt_cell_fixed(x, decimals)
+    else:
+        index_formatter = _fmt_cell
     styler = (
         df.style
         .format(_fmt_cell)  # type: ignore[arg-type]
         .set_properties(**{'white-space': 'nowrap', 'text-align': 'left'})  # type: ignore[arg-type]
         .set_table_styles([{'selector': '', 'props': [('font-family', MONO_FONT)]}, {'selector': 'th', 'props': [('text-align', 'left')]}])
     )
+    styler = styler.format_index(index_formatter, axis=0)
+    if decimals is not None and num_cols:
+        styler = styler.format(_fixed_formats(df, num_cols, decimals))
     if num_cols:
         styler = styler.set_properties(subset=num_cols, **{'text-align': 'right'})  # type: ignore[arg-type]
     display(styler)
@@ -315,3 +359,108 @@ def show_check(con: duckdb.DuckDBPyConnection, check_name: str, limit: int = 20)
         return
     show_df(worst)
     show_df(get_findings(con, check_name, limit))
+
+
+# ======================================================================
+# 8_pca_weights: spectrum, loadings and stability plots
+# ======================================================================
+
+
+def plot_scree(values: np.ndarray, *, threshold: float | None = None, k: int = 40, title: str = 'Eigenvalue spectrum') -> None:
+    """Bar chart of the leading eigenvalues, with the noise threshold drawn across them."""
+    fig, ax = plt.subplots(figsize=(9, 3.5))
+    ax.bar(np.arange(1, k + 1), values[:k], color='#4C72B0')
+    if threshold is not None:
+        ax.axhline(threshold, color='#C44E52', ls='--', lw=1.5, label=f'noise edge {threshold:.2f}')
+        ax.legend()
+    ax.set_title(title)
+    ax.set_xlabel('Component')
+    ax.set_ylabel('Eigenvalue')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_mp_fit(values: np.ndarray, density: pd.Series, *, title: str = 'Marcenko-Pastur fit') -> None:
+    """Empirical eigenvalue histogram with the fitted Marcenko-Pastur density on top.
+
+    The top eigenvalues are left out of the view: they are the signal, and including them squeezes the
+    noise bulk the fit is actually about into a single bar.
+    """
+    fig, ax = plt.subplots(figsize=(9, 3.5))
+    bulk = values[values <= density.index.max() * 1.5]
+    ax.hist(bulk, bins=80, density=True, color='#4C72B0', alpha=0.6, label='observed')
+    ax.plot(density.index, density.to_numpy(), color='#C44E52', lw=2, label='Marcenko-Pastur')
+    ax.set_title(title)
+    ax.set_xlabel('Eigenvalue')
+    ax.set_ylabel('Density')
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_loadings(loadings: pd.Series, *, title: str | None = None) -> None:
+    """Every asset's loading on one component, sorted, so the shape of the component is visible at a glance."""
+    ordered = loadings.sort_values()
+    colors = np.where(ordered.to_numpy() >= 0, '#55A868', '#C44E52')
+    fig, ax = plt.subplots(figsize=(9, 3))
+    ax.bar(np.arange(len(ordered)), ordered.to_numpy(), color=colors, width=1.0)
+    ax.axhline(0, color='black', lw=0.8)
+    ax.set_title(title or f'{loadings.name} loadings, sorted')
+    ax.set_xlabel('Asset (sorted by loading)')
+    ax.set_ylabel('Loading')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_sector_means(profile: pd.DataFrame, *, title: str = 'Mean loading by sector') -> None:
+    """Mean loading per sector for one component, ordered so the long and short ends are obvious."""
+    ordered = profile.sort_values('mean')
+    colors = np.where(ordered['mean'].to_numpy() >= 0, '#55A868', '#C44E52')
+    fig, ax = plt.subplots(figsize=(9, 3.5))
+    ax.barh(ordered.index.astype(str), ordered['mean'].to_numpy(), color=colors)
+    ax.axvline(0, color='black', lw=0.8)
+    ax.set_title(title)
+    ax.set_xlabel('Mean loading')
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_corr_heatmap(corr: np.ndarray, *, order: np.ndarray, boundaries: list[int], labels: list[str],
+                      title: str, vmax: float = 0.6) -> None:
+    """Correlation heatmap with assets grouped by sector, so block structure shows up as squares."""
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    image = ax.imshow(corr[np.ix_(order, order)], cmap='RdBu_r', vmin=-vmax, vmax=vmax)
+    for edge in boundaries[:-1]:
+        ax.axhline(edge - 0.5, color='black', lw=0.5)
+        ax.axvline(edge - 0.5, color='black', lw=0.5)
+    centres = [(boundaries[i] + (boundaries[i - 1] if i else 0)) / 2 for i in range(len(boundaries))]
+    ax.set_xticks(centres, labels, rotation=90, fontsize=7)
+    ax.set_yticks(centres, labels, fontsize=7)
+    ax.set_title(title)
+    fig.colorbar(image, ax=ax, shrink=0.8)
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_stability(similarity: pd.Series, *, floor: float = 0.7, title: str = 'Split-half eigenvector agreement') -> None:
+    """Per-component absolute cosine between two fits, against the bar a component must clear to be real."""
+    colors = np.where(similarity.to_numpy() >= floor, '#55A868', '#C44E52')
+    fig, ax = plt.subplots(figsize=(9, 3))
+    ax.bar(np.arange(1, len(similarity) + 1), similarity.to_numpy(), color=colors)
+    ax.axhline(floor, color='black', ls='--', lw=1.2, label=f'|cos| = {floor}')
+    ax.set_ylim(0, 1)
+    ax.set_title(title)
+    ax.set_xlabel('Component')
+    ax.set_ylabel('|cos| across halves')
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+def sector_order(sectors: pd.Series, names: pd.Index) -> tuple[np.ndarray, list[int], list[str]]:
+    """Positions that group `names` by sector, plus the block boundaries and labels a heatmap needs."""
+    frame = pd.DataFrame({'name': names, 'sector': sectors.reindex(names).to_numpy()})
+    frame['sector'] = frame['sector'].fillna('unknown')
+    frame = frame.sort_values(['sector', 'name'])
+    counts = frame.groupby('sector', observed=True, sort=True).size()
+    return frame.index.to_numpy(), list(counts.cumsum()), list(counts.index)
