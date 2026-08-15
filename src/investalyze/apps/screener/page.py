@@ -106,6 +106,10 @@ def apply_action(
     """Return the new (selection, status message) for one user action.
 
     Every ticker is either undecided (the candidates table) or selected (the condensed table).
+
+    Picking a name in the universe dropdown loads it; there is no separate confirm step, because a
+    dropdown labelled with saved universes reads as the control that loads one. Clearing the dropdown
+    leaves the selection alone, so a stray clear cannot discard curation work.
     """
     sel = set(selection)
     if action == 'grid':
@@ -129,9 +133,9 @@ def apply_action(
     elif action == 'btn-deselect-all':
         sel = set()
         message = 'selection cleared'
-    elif action == 'btn-load':
+    elif action == 'universe-dd':
         if not universe_name:
-            return sorted(sel), 'pick a universe to load first'
+            return sorted(sel), f'{len(sel)} selected'
         sel = set(load_universe(universe_name))
         message = f"loaded '{universe_name}' ({len(sel)} tickers)"
     else:
@@ -197,10 +201,8 @@ def layout() -> html.Div:
         # of the 862px row on their own, which forced the whole header onto a second line.
         dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:device-floppy', width=16), id='btn-save',
                                    size='input-xs', variant='default'), label='Save universe'),
-        dmc.Select(id='universe-dd', data=list_universes(), placeholder='Saved universes', clearable=True,
-                   size='xs', style={'width': '150px'}),
-        dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:folder-open', width=16), id='btn-load',
-                                   size='input-xs', variant='default'), label='Load universe'),
+        dmc.Select(id='universe-dd', data=list_universes(), placeholder='Load saved universe', clearable=True,
+                   size='xs', style={'width': '170px'}),
         dmc.Button('Blacklist', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
                    leftSection=DashIconify(icon='tabler:trash', width=14)),
         dmc.Text(id='scr-blacklist-status', size='xs'),
@@ -350,7 +352,12 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     sel_rows = pool.loc[pool['Ticker'].isin(selection), SEL_FIELDS].copy()
     sel_rows.insert(0, 'sel', True)
     count = f'{len(passed):,}/{len(undecided):,}'
-    return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, f'selected: {len(selection)}', None
+    # A saved universe can name tickers the pool no longer holds, which is what a blacklist
+    # universe is made of. Without this the header counts them and the grid cannot show them, so the
+    # two disagree with no explanation.
+    absent = len(selection) - len(sel_rows)
+    sel_label = f'selected: {len(selection)}' + (f' ({absent} no longer in the pool)' if absent else '')
+    return rows.to_dict('records'), columns, sel_rows.to_dict('records'), count, sel_label, None
 
 
 @callback(
@@ -372,11 +379,11 @@ def clear_bounds(_n_clicks):
 @callback(
     Output('selection', 'data'), Output('sel-status', 'children'),
     Input('grid', 'cellValueChanged'), Input('sel-grid', 'cellValueChanged'),
-    Input('btn-select-all', 'n_clicks'), Input('btn-deselect-all', 'n_clicks'), Input('btn-load', 'n_clicks'),
-    State('selection', 'data'), State('grid', 'rowData'), State('universe-dd', 'value'),
+    Input('btn-select-all', 'n_clicks'), Input('btn-deselect-all', 'n_clicks'), Input('universe-dd', 'value'),
+    State('selection', 'data'), State('grid', 'rowData'),
     prevent_initial_call=True,
 )
-def update_state(grid_events, sel_events, select_all, deselect_all, load, selection, row_data, universe):
+def update_state(grid_events, sel_events, select_all, deselect_all, universe, selection, row_data):
     """Route one user action (checkbox edit, button click) through apply_action."""
     action = str(ctx.triggered_id)
     events = grid_events if action == 'grid' else sel_events if action == 'sel-grid' else None
@@ -391,13 +398,33 @@ def update_state(grid_events, sel_events, select_all, deselect_all, load, select
     prevent_initial_call=True,
 )
 def save_current(n_clicks, selection, name):
-    """Save the selected tickers as a named universe."""
+    """Save the selected tickers as a named universe.
+
+    The message distinguishes a new file from an overwrite, since the name box is pre-filled after a
+    load and the common case is therefore writing back to the universe being edited.
+    """
     if not name or not name.strip():
         return list_universes(), 'enter a universe name first'
     if not selection:
         return list_universes(), 'selection is empty, nothing saved'
+    before = set(list_universes())
     clean = save_universe(name, selection)
-    return list_universes(), f"saved '{clean}' ({len(selection)} tickers)"
+    verb = 'updated' if clean in before else 'saved'
+    return list_universes(), f"{verb} '{clean}' ({len(selection)} tickers)"
+
+
+@callback(
+    Output('universe-name', 'value'),
+    Input('universe-dd', 'value'),
+    prevent_initial_call=True,
+)
+def name_the_loaded_universe(universe):
+    """Put the loaded universe's name into the save box, so edits can be written back to it.
+
+    Without this the box stays empty after a load, and saving a universe you have just added tickers
+    to means retyping its name exactly; a typo silently creates a second universe instead.
+    """
+    return universe or dash.no_update
 
 
 @callback(
