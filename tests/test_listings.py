@@ -254,6 +254,19 @@ def test_blacklist_tickers_deletes_rows_drops_from_ticker_csv_and_records_it(sca
     manual = pd.read_csv(data_root / listings.MANUAL_BLACKLIST_FILE)
     assert manual.iloc[0]['ticker'] == 'JUNK'
     assert manual.iloc[0]['reason'] == 'not a real business'
+    assert manual.iloc[0]['market'] == 'nasdaq'
+    assert manual.iloc[0]['company_name'] == 'Junk Corp'
+
+
+def test_blacklist_tickers_records_blanks_when_market_and_name_are_unknown(scan_con, data_root):
+    scan_con.execute("INSERT INTO prices VALUES ('GHOST', '2020-01-01', 1.0)")
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    pd.DataFrame({'ticker': ['AAPL'], 'market': ['nasdaq']}).to_csv(ticker_csv, index=False)
+
+    listings.blacklist_tickers(scan_con, data_root, ['GHOST'], 'never traded')
+
+    manual = pd.read_csv(data_root / listings.MANUAL_BLACKLIST_FILE, keep_default_na=False)
+    assert manual.iloc[0]['market'] == '' and manual.iloc[0]['company_name'] == ''
 
 
 def test_blacklist_tickers_applies_one_reason_to_every_ticker(scan_con, data_root):

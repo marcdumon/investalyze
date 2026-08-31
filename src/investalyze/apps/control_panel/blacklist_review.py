@@ -18,20 +18,33 @@ from pandas.errors import EmptyDataError
 BLACKLIST_PATH = Path('data/manual_blacklist.csv')
 
 BLACKLIST_COLUMNS = [
-    {'field': 'ticker', 'headerName': 'Ticker', 'width': 140},
+    {'field': 'ticker', 'headerName': 'Ticker', 'width': 110},
+    {'field': 'market', 'headerName': 'Market', 'width': 100},
+    {'field': 'company_name', 'headerName': 'Company', 'flex': 1},
     {'field': 'reason', 'headerName': 'Reason', 'flex': 1},
     {'field': 'blacklisted_on', 'headerName': 'Blacklisted On', 'width': 140},
 ]
 
+_OPTIONAL_COLUMNS = ('market', 'company_name')
+
 
 def read_blacklist(path: Path = BLACKLIST_PATH) -> list[dict]:
-    """Every manually blacklisted ticker with its reason and date, or an empty list if none yet."""
+    """Every manually blacklisted ticker with its market, company name, reason and date, or an
+    empty list if none yet.
+
+    Market and company name are blank wherever they were unknown at blacklist time, and the whole
+    column is missing from a file written before they were recorded at all - both read back as ''.
+    """
     if not path.exists():
         return []
     try:
-        return pd.read_csv(path, keep_default_na=False).to_dict('records')
+        frame = pd.read_csv(path, keep_default_na=False)
     except EmptyDataError:
         return []
+    for column in _OPTIONAL_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = ''
+    return frame.to_dict('records')
 
 
 def filter_blacklist(rows: list[dict], search: str | None) -> list[dict]:

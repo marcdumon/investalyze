@@ -13,9 +13,18 @@ def test_read_blacklist_returns_empty_list_when_none_blacklisted(tmp_path: Path)
 
 def test_read_blacklist_reads_the_saved_entries(tmp_path: Path):
     path = tmp_path / 'manual_blacklist.csv'
+    pd.DataFrame([{'ticker': 'SPCX', 'market': 'nasdaq', 'company_name': 'SPAC Corp',
+                   'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}]).to_csv(path, index=False)
+    rows = blacklist_review.read_blacklist(path)
+    assert rows[0] == {'ticker': 'SPCX', 'market': 'nasdaq', 'company_name': 'SPAC Corp',
+                       'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}
+
+
+def test_read_blacklist_fills_in_columns_a_file_predating_them_lacks(tmp_path: Path):
+    path = tmp_path / 'manual_blacklist.csv'
     pd.DataFrame([{'ticker': 'SPCX', 'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}]).to_csv(path, index=False)
     rows = blacklist_review.read_blacklist(path)
-    assert rows[0] == {'ticker': 'SPCX', 'reason': 'Unknown sector', 'blacklisted_on': '2026-08-01'}
+    assert rows[0]['market'] == '' and rows[0]['company_name'] == ''
 
 
 def test_filter_blacklist_with_no_search_returns_every_row():

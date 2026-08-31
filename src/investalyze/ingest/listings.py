@@ -231,7 +231,7 @@ def _resolve_completed_renames(con: duckdb.DuckDBPyConnection, data_root: Path, 
 
 
 MANUAL_BLACKLIST_FILE = 'manual_blacklist.csv'
-_MANUAL_BLACKLIST_COLS = ('ticker', 'reason', 'blacklisted_on')
+_MANUAL_BLACKLIST_COLS = ('ticker', 'market', 'company_name', 'reason', 'blacklisted_on')
 
 
 def _read_manual_blacklist(data_root: Path) -> set[str]:
@@ -263,24 +263,56 @@ def blacklist_tickers(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: 
     return total
 
 
+def _markets_for(tracked: pd.DataFrame | None, tickers: list[str]) -> dict[str, str]:
+    """Each ticker's market, as ticker.csv has it; absent for anything not currently tracked."""
+    if tracked is None or tracked.empty:
+        return {}
+    rows = tracked[tracked['ticker'].isin(tickers)]
+    return dict(zip(rows['ticker'], rows['market']))
+
+
+def _company_names_for(con: duckdb.DuckDBPyConnection, tickers: list[str]) -> dict[str, str]:
+    """Each ticker's company name from `companies`; absent for anything with no name on file.
+
+    Only SimFin supplies CompanyName (see housekeeping.rebuild_companies), so a ticker Yahoo alone
+    knows about legitimately has none.
+    """
+    if not storage.table_exists(con, 'companies'):
+        return {}
+    placeholders = ', '.join('?' for _ in tickers)
+    rows = con.execute(
+        f'SELECT Ticker, CompanyName FROM companies WHERE Ticker IN ({placeholders})', tickers).fetchall()
+    return {ticker: name for ticker, name in rows if name}
+
+
 def _blacklist_chunk(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: list[str], reason: str) -> int:
     """Delete one chunk's rows from every ticker-keyed table and update ticker.csv/manual_blacklist.csv
-    to match. Returns the number of rows deleted."""
+    to match. Returns the number of rows deleted.
+
+    Market and company name are read up front and recorded alongside the reason: blacklisting drops
+    the ticker from ticker.csv and deletes its `_yahoo_companies`/`_simfin_companies` rows, so after
+    this runs there is nowhere left to look either of them up.
+    """
+    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
+    tracked = pd.read_csv(ticker_csv, keep_default_na=False) if ticker_csv.exists() else None
+    markets = _markets_for(tracked, tickers)
+    names = _company_names_for(con, tickers)
+
     placeholders = ', '.join('?' for _ in tickers)
     total = 0
     for table in storage.TICKER_KEYED_TABLES:
         if storage.table_exists(con, table):
             total += int(con.execute(f'DELETE FROM {table} WHERE Ticker IN ({placeholders})', tickers).fetchone()[0])  # type: ignore[index]
 
-    ticker_csv = data_root / 'yahoo' / 'raw' / 'ticker.csv'
-    if ticker_csv.exists():
-        existing_tracked = pd.read_csv(ticker_csv, keep_default_na=False)
-        existing_tracked[~existing_tracked['ticker'].isin(tickers)].to_csv(ticker_csv, index=False)
+    if tracked is not None:
+        tracked[~tracked['ticker'].isin(tickers)].to_csv(ticker_csv, index=False)
 
     path = data_root / MANUAL_BLACKLIST_FILE
     existing = pd.read_csv(path, keep_default_na=False) if path.exists() else pd.DataFrame(columns=_MANUAL_BLACKLIST_COLS)
     today = date.today().isoformat()
-    new_rows = pd.DataFrame([{'ticker': ticker, 'reason': reason, 'blacklisted_on': today} for ticker in tickers])
+    new_rows = pd.DataFrame([{'ticker': ticker, 'market': markets.get(ticker, ''),
+                              'company_name': names.get(ticker, ''), 'reason': reason, 'blacklisted_on': today}
+                            for ticker in tickers])
     pd.concat([existing, new_rows], ignore_index=True).to_csv(path, index=False)
     return total
 

@@ -40,8 +40,11 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
     """Rebuild the combined `companies` table from `_yahoo_companies` + `_simfin_companies`.
 
     Full outer join on Ticker; yahoo wins the overlapping columns (Industry, Sector, NrEmployees,
-    BusinessSummary). `data_root`/`settings` are accepted to match the housekeeping task shape and
-    are unused. Returns row counts: total, in_yahoo, in_simfin, both.
+    BusinessSummary). CompanyName is the exception - SimFin's name wins and Yahoo's LongName only
+    fills the gap, so the ~2400 tickers SimFin has no fundamentals for stop coming through nameless
+    while every name SimFin does supply stays as it was. `data_root`/`settings` are accepted to
+    match the housekeeping task shape and are unused. Returns row counts: total, in_yahoo,
+    in_simfin, both.
     """
     con.execute("""
         CREATE OR REPLACE TABLE companies AS
@@ -52,7 +55,7 @@ def rebuild_companies(con: duckdb.DuckDBPyConnection, data_root: Path, settings:
             COALESCE(y.Industry, s.Industry)                 AS Industry,
             COALESCE(y.Sector, s.Sector)                     AS Sector,
             COALESCE(y.FullTimeEmployees, s.NumberEmployees) AS NrEmployees,
-            s.CompanyName                                    AS CompanyName,
+            COALESCE(s.CompanyName, y.LongName)              AS CompanyName,
             y.Address1                                       AS Address,
             y.City                                           AS City,
             y.State                                          AS State,

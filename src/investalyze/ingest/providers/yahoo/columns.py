@@ -6,6 +6,7 @@ are not listed. Applied via DataFrame.rename at write time in meta_data.py.
 """
 
 COMPANY_PROFILE = {
+    'longName': 'LongName',
     'address1': 'Address1', 'city': 'City', 'state': 'State', 'zip': 'Zip',
     'country': 'Country', 'website': 'Website', 'industry': 'Industry', 'sector': 'Sector',
     'longBusinessSummary': 'BusinessSummary', 'fullTimeEmployees': 'FullTimeEmployees',

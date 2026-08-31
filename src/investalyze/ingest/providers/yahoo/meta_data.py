@@ -27,6 +27,7 @@ _PROFILE, _OFFICERS = '_yahoo_companies', 'company_officers'
 _PROFILE_KEY = ['Ticker', 'Src']
 _OFFICERS_KEY = ['Ticker', 'Src', 'Name']
 _PROFILE_COLS = [
+    'longName',
     'address1',
     'city',
     'state',

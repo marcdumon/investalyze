@@ -533,7 +533,7 @@ def refresh_blacklist_grid(_n, search, last_signature):
     refresh_listings_candidates); a search-box edit always re-renders, since the visible rows change
     even though the underlying file didn't."""
     rows = blacklist_review.read_blacklist()
-    signature = sorted([r['ticker'], r['reason'], r['blacklisted_on']] for r in rows)
+    signature = sorted([r['ticker'], r['market'], r['company_name'], r['reason'], r['blacklisted_on']] for r in rows)
     if signature == last_signature and ctx.triggered_id == 'cp-poll':
         return dash.no_update, dash.no_update
     return blacklist_review.filter_blacklist(rows, search), signature
