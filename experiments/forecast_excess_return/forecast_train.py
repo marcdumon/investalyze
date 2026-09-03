@@ -1,14 +1,9 @@
-import numpy as np
-from scipy.stats import spearmanr
+"""Scoring for the excess-return forecast model, re-exported from the backtest evaluation module.
 
+The implementation moved to `investalyze.backtest.evaluation` when the backtest subsystem needed the
+same per-date rank correlation; this module keeps the name the notebooks import.
+"""
 
-def spearman_by_group(preds: np.ndarray, targets: np.ndarray, groups: np.ndarray) -> float:
-    correlations = []
-    for group in np.unique(groups):
-        mask = groups == group
-        if mask.sum() < 2:
-            continue
-        corr, _ = spearmanr(preds[mask], targets[mask])
-        if not np.isnan(corr):
-            correlations.append(corr)
-    return float(np.mean(correlations)) if correlations else float('nan')
+from investalyze.backtest.evaluation import spearman_by_group
+
+__all__ = ['spearman_by_group']

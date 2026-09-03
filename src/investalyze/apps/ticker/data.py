@@ -14,6 +14,7 @@ import pandas as pd
 from investalyze.analysis.factors import FACTORS, FAMILIES
 from investalyze.apps.screener.logic import compute_ranks
 from investalyze.apps.ticker import statements
+from investalyze.backtest import performance
 from investalyze.ingest import storage
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -96,7 +97,7 @@ def rebased(history: pd.DataFrame, sessions: int | None) -> pd.DataFrame:
 
 def drawdown(series: pd.Series) -> pd.Series:
     """Fractional drawdown from the running peak: 0 at new highs, negative below."""
-    return series / series.cummax() - 1
+    return performance.drawdown_series(series)
 
 
 def trailing_returns(history: pd.DataFrame) -> pd.DataFrame:

@@ -1,0 +1,30 @@
+# MD> Backtest settings: costs, limits and universe. Every key is optional; the defaults in
+# src/investalyze/backtest/config.py apply to anything left out.
+
+starting_cash = 1_000_000.0
+benchmark = '^NDX'   # current to the last price date, unlike ^SPX (stale since 2026-07-02)
+rebalance = 'M'      # one of D, W, M, Q
+long_only = true     # the survivorship-biased panel makes a short book especially misleading
+exclude_checks = ['ohlc_inconsistent', 'nonpositive_price']
+
+[universe]
+name = ''            # a saved universe under data/universes; empty ranks the whole DB
+n_top = 500
+rank_by = 'liquidity'
+require_sector = true
+
+[costs]
+slippage_bps = 5.0
+commission_bps = 2.0
+min_commission = 1.0
+impact_coef = 0.1
+borrow_bps_annual = 50.0
+cash_bps_annual = 0.0
+
+[limits]
+max_weight = 0.05
+max_gross = 1.0
+max_net = 1.0
+max_position_adv = 0.25
+participation = 0.05
+max_order_age = 5
