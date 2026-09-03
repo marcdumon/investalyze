@@ -66,13 +66,17 @@ def _restated_clause(vintage: str) -> str:
 
 
 def _ticker_clause(tickers: list[str] | None) -> str:
-    """SQL predicate narrowing to a ticker list, or an always-true predicate when none is given."""
-    return 'Ticker IN (SELECT unnest(?::VARCHAR[]))' if tickers else 'TRUE'
+    """SQL predicate narrowing to a ticker list, or an always-true predicate when none is given.
+
+    None means no filter; an empty list means no names, and must not collapse into the same thing.
+    A universe that resolved to nothing would otherwise silently build over the whole database.
+    """
+    return 'TRUE' if tickers is None else 'Ticker IN (SELECT unnest(?::VARCHAR[]))'
 
 
 def _ticker_params(tickers: list[str] | None) -> list:
     """Parameters matching `_ticker_clause`."""
-    return [tickers] if tickers else []
+    return [] if tickers is None else [tickers]
 
 
 def _grid_params(as_of: pd.DatetimeIndex) -> list:
@@ -383,6 +387,56 @@ def _derive_factors(df: pd.DataFrame) -> pd.DataFrame:
     df['share_change_1y'] = growth(df['shares_latest'], df['shares_prior'])
     df['div_growth'] = growth(df['div_ttm'], df['div_prior'])
     return df
+
+
+FREQUENCY_DAYS = {'D': 1, 'W': 7, 'M': 30, 'Q': 91}   # typical gap between panel dates
+
+
+def infer_frequency(dates: pd.DatetimeIndex) -> str | None:
+    """The rebalance frequency a set of panel dates was built on, from the usual gap between them.
+
+    The stored panel keeps no record of the frequency it was asked for, so it is read back off the
+    dates themselves: the closest of the known frequencies to the median gap. Fewer than two dates
+    says nothing, so nothing is what it returns.
+    """
+    if len(dates) < 2:
+        return None
+    gap = float(pd.Series(dates.sort_values()).diff().dt.days.median())
+    return min(FREQUENCY_DAYS, key=lambda freq: abs(FREQUENCY_DAYS[freq] - gap))
+
+
+def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -> dict | None:
+    """What the stored panel actually holds for one vintage, or None when it holds nothing.
+
+    Read from the rows rather than from any record of what was asked for, so a panel built in two
+    passes reports the span of both, and a factor added to the library after the last build reports
+    as having no values.
+    """
+    if not storage.table_exists(con, 'factor_panel'):
+        return None
+    stored = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
+    rows = con.execute("""
+        SELECT count(DISTINCT Date), count(DISTINCT Ticker), min(Date), max(Date)
+        FROM factor_panel WHERE Vintage = ?
+    """, [vintage]).fetchone()
+    if not rows[0]:
+        return None
+    dates = con.execute('SELECT DISTINCT Date FROM factor_panel WHERE Vintage = ? ORDER BY Date',
+                        [vintage]).df()['Date']
+
+    populated = []
+    for factor in FACTORS:
+        if factor not in stored:
+            continue
+        filled = con.execute(f'SELECT count("{factor}") FROM factor_panel WHERE Vintage = ?',
+                             [vintage]).fetchone()[0]
+        if filled:
+            populated.append(factor)
+    return {'vintage': vintage, 'n_dates': rows[0], 'n_tickers': rows[1],
+            'start': pd.Timestamp(rows[2]), 'end': pd.Timestamp(rows[3]),
+            'frequency': infer_frequency(pd.DatetimeIndex(dates)),
+            'factors': populated,
+            'missing_factors': [factor for factor in FACTORS if factor not in populated]}
 
 
 def _widen_stored_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> None:

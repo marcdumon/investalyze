@@ -240,3 +240,18 @@ def test_precision_at_k_is_zero_when_the_prediction_is_inverted():
     targets = np.array([1.0, 2.0, 3.0, 4.0])
     groups = np.array(['a'] * 4)
     assert evaluation.precision_at_k(preds, targets, groups, k_frac=0.5) == pytest.approx(0.0)
+
+
+def test_the_quantile_frame_carries_a_median_the_outliers_cannot_move():
+    """A bucket's mean answers to one extreme name; its median is what the typical name did."""
+    dates = pd.bdate_range('2020-01-01', periods=1)
+    names = [f'T{i:02d}' for i in range(25)]       # five names per bucket
+    scores = pd.DataFrame([list(range(25))], index=dates, columns=names, dtype=float)
+    forwards = pd.DataFrame([[0.01] * 25], index=dates, columns=names)
+    forwards.loc[dates[0], 'T00'] = 20.0           # a sub-dollar name that multiplied
+
+    frame = evaluation.quantile_frame(scores, forwards)
+    bottom = frame[frame['Quantile'] == frame['Quantile'].min()].iloc[0]
+    assert bottom['NNames'] == 5
+    assert bottom['Return'] == pytest.approx(4.008)   # (20 + 4 x 0.01) / 5
+    assert bottom['MedianReturn'] == pytest.approx(0.01)

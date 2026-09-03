@@ -127,16 +127,22 @@ def quantile_returns(scores: pd.DataFrame, forwards: pd.DataFrame, *, n_quantile
 
 
 def quantile_frame(scores: pd.DataFrame, forwards: pd.DataFrame, *, n_quantiles: int = 5) -> pd.DataFrame:
-    """Long-form quantile results, one row per session and bucket, with the names behind each mean."""
+    """Long-form quantile results, one row per session and bucket, with the names behind each figure.
+
+    The median sits beside the mean because a bucket's mean is at the mercy of a few names: over an
+    unfiltered universe a handful of sub-dollar stocks can carry a bucket's mean well away from what
+    the typical name in it did, while the median barely moves.
+    """
     left, right = _aligned(scores, forwards)
     buckets = quantile_buckets(left, n_quantiles=n_quantiles)
     long = pd.DataFrame({'bucket': buckets.stack(future_stack=True),
                          'forward': right.stack(future_stack=True)}).dropna()
     if long.empty:
-        return pd.DataFrame(columns=['Date', 'Quantile', 'Return', 'NNames'])
-    grouped = long.groupby([long.index.get_level_values(0), long['bucket']])['forward'].agg(['mean', 'size'])
+        return pd.DataFrame(columns=['Date', 'Quantile', 'Return', 'MedianReturn', 'NNames'])
+    grouped = long.groupby([long.index.get_level_values(0), long['bucket']])['forward'].agg(
+        ['mean', 'median', 'size'])
     frame = grouped.reset_index()
-    frame.columns = ['Date', 'Quantile', 'Return', 'NNames']
+    frame.columns = ['Date', 'Quantile', 'Return', 'MedianReturn', 'NNames']
     frame['Quantile'] = frame['Quantile'].astype(int)
     return frame
 

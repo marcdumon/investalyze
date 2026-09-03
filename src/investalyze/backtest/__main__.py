@@ -2,19 +2,20 @@
 
 Commands split along what they need: `factors` writes the point-in-time factor panel, `evaluate`
 scores a factor against forward returns, `run` walks one signal through the engine, `walkforward`
-repeats that fold by fold, and `report` and `list` read back what earlier runs stored. Only the
-commands that store results open the DB for writing, so an evaluation can run while a job holds the
-write lock.
+repeats that fold by fold, `report` prints what a finished run wrote, `list` shows the signals, and
+`delete` removes stored runs. Only the commands that store results open the DB for writing, so an
+evaluation can run while a job holds the write lock.
 """
 
 import argparse
 import logging
+import time
 from pathlib import Path
 
 import pandas as pd
 
-from investalyze.analysis import factors_pit, panels
-from investalyze.analysis.factors import FACTORS, HIGHER_IS_BETTER
+from investalyze.analysis import custom_factors, factors_pit, panels
+from investalyze.analysis.factors import CUSTOM, FACTORS, HIGHER_IS_BETTER
 from investalyze.apps import universes
 from investalyze.backtest import config as backtest_config
 from investalyze.backtest import engine, evaluation, market as market_data, performance, registry, report
@@ -24,7 +25,8 @@ from investalyze.ingest.logging import configure_logging
 
 log = logging.getLogger('investalyze.backtest')
 
-COMMANDS = ('factors', 'evaluate', 'run', 'walkforward', 'report', 'list')
+COMMANDS = ('factors', 'evaluate', 'run', 'walkforward', 'report', 'list', 'delete')
+FREQUENCY_WORDS = {'D': 'daily', 'W': 'weekly', 'M': 'monthly', 'Q': 'quarterly'}
 
 
 def _epilog() -> str:
@@ -67,7 +69,10 @@ def _parser() -> argparse.ArgumentParser:
                         help='how the universe is cut to size (default: the config value)')
     parser.add_argument('--vintage', choices=('as_reported', 'restated'), default='as_reported',
                         help='fundamentals vintage the factor panel is built from (default: as_reported)')
-    parser.add_argument('--run-id', help='run to read back, for the report command')
+    parser.add_argument('--build-panel', action='store_true',
+                        help='build the factor panel first when the stored one does not cover the request')
+    parser.add_argument('--run-id', nargs='+', metavar='run_id',
+                        help='runs to delete, or the one run to print, for the delete and report commands')
     parser.add_argument('--config', type=Path, default=Path('backtest.toml'),
                         help='backtest TOML giving costs, limits and universe (default: ./backtest.toml)')
     parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
@@ -90,20 +95,48 @@ def _resolve_universe(args: argparse.Namespace, run_cfg: backtest_config.Config)
     return tickers
 
 
+def _panel_universe(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> list[str] | None:
+    """The names a panel is built for: the named universe as it stands, else the database cut to size.
+
+    A named universe is used whole. The completeness filter a run applies belongs to a run, which
+    needs one tradable set across its whole span; a panel row exists as soon as a ticker has a close,
+    so a name that listed halfway through belongs in it. Putting seven solar names through that
+    filter over a span starting in 2000 leaves nothing, which is not what the person picking them
+    meant.
+    """
+    named = _resolve_universe(args, run_cfg)
+    if named is not None:
+        return named
+    if args.n_top:
+        return _run_universe(con, args, run_cfg, args.start, args.end)
+    return None
+
+
 def _build_factors(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
     """Build the point-in-time factor panel over the requested range and merge it into `factor_panel`."""
     if args.start is None or args.end is None:
         raise SystemExit('factors needs --start and --end')
     freq = args.freq or run_cfg.rebalance
     grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=freq)
-    tickers = _run_universe(con, args, run_cfg, args.start, args.end) if (args.universe or args.n_top) \
-        else _resolve_universe(args, run_cfg)
-    log.info(f'{args.vintage} panel over {len(grid)} {freq} dates, {args.start} to {args.end}')
+    tickers = _panel_universe(con, args, run_cfg)
+    if tickers is not None and not tickers:
+        raise SystemExit('the chosen universe resolved to no tickers; nothing to build a panel over')
+    scope = f'{len(tickers):,} tickers' if tickers is not None else 'every priced ticker'
+    log.info(f'{args.vintage} panel over {len(grid)} {FREQUENCY_WORDS[freq]} dates, '
+             f'{args.start} to {args.end}, {scope}')
 
+    began = time.monotonic()
     panel = factors_pit.build_factor_panel(con, grid, tickers=tickers, vintage=args.vintage,
                                            benchmark=run_cfg.benchmark)
     stored = factors_pit.store_factor_panel(con, panel)
-    log.info(f'built {len(panel):,} rows over {panel["Ticker"].nunique():,} tickers; factor_panel holds {stored:,}')
+    writer.record_panel_build(con, vintage=args.vintage,
+                              universe=args.universe or run_cfg.universe.name or writer.WHOLE_DATABASE,
+                              start=args.start, end=args.end, frequency=freq,
+                              n_tickers=int(panel['Ticker'].nunique()), n_dates=len(grid), n_rows=len(panel),
+                              seconds=time.monotonic() - began,
+                              definitions=custom_factors.fingerprint(CUSTOM))
+    log.info(f'this build wrote {len(panel):,} rows for {panel["Ticker"].nunique():,} tickers; '
+             f'factor_panel now holds {stored:,} rows across every build so far')
 
 
 def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
@@ -123,8 +156,22 @@ def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
     return panel
 
 
+def _median_spread(quantiles: pd.DataFrame) -> float:
+    """Mean gap between the top and bottom bucket's median return, the spread a few names cannot move."""
+    if quantiles.empty:
+        return float('nan')
+    medians = quantiles.pivot(index='Date', columns='Quantile', values='MedianReturn')
+    return float((medians[medians.columns.max()] - medians[medians.columns.min()]).mean())
+
+
 def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
-    """Score factors against forward returns and store their IC and quantile series."""
+    """Score factors against forward returns and store their IC and quantile series.
+
+    The universe is recorded with every row, so evaluating a factor over one set of names and then
+    over another leaves two readings to compare rather than one overwriting the other.
+    """
+    if args.build_panel:
+        _ensure_panel(con, args, run_cfg)
     if not storage.table_exists(con, 'factor_panel'):
         raise SystemExit('factor_panel does not exist; run the factors command first')
     panel = _read_factor_panel(con, args)
@@ -133,6 +180,13 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
     if unknown:
         raise SystemExit(f'not factors of the stored panel: {", ".join(unknown)}')
 
+    named = _resolve_universe(args, run_cfg)
+    universe = args.universe or run_cfg.universe.name or writer.WHOLE_DATABASE
+    if named is not None:
+        panel = panel[panel['Ticker'].isin(named)]
+        if panel.empty:
+            raise SystemExit(f'the stored panel holds none of the {len(named)} names in {universe}')
+
     tickers = sorted(panel['Ticker'].unique())
     first, last = panel['Date'].min(), panel['Date'].max()
     horizon = args.horizon
@@ -140,7 +194,8 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
                                        end=(last + pd.Timedelta(days=2 * horizon + 10)).date().isoformat())
     closes = panels.close_panel(con, tickers, calendar, min_obs_frac=factors_pit.MIN_PRICE_COVERAGE)
     forwards = evaluation.forward_returns(closes, horizon=horizon)
-    log.info(f'{len(selected)} factor(s), {len(tickers):,} tickers, horizon {horizon}, {first.date()} to {last.date()}')
+    log.info(f'{len(selected)} factor(s) over {universe}, {len(tickers):,} tickers, horizon {horizon}, '
+             f'{first.date()} to {last.date()}')
 
     for factor in selected:
         scores = evaluation.factor_scores(panel, factor)
@@ -148,11 +203,14 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
         counts = evaluation.names_per_date(scores, forwards)
         quantiles = evaluation.quantile_frame(scores, forwards)
 
-        ic_rows = pd.DataFrame({'Vintage': args.vintage, 'Factor': factor, 'Date': ic.index,
-                                'Horizon': horizon, 'Ic': ic.to_numpy(), 'NNames': counts.to_numpy()})
-        quantile_rows = quantiles.assign(Vintage=args.vintage, Factor=factor, Horizon=horizon)
+        ic_rows = pd.DataFrame({'Vintage': args.vintage, 'Universe': universe, 'Factor': factor,
+                                'Date': ic.index, 'Horizon': horizon, 'Ic': ic.to_numpy(),
+                                'NNames': counts.to_numpy()})
+        quantile_rows = quantiles.assign(Vintage=args.vintage, Universe=universe, Factor=factor,
+                                         Horizon=horizon)
         quantile_rows = quantile_rows[writer.QUANTILE_COLS]
-        writer.replace_evaluation(con, args.vintage, factor, ic_rows[writer.IC_COLS], quantile_rows)
+        writer.replace_evaluation(con, args.vintage, universe, factor, ic_rows[writer.IC_COLS],
+                                  quantile_rows)
 
         summary = evaluation.ic_summary(ic)
         spread = evaluation.quantile_spread(evaluation.quantile_returns(scores, forwards))
@@ -160,7 +218,8 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
         orientation = 1 if HIGHER_IS_BETTER.get(factor, True) else -1
         log.info(f'{factor:<18} IC {summary["mean"]:+.4f}  t {summary["t_stat"]:+6.2f}  '
                  f'oriented t {orientation * summary["t_stat"]:+6.2f}  hit {summary["hit_rate"]:.0%}  '
-                 f'spread {spread.mean():+.4f}  n {summary["n_periods"]}')
+                 f'spread {spread.mean():+.4f}  median spread {_median_spread(quantiles):+.4f}  '
+                 f'n {summary["n_periods"]}')
 
 
 def _run_universe(con, args: argparse.Namespace, run_cfg: backtest_config.Config,
@@ -168,11 +227,37 @@ def _run_universe(con, args: argparse.Namespace, run_cfg: backtest_config.Config
     """The names a run trades: the named universe, else the most liquid complete names in the range."""
     named = _resolve_universe(args, run_cfg)
     calendar = panels.trading_calendar(con, start=calendar_start, end=calendar_end)
-    return panels.complete_universe(con, calendar,
+    kept = panels.complete_universe(con, calendar,
                                     n_top=args.n_top or run_cfg.universe.n_top,
                                     rank_by=args.rank_by or run_cfg.universe.rank_by,
                                     require_sector=run_cfg.universe.require_sector,
                                     candidates=named)
+    if not kept:
+        source = f'the {len(named)} names in {args.universe or run_cfg.universe.name}' if named is not None \
+            else 'the database'
+        raise SystemExit(f'none of {source} traded across the whole of {calendar_start} to '
+                         f'{calendar_end}; shorten the range or pick another universe')
+    return kept
+
+
+def _ensure_panel(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
+    """Build the factor panel when the stored one does not reach across the requested dates.
+
+    Reached only through `--build-panel`, never on its own. A command that quietly builds what it
+    needs is a command whose cost and effect the caller cannot predict, so the decision is the
+    caller's and this is what carries it out once they have made it.
+    """
+    coverage = factors_pit.panel_coverage(con, args.vintage)
+    start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
+    if coverage is not None and coverage['start'] <= start and coverage['end'] >= end:
+        log.info(f'factor panel covers {coverage["start"].date()} to {coverage["end"].date()}, '
+                 f'{coverage["n_dates"]} dates')
+        return
+    reach = 'nothing stored' if coverage is None else \
+        f'{coverage["start"].date()} to {coverage["end"].date()}'
+    log.info(f'factor panel reaches {reach}, which does not cover {start.date()} to {end.date()}; '
+             'building it first')
+    _build_factors(con, args, run_cfg)
 
 
 def _benchmark_curve(con, name: str, dates: pd.Index, starting_cash: float) -> tuple[pd.Series | None, str | None]:
@@ -197,6 +282,8 @@ def _run(con, args: argparse.Namespace, run_cfg: backtest_config.Config, data_ro
         raise SystemExit('run needs --start and --end')
 
     kind, factory = registry.SIGNALS[args.signal]
+    if args.build_panel:
+        _ensure_panel(con, args, run_cfg)
     tickers = _run_universe(con, args, run_cfg, args.start, args.end)
     log.info(f'universe: {len(tickers):,} names priced across the whole range')
 
@@ -240,6 +327,37 @@ def _run(con, args: argparse.Namespace, run_cfg: backtest_config.Config, data_ro
         log.warning(caveat)
     print(finished.render())
     log.info(f'run {identifier} stored; report written to {path}')
+
+
+def _report(args: argparse.Namespace, data_root: Path) -> None:
+    """Print the report a run wrote when it finished."""
+    if args.run_id is None or len(args.run_id) != 1:
+        raise SystemExit('report needs one --run-id')
+    path = report.report_dir(args.run_id[0], data_root) / 'report.md'
+    if not path.is_file():
+        raise SystemExit(f'no report at {path}; the run may have been deleted')
+    print(path.read_text())
+
+
+def _delete(con, args: argparse.Namespace, data_root: Path) -> None:
+    """Remove stored runs: their summary rows, equity curves, blotters and rendered reports.
+
+    Every run named is dealt with before an unknown one is reported, so one bad id in a selection
+    does not leave the rest of it half deleted.
+    """
+    if not args.run_id:
+        raise SystemExit('delete needs --run-id')
+    missing = []
+    for identifier in args.run_id:
+        removed = writer.delete_run(con, identifier)
+        if not any(removed.values()):
+            missing.append(identifier)
+            continue
+        written = 'report removed' if report.delete_report(identifier, data_root) else 'no report on disk'
+        log.info(f'deleted run {identifier}: {removed["backtest_equity"]:,} equity rows, '
+                 f'{removed["backtest_trades"]:,} fills, {written}')
+    if missing:
+        raise SystemExit(f'no stored run: {", ".join(missing)}')
 
 
 def _walk_forward(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
@@ -287,6 +405,7 @@ def main() -> None:
     if args.command == 'factors':
         con = storage.connect(cfg.data_root, cfg.db)
         try:
+            writer.ensure_tables(con)
             _build_factors(con, args, run_cfg)
         finally:
             con.close()
@@ -319,12 +438,18 @@ def main() -> None:
             con.close()
         return
 
-    if args.command == 'report':
-        con = storage.connect(cfg.data_root, cfg.db, read_only=True)
+    if args.command == 'delete':
+        con = storage.connect(cfg.data_root, cfg.db)
         try:
-            raise NotImplementedError('reporting lands in phase 8')
+            writer.ensure_tables(con)
+            _delete(con, args, cfg.data_root)
         finally:
             con.close()
+        return
+
+    if args.command == 'report':
+        _report(args, cfg.data_root)
+        return
 
 
 if __name__ == '__main__':

@@ -343,6 +343,33 @@ def remove_factor(path: Path, name: str) -> bool:
     return True
 
 
+def fingerprint(customs: dict[str, CustomFactor]) -> str:
+    """A stable one-line signature of a set of definitions, for spotting one that has been edited.
+
+    A panel row holds the value a formula produced, not the formula, so a redefined factor leaves
+    the stored dates intact and the numbers wrong. Comparing this against what the last build
+    recorded is the only way to notice.
+    """
+    parts = []
+    for name in sorted(customs):
+        factor = customs[name]
+        parts.append(f'{name}={describe(factor)}:{"high" if factor.higher_is_better else "low"}')
+    return '|'.join(parts)
+
+
+def changed_since(recorded: str | None, customs: dict[str, CustomFactor]) -> list[str]:
+    """Definitions that differ from a fingerprint taken earlier, named.
+
+    A definition that is new or edited since the fingerprint was taken is one whose stored values
+    were computed from something else. Nothing recorded means nothing can be said, so nothing is.
+    """
+    if not recorded:
+        return []
+    was = dict(part.split('=', 1) for part in recorded.split('|') if '=' in part)
+    now = dict(part.split('=', 1) for part in fingerprint(customs).split('|') if '=' in part)
+    return sorted(name for name, formula in now.items() if was.get(name) != formula)
+
+
 def describe(factor: CustomFactor) -> str:
     """The formula of one definition, as the UI and the factor docs show it."""
     if factor.kind == EXPRESSION:

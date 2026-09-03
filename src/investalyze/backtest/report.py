@@ -6,6 +6,7 @@ the figure should be visible next to it.
 """
 
 import json
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -156,10 +157,24 @@ def _format(name: str, value: float | None) -> str:
     return f'{value:.3f}'
 
 
+def report_dir(run_id: str, data_root: Path) -> Path:
+    """Where one run's rendered report lives, so writing and deleting agree on the path."""
+    return data_root / 'backtests' / run_id
+
+
 def write_report(report: BacktestReport, data_root: Path) -> Path:
     """Write the rendered report under `data_root/backtests/<run id>/report.md` and return its path."""
-    directory = data_root / 'backtests' / report.run_id
+    directory = report_dir(report.run_id, data_root)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / 'report.md'
     path.write_text(report.render())
     return path
+
+
+def delete_report(run_id: str, data_root: Path) -> bool:
+    """Remove one run's report directory, returning whether there was one to remove."""
+    directory = report_dir(run_id, data_root)
+    if not directory.is_dir():
+        return False
+    shutil.rmtree(directory)
+    return True

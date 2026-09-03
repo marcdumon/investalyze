@@ -2,8 +2,9 @@
 
 Each run owns its rows wholesale, so writing replaces them by `RunId` (delete-then-insert), keeping
 re-runs idempotent even when a re-run covers a shorter date range than the one before it. Evaluation
-rows work the same way, keyed by vintage and factor. `factor_panel` is the exception: it is
-update-shaped, so `ingest.storage.store` merge-upserts it.
+rows work the same way, keyed by vintage, universe and factor, so evaluating the same factor over a
+different set of names sits alongside the earlier reading rather than replacing it. `factor_panel` is
+the exception: it is update-shaped, so `ingest.storage.store` merge-upserts it.
 """
 
 import hashlib
@@ -19,8 +20,13 @@ RUN_COLS = ['RunId', 'Signal', 'Kind', 'ConfigJson', 'StartDate', 'EndDate', 'NT
             'Turnover', 'HitRate', 'NTrades', 'FinalEquity', 'TotalCosts']
 EQUITY_COLS = ['RunId', 'Date', 'Equity', 'Gross', 'Net', 'Cash', 'BenchmarkEquity']
 TRADE_COLS = ['RunId', 'Date', 'Ticker', 'Side', 'Shares', 'Price', 'Notional', 'Cost', 'Kind']
-IC_COLS = ['Vintage', 'Factor', 'Date', 'Horizon', 'Ic', 'NNames']
-QUANTILE_COLS = ['Vintage', 'Factor', 'Date', 'Horizon', 'Quantile', 'Return', 'NNames']
+RUN_TABLES = ('backtest_runs', 'backtest_equity', 'backtest_trades')
+
+IC_COLS = ['Vintage', 'Universe', 'Factor', 'Date', 'Horizon', 'Ic', 'NNames']
+QUANTILE_COLS = ['Vintage', 'Universe', 'Factor', 'Date', 'Horizon', 'Quantile', 'Return',
+                 'MedianReturn', 'NNames']
+WHOLE_DATABASE = 'all'          # the Universe label for an evaluation that named no universe
+UNRECORDED_UNIVERSE = 'unrecorded'   # rows written before the Universe column existed
 
 _DDL = [
     """
@@ -73,33 +79,66 @@ _DDL = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS factor_panel_builds (
+        Vintage   VARCHAR NOT NULL,
+        Universe  VARCHAR NOT NULL,
+        StartDate DATE NOT NULL,
+        EndDate   DATE NOT NULL,
+        Frequency VARCHAR NOT NULL,
+        NTickers  BIGINT NOT NULL,
+        NDates    BIGINT NOT NULL,
+        NRows       BIGINT NOT NULL,
+        Seconds     DOUBLE,
+        Definitions VARCHAR,
+        BuiltAt     TIMESTAMP NOT NULL
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS factor_ic (
-        Vintage VARCHAR NOT NULL,
-        Factor  VARCHAR NOT NULL,
-        Date    DATE NOT NULL,
-        Horizon BIGINT NOT NULL,
-        Ic      DOUBLE,
-        NNames  BIGINT NOT NULL
+        Vintage  VARCHAR NOT NULL,
+        Universe VARCHAR NOT NULL,
+        Factor   VARCHAR NOT NULL,
+        Date     DATE NOT NULL,
+        Horizon  BIGINT NOT NULL,
+        Ic       DOUBLE,
+        NNames   BIGINT NOT NULL
     )
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_quantiles (
-        Vintage  VARCHAR NOT NULL,
-        Factor   VARCHAR NOT NULL,
-        Date     DATE NOT NULL,
-        Horizon  BIGINT NOT NULL,
-        Quantile BIGINT NOT NULL,
-        Return   DOUBLE,
-        NNames   BIGINT NOT NULL
+        Vintage      VARCHAR NOT NULL,
+        Universe     VARCHAR NOT NULL,
+        Factor       VARCHAR NOT NULL,
+        Date         DATE NOT NULL,
+        Horizon      BIGINT NOT NULL,
+        Quantile     BIGINT NOT NULL,
+        Return       DOUBLE,
+        MedianReturn DOUBLE,
+        NNames       BIGINT NOT NULL
     )
     """,
 ]
 
 
+# columns added after the tables were first written. Rows already there are labelled
+# unrecorded rather than all: what they were measured over was never stored.
+_ADDED_COLUMNS = {
+    'factor_ic': [('Universe', f"VARCHAR DEFAULT '{UNRECORDED_UNIVERSE}'")],
+    'factor_quantiles': [('Universe', f"VARCHAR DEFAULT '{UNRECORDED_UNIVERSE}'"),
+                         ('MedianReturn', 'DOUBLE')],
+    'factor_panel_builds': [('Seconds', 'DOUBLE'), ('Definitions', 'VARCHAR')],
+}
+
+
 def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
-    """Create every backtest output table that does not exist yet."""
+    """Create every backtest output table that does not exist yet, and widen the older ones."""
     for statement in _DDL:
         con.execute(statement)
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row[0] for row in con.execute(f'DESCRIBE {table}').fetchall()}
+        for column, definition in columns:
+            if column not in existing:
+                con.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
 
 def run_id(cfg: dict) -> str:
@@ -115,8 +154,9 @@ def _replace(con: duckdb.DuckDBPyConnection, table: str, columns: list[str], row
         raise ValueError(f'{table} columns must be {columns}, got {list(rows.columns)}')
     con.execute(f'DELETE FROM {table} WHERE {where}', params)
     con.register('_rows', rows)
+    named = ', '.join(f'"{column}"' for column in columns)
     try:
-        con.execute(f'INSERT INTO {table} SELECT * FROM _rows')
+        con.execute(f'INSERT INTO {table} ({named}) SELECT {named} FROM _rows')
     finally:
         con.unregister('_rows')
     return len(rows)
@@ -129,17 +169,65 @@ def replace_run(con: duckdb.DuckDBPyConnection, identifier: str, summary: pd.Dat
         raise ValueError(f'summary columns must be {RUN_COLS}, got {list(summary.columns)}')
     con.execute('DELETE FROM backtest_runs WHERE RunId = ?', [identifier])
     con.register('_summary', summary)
+    named = ', '.join(f'"{column}"' for column in RUN_COLS)
     try:
-        con.execute('INSERT INTO backtest_runs SELECT *, now() FROM _summary')
+        con.execute(f'INSERT INTO backtest_runs ({named}, CreatedAt) SELECT {named}, now() FROM _summary')
     finally:
         con.unregister('_summary')
     _replace(con, 'backtest_trades', TRADE_COLS, trades, 'RunId = ?', [identifier])
     return _replace(con, 'backtest_equity', EQUITY_COLS, equity, 'RunId = ?', [identifier])
 
 
-def replace_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, factor: str,
+def record_panel_build(con: duckdb.DuckDBPyConnection, *, vintage: str, universe: str,
+                       start: str, end: str, frequency: str, n_tickers: int, n_dates: int,
+                       n_rows: int, seconds: float | None = None,
+                       definitions: str | None = None) -> None:
+    """Append what a factor panel build was asked for, which the panel rows themselves do not say.
+
+    The rows record what the panel holds; this records the request behind them, so a page can say
+    which universe a panel came from and when it was last built. `seconds` is what the next build
+    is estimated from, and `definitions` fingerprints the factor formulas used, which is the only
+    way to notice that a redefined factor left the panel holding values computed from the old one.
+    """
+    con.execute("""
+        INSERT INTO factor_panel_builds (Vintage, Universe, StartDate, EndDate, Frequency,
+                                         NTickers, NDates, NRows, Seconds, Definitions, BuiltAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
+    """, [vintage, universe, start, end, frequency, n_tickers, n_dates, n_rows, seconds, definitions])
+
+
+def latest_panel_build(con: duckdb.DuckDBPyConnection, vintage: str) -> dict | None:
+    """The most recent build recorded for a vintage, or None when none was."""
+    cursor = con.execute('SELECT * FROM factor_panel_builds WHERE Vintage = ? ORDER BY BuiltAt DESC LIMIT 1',
+                         [vintage])
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    # read by name: a record written before a column was added simply has None for it
+    stored = dict(zip([column[0] for column in cursor.description], row))
+    aliases = {'Universe': 'universe', 'StartDate': 'start', 'EndDate': 'end',
+               'Frequency': 'frequency', 'NTickers': 'n_tickers', 'NDates': 'n_dates',
+               'NRows': 'n_rows', 'Seconds': 'seconds', 'Definitions': 'definitions',
+               'BuiltAt': 'built_at'}
+    return {alias: stored.get(column) for column, alias in aliases.items()}
+
+
+def delete_run(con: duckdb.DuckDBPyConnection, identifier: str) -> dict[str, int]:
+    """Delete one run everywhere it was stored, returning how many rows went per table.
+
+    Counting before the delete lets the caller tell a run that was removed from a run id that was
+    never stored, and clears rows a half-written run left behind in the curve or blotter tables.
+    """
+    removed = {}
+    for table in RUN_TABLES:
+        removed[table] = con.execute(f'SELECT count(*) FROM {table} WHERE RunId = ?', [identifier]).fetchone()[0]
+        con.execute(f'DELETE FROM {table} WHERE RunId = ?', [identifier])
+    return removed
+
+
+def replace_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: str, factor: str,
                        ic: pd.DataFrame, quantiles: pd.DataFrame) -> int:
-    """Replace one factor's IC and quantile rows for a vintage, returning the number of IC rows."""
-    _replace(con, 'factor_quantiles', QUANTILE_COLS, quantiles,
-             'Vintage = ? AND Factor = ?', [vintage, factor])
-    return _replace(con, 'factor_ic', IC_COLS, ic, 'Vintage = ? AND Factor = ?', [vintage, factor])
+    """Replace one factor's IC and quantile rows for a vintage and universe, returning the IC row count."""
+    where, params = 'Vintage = ? AND Universe = ? AND Factor = ?', [vintage, universe, factor]
+    _replace(con, 'factor_quantiles', QUANTILE_COLS, quantiles, where, params)
+    return _replace(con, 'factor_ic', IC_COLS, ic, where, params)

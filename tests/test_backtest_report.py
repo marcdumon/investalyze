@@ -113,3 +113,95 @@ def test_the_stored_run_round_trips_through_the_writer(finished):
     stored = con.execute('SELECT SurvivorshipNote FROM backtest_runs WHERE RunId = ?',
                          [finished.run_id]).fetchone()
     assert stored[0] == SURVIVORSHIP
+
+
+def test_deleting_a_run_reports_what_it_removed_from_each_table(finished):
+    import duckdb
+
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(),
+                       finished.trade_rows())
+    removed = writer.delete_run(con, finished.run_id)
+    assert removed == {'backtest_runs': 1, 'backtest_equity': len(DATES), 'backtest_trades': 1}
+    assert con.execute('SELECT count(*) FROM backtest_runs').fetchone()[0] == 0
+
+
+def test_deleting_a_run_that_was_never_stored_removes_nothing(finished):
+    import duckdb
+
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    assert not any(writer.delete_run(con, 'neverstored').values())
+
+
+def test_deleting_a_report_removes_the_directory_the_run_wrote(finished, tmp_path: Path):
+    report.write_report(finished, tmp_path)
+    assert report.delete_report(finished.run_id, tmp_path) is True
+    assert not report.report_dir(finished.run_id, tmp_path).exists()
+
+
+def test_deleting_a_report_that_was_never_written_says_so(tmp_path: Path):
+    assert report.delete_report('abc123def456', tmp_path) is False
+
+
+# --- evaluation rows are kept per universe ---
+
+def _ic_rows(universe: str, factor: str = 'roe') -> pd.DataFrame:
+    """One IC row for a universe, in the stored column order."""
+    return pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': factor,
+                          'Date': DATES[0], 'Horizon': 21, 'Ic': 0.05, 'NNames': 100}])
+
+
+def _quantile_rows(universe: str, factor: str = 'roe') -> pd.DataFrame:
+    """One quantile row for a universe, in the stored column order."""
+    return pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': factor,
+                          'Date': DATES[0], 'Horizon': 21, 'Quantile': 4, 'Return': 0.02,
+                          'MedianReturn': 0.01, 'NNames': 20}])
+
+
+def test_evaluating_the_same_factor_on_two_universes_keeps_both():
+    import duckdb
+
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    for universe in ('all', 'sp500'):
+        writer.replace_evaluation(con, 'as_reported', universe, 'roe',
+                                  _ic_rows(universe), _quantile_rows(universe))
+    stored = con.execute('SELECT Universe FROM factor_ic ORDER BY Universe').fetchall()
+    assert stored == [('all',), ('sp500',)]
+
+
+def test_re_evaluating_one_universe_replaces_only_its_own_rows():
+    import duckdb
+
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    for universe in ('all', 'sp500'):
+        writer.replace_evaluation(con, 'as_reported', universe, 'roe',
+                                  _ic_rows(universe), _quantile_rows(universe))
+    again = _ic_rows('sp500')
+    again['Ic'] = 0.99
+    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', again, _quantile_rows('sp500'))
+    stored = dict(con.execute('SELECT Universe, Ic FROM factor_ic').fetchall())
+    assert stored == {'all': 0.05, 'sp500': 0.99}
+
+
+def test_a_table_written_before_the_universe_column_gains_it_without_losing_its_rows():
+    """The column is added to the end of an existing table, so the writer must insert by name.
+
+    Older rows are labelled unrecorded, not all: nothing recorded what they were measured over.
+    """
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute("""CREATE TABLE factor_ic (Vintage VARCHAR, Factor VARCHAR, Date DATE,
+                   Horizon BIGINT, Ic DOUBLE, NNames BIGINT)""")
+    con.execute("INSERT INTO factor_ic VALUES ('as_reported', 'roe', DATE '2020-01-01', 21, 0.03, 50)")
+
+    writer.ensure_tables(con)
+
+    assert con.execute('SELECT Universe FROM factor_ic').fetchall() == [(writer.UNRECORDED_UNIVERSE,)]
+    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', _ic_rows('sp500'), _quantile_rows('sp500'))
+    landed = con.execute("SELECT Factor, Ic, NNames FROM factor_ic WHERE Universe = 'sp500'").fetchone()
+    assert landed == ('roe', 0.05, 100)

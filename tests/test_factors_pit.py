@@ -414,3 +414,36 @@ def test_a_point_in_time_value_factor_never_uses_a_filing_published_later(live_d
     grid = pd.DatetimeIndex(['2021-01-15', '2021-02-15'])
     panel = factors_pit.build_factor_panel(live_db, grid, tickers=['AAPL']).set_index('Date')
     assert panel.loc['2021-01-15', 'earnings_yield'] != panel.loc['2021-02-15', 'earnings_yield']
+
+
+# --- reading back what the stored panel covers ---
+
+def test_the_frequency_is_read_off_the_spacing_of_the_dates():
+    monthly = pd.DatetimeIndex(['2020-01-31', '2020-02-28', '2020-03-31', '2020-04-30'])
+    weekly = pd.bdate_range('2020-01-03', periods=8, freq='W-FRI')
+    assert factors_pit.infer_frequency(monthly) == 'M'
+    assert factors_pit.infer_frequency(weekly) == 'W'
+    assert factors_pit.infer_frequency(pd.bdate_range('2020-01-01', periods=10)) == 'D'
+
+
+def test_a_single_date_says_nothing_about_frequency():
+    assert factors_pit.infer_frequency(pd.DatetimeIndex(['2020-01-31'])) is None
+
+
+def test_coverage_of_a_database_with_no_panel_is_nothing():
+    import duckdb
+
+    assert factors_pit.panel_coverage(duckdb.connect()) is None
+
+
+# --- an empty universe is not every universe ---
+
+def test_no_ticker_list_means_no_filter():
+    assert factors_pit._ticker_clause(None) == 'TRUE'
+    assert factors_pit._ticker_params(None) == []
+
+
+def test_an_empty_ticker_list_means_no_names_rather_than_all_of_them():
+    """A universe that resolved to nothing used to build over the whole database."""
+    assert factors_pit._ticker_clause([]) != 'TRUE'
+    assert factors_pit._ticker_params([]) == [[]]

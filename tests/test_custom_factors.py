@@ -307,3 +307,37 @@ def test_switching_the_factors_file_off_leaves_the_built_in_library(tmp_path: Pa
     lines = result.stdout.splitlines()
     assert lines[0] == str(len(BUILTIN_FACTORS))
     assert 'custom' not in lines[1]
+
+# --- noticing a definition that changed under a stored panel ---
+
+def _factor(expression: str) -> custom_factors.CustomFactor:
+    """One expression definition, parsed the way the file would give it."""
+    text = custom_factors.serialize_factor('blend', {'expression': expression,
+                                                     'higher_is_better': True, 'description': ''})
+    return custom_factors.parse(text, BUILTIN_FACTORS)['blend']
+
+
+def test_a_fingerprint_is_stable_for_the_same_definitions():
+    customs = {'blend': _factor('rank_roe + rank_roa')}
+    assert custom_factors.fingerprint(customs) == custom_factors.fingerprint(dict(customs))
+
+
+def test_an_edited_formula_changes_the_fingerprint():
+    before = custom_factors.fingerprint({'blend': _factor('rank_roe + rank_roa')})
+    after = custom_factors.fingerprint({'blend': _factor('rank_roe - rank_roa')})
+    assert before != after
+
+
+def test_the_edited_factor_is_named():
+    recorded = custom_factors.fingerprint({'blend': _factor('rank_roe + rank_roa')})
+    now = {'blend': _factor('rank_roe - rank_roa')}
+    assert custom_factors.changed_since(recorded, now) == ['blend']
+
+
+def test_an_untouched_definition_is_not_named():
+    customs = {'blend': _factor('rank_roe + rank_roa')}
+    assert custom_factors.changed_since(custom_factors.fingerprint(customs), customs) == []
+
+
+def test_nothing_recorded_means_nothing_can_be_said():
+    assert custom_factors.changed_since(None, {'blend': _factor('rank_roe')}) == []
