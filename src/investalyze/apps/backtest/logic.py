@@ -147,8 +147,10 @@ def _estimate_words(seconds: float | None) -> str:
     if not seconds:
         return ''
     if seconds < 90:
-        return f', about {max(1, round(seconds))} seconds'
-    return f', about {round(seconds / 60)} minutes'
+        whole = max(1, round(seconds))
+        return f', about {whole} second' + ('' if whole == 1 else 's')
+    minutes = round(seconds / 60)
+    return f', about {minutes} minute' + ('' if minutes == 1 else 's')
 
 
 def _gap_reasons(gaps: dict) -> list[str]:
@@ -160,8 +162,6 @@ def _gap_reasons(gaps: dict) -> list[str]:
     elif gaps['missing_dates']:
         reasons.append(f'{gaps["missing_dates"]} of the {gaps["requested_dates"]} {cadence} dates '
                        'it needs do not exist yet')
-    if gaps['missing_factors']:
-        reasons.append(f'the panel has no values for {", ".join(gaps["missing_factors"])}')
     if gaps['changed_factors']:
         reasons.append(f'{", ".join(gaps["changed_factors"])} was redefined since the last build')
     return reasons
@@ -185,18 +185,34 @@ def _build_words(gaps: dict, universe: str | None, vintage: str) -> str:
             f'{_scope_words(universe, gaps["n_tickers"])}')
 
 
+def _empty_note(gaps: dict) -> str:
+    """What has no values for these names however often the panel is built.
+
+    Kept apart from the reasons to build. A factor with no inputs for a name is not a gap anything
+    can close, and putting it in a list headed by a button implies otherwise.
+    """
+    empty = gaps.get('empty_factors') or []
+    if not empty:
+        return ''
+    names = ', '.join(empty)
+    verb = 'has' if len(empty) == 1 else 'have'
+    return (f' {names} {verb} no values for these names, and building will not change that: '
+            'the inputs do not exist.')
+
+
 def _needs_sentence(gaps: dict, universe: str | None, vintage: str) -> str:
-    """The amber line: what has to be built, then why, as two plain sentences."""
+    """The amber line: what pressing builds, why it has to, and what it still will not fix."""
     return (f'Builds {_build_words(gaps, universe, vintage)}'
             f'{_estimate_words(gaps["seconds_estimate"])}. '
-            f'{"; ".join(_gap_reasons(gaps)).capitalize()}.')
+            f'{"; ".join(_gap_reasons(gaps)).capitalize()}, and pressing this is what builds them.'
+            f'{_empty_note(gaps)}')
 
 
 def research_plan(gaps: dict, universe: str | None, vintage: str = 'as_reported') -> tuple[bool, str]:
     """Whether Evaluate can run from what is stored, and the sentence saying so."""
     if not _gap_reasons(gaps):
         return True, (f'Scores {len(FACTORS)} factors over {_scope_words(universe, gaps["n_tickers"])} '
-                      'from the stored panel.')
+                      f'from the stored panel.{_empty_note(gaps)}')
     return False, _needs_sentence(gaps, universe, vintage)
 
 
@@ -221,7 +237,7 @@ def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
         return True, f'{signal} reads prices only. Nothing to build.'
     if not _gap_reasons(gaps):
         return True, (f'Runs {signal} over {_scope_words(universe, gaps["n_tickers"])} from the '
-                      f'stored panel.{_cadence_note(gaps)}')
+                      f'stored panel.{_cadence_note(gaps)}{_empty_note(gaps)}')
     return False, _needs_sentence(gaps, universe, vintage)
 
 

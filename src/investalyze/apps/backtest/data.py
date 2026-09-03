@@ -199,6 +199,10 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
     other tickers is no use to these ones. Factor definitions are compared against the fingerprint
     the last build recorded, since a redefined factor leaves the dates in place and the values wrong.
 
+    `empty_factors` is the separate case of a factor with no value in the rows that do exist for
+    these names, which building cannot change: a company that has never paid a dividend has no
+    dividend growth to compute.
+
     `panel_freq` is the cadence a build would use, which is the card's own field rather than
     anything read off what is stored. `rebalance` is the separate question of how often a run
     trades, and is only carried through so the caller can say what a finer one would trade on.
@@ -214,6 +218,7 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
         build = writer.latest_panel_build(con, vintage) \
             if storage.table_exists(con, 'factor_panel_builds') else None
         held = factors_pit.stored_dates(con, vintage, tickers)
+        empty = factors_pit.empty_factors(con, vintage, tickers)
         n_tickers = len(tickers) if tickers is not None else _priced_tickers(con)
     finally:
         con.close()
@@ -223,7 +228,7 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
         'requested_dates': len(grid),
         'missing_dates': len(missing),
         'n_tickers': n_tickers,
-        'missing_factors': coverage['missing_factors'] if coverage else [],
+        'empty_factors': empty,
         'changed_factors': custom_factors.changed_since(build['definitions'] if build else None, CUSTOM),
         'seconds_estimate': _build_estimate(build, len(missing) * n_tickers),
         'has_panel': coverage is not None,

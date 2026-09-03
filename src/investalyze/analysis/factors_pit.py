@@ -438,6 +438,30 @@ def stored_dates(con: duckdb.DuckDBPyConnection, vintage: str,
     return {pd.Timestamp(row[0]) for row in rows}
 
 
+def empty_factors(con: duckdb.DuckDBPyConnection, vintage: str,
+                  tickers: list[str] | None = None) -> list[str]:
+    """Stored factors with no value at all in the rows this vintage holds for these names.
+
+    Scoped to the tickers asked about, because a factor can be well populated across the database
+    and empty for one corner of it: none of a handful of solar companies has ever paid a dividend,
+    so no dividend growth exists for them and no amount of building will produce one.
+    """
+    if not storage.table_exists(con, 'factor_panel'):
+        return []
+    stored = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
+    present = [factor for factor in STORED_FACTORS if factor in stored]
+    if not present:
+        return []
+    clauses, params = ['Vintage = ?'], [vintage]
+    if tickers is not None:
+        clauses.append('Ticker IN (SELECT unnest(?::VARCHAR[]))')
+        params.append(sorted(tickers))
+    counts = ', '.join(f'count("{factor}")' for factor in present)
+    row = con.execute(f'SELECT {counts} FROM factor_panel WHERE {" AND ".join(clauses)}',
+                      params).fetchone()
+    return [factor for factor, filled in zip(present, row) if not filled]
+
+
 def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -> dict | None:
     """What the stored panel actually holds for one vintage, or None when it holds nothing.
 

@@ -406,10 +406,17 @@ Pressing then does exactly that, in one job and one press. There is no confirmat
 line has already said what will happen. What a press cannot promise is how long a build takes, so
 a **Cancel** appears beside the running job instead.
 
-Three things make a panel insufficient, and all three are detected: dates that were never built, a
-factor with no values, and a factor whose formula changed since the build. The last one is invisible
-in the panel rows, so every build records a fingerprint of the definitions it used and the card
-compares against it.
+Two things make a build necessary, and both are detected: dates that were never built, and a factor
+whose formula changed since the build. The second is invisible in the panel rows, so every build
+records a fingerprint of the definitions it used and the card compares against it. The line says
+that pressing is what builds them, because "do not exist yet" otherwise leaves open who is meant to
+act.
+
+A third case is reported but is not a reason to build: a factor with no values **for these names**,
+where the inputs do not exist. None of seven solar companies has ever paid a dividend, so
+`div_growth` is empty for them and no amount of building will produce one. Listing that among the
+reasons to press a button said something untrue, so it is now a caveat and does not hold the card
+up.
 
 A rebalance finer than the panel's own cadence is not a gap. A session between panel dates reads the
 most recent one before it, so a weekly run on a monthly panel works; the card says the scores repeat

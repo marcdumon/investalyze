@@ -517,7 +517,7 @@ def _gaps(**overrides) -> dict:
     """A request the stored panel can answer in full, with overrides applied."""
     base = {'requested_dates': 120, 'missing_dates': 0, 'n_tickers': 7, 'missing_factors': [],
             'changed_factors': [], 'seconds_estimate': None, 'has_panel': True,
-            'build_frequency': 'M', 'panel_frequency': 'M', 'rebalance': 'M'}
+            'build_frequency': 'M', 'panel_frequency': 'M', 'rebalance': 'M', 'empty_factors': []}
     return base | overrides
 
 
@@ -550,10 +550,30 @@ def test_a_redefined_factor_makes_a_card_ask_for_a_rebuild():
     assert 'Quality_blend was redefined since the last build' in sentence
 
 
-def test_a_factor_with_no_values_makes_a_card_ask_for_a_rebuild():
-    ready, sentence = logic.research_plan(_gaps(missing_factors=['my_blend']), None)
-    assert ready is False
-    assert 'no values for my_blend' in sentence
+def test_a_factor_with_no_inputs_is_a_caveat_rather_than_a_reason_to_build():
+    """None of seven solar names pays a dividend, so no build will produce a dividend growth."""
+    ready, sentence = logic.research_plan(_gaps(empty_factors=['div_growth']), None)
+    assert ready is True
+    assert 'div_growth has no values for these names' in sentence
+    assert 'building will not change that' in sentence
+
+
+def test_two_empty_factors_read_as_a_plural():
+    _ready, sentence = logic.research_plan(_gaps(empty_factors=['div_growth', 'accruals']), None)
+    assert 'div_growth, accruals have no values' in sentence
+
+
+def test_a_build_says_that_pressing_is_what_does_it():
+    """'Do not exist yet' invites the question of who makes them exist."""
+    _ready, sentence = logic.research_plan(_gaps(missing_dates=42), None)
+    assert 'pressing this is what builds them' in sentence
+
+
+def test_one_second_is_not_one_seconds():
+    assert logic._estimate_words(1.2) == ', about 1 second'
+    assert logic._estimate_words(15.0) == ', about 15 seconds'
+    assert logic._estimate_words(100.0) == ', about 2 minutes'
+    assert logic._estimate_words(200.0) == ', about 3 minutes'
 
 
 def test_a_timing_signal_never_mentions_the_panel():
