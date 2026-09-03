@@ -16,6 +16,7 @@ import requests
 from dash import dcc, html
 from plotly.subplots import make_subplots
 
+from investalyze.apps import theming
 from investalyze.apps.data_quality import actions, edgar
 from investalyze.ingest import storage
 
@@ -100,7 +101,7 @@ def price_evidence(row: dict, dark: bool) -> list:
         fig.add_trace(go.Bar(x=window['Date'], y=window['V'], name='Volume', marker={'line': {'width': 0}}), row=2, col=1)
     if on_date is not None:
         fig.add_vline(x=on_date, line_dash='dot', line_color='orange')
-    fig.update_layout(template='plotly_dark' if dark else 'plotly_white', height=420, showlegend=False,
+    fig.update_layout(**theming.figure_layout(dark), height=420, showlegend=False,
                       margin={'l': 40, 'r': 10, 't': 30, 'b': 20}, xaxis_rangeslider_visible=False,
                       title={'text': f'{ticker} {table} around {on_date or "full history"}', 'font': {'size': 14}})
     return [html.Div(_yahoo_finance_link(ticker), style={'fontSize': '13px', 'marginBottom': '4px'}),

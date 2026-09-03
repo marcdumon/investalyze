@@ -2,7 +2,8 @@
 
 Colors follow the dataviz reference palette: the subject ticker wears the accent hue, benchmark
 and peers wear context gray, drawdown wears the red diverging pole, factor families wear the
-five categorical slots in fixed order. Every builder takes prepared frames plus a dark flag and
+categorical slots in fixed order, cycling once there are more families than slots. Every builder
+takes prepared frames plus a dark flag and
 returns a themed go.Figure with transparent backgrounds so it sits on the Mantine card.
 """
 
@@ -12,15 +13,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from investalyze.analysis.factors import FAMILIES, HIGHER_IS_BETTER
+from investalyze.apps import theming
 from investalyze.apps.ticker.data import BENCHMARKS, drawdown
 
 _COLORS = {
     'light': {'accent': '#2a78d6', 'context': '#898781', 'neg': '#e34948', 'grid': '#e1e0d9',
               'axis': '#c3c2b7', 'ring': '#fcfcfb',
-              'slots': ['#2a78d6', '#008300', '#e87ba4', '#eda100', '#1baf7a']},
+              'slots': ['#2a78d6', '#008300', '#e87ba4', '#eda100', '#1baf7a', '#7c5cd6']},
     'dark': {'accent': '#3987e5', 'context': '#898781', 'neg': '#e66767', 'grid': '#2c2c2a',
              'axis': '#383835', 'ring': '#1a1a19',
-             'slots': ['#3987e5', '#008300', '#d55181', '#c98500', '#199e70']},
+             'slots': ['#3987e5', '#008300', '#d55181', '#c98500', '#199e70', '#8b6ae5']},
 }
 
 # (pool column, row label, axis format) for the dot-strip sections
@@ -48,8 +50,7 @@ def _theme(dark: bool) -> dict:
 def _style(fig: go.Figure, dark: bool, height: int) -> go.Figure:
     """Shared chrome: template, transparent backgrounds, hairline grid, compact margins."""
     theme = _theme(dark)
-    fig.update_layout(template='plotly_dark' if dark else 'plotly_white',
-                      paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+    fig.update_layout(**theming.figure_layout(dark),
                       height=height, margin={'l': 46, 'r': 60, 't': 34, 'b': 24},
                       font={'size': 12}, hoverlabel={'font': {'size': 11}})
     fig.update_xaxes(gridcolor=theme['grid'], linecolor=theme['axis'], zerolinecolor=theme['axis'])
@@ -127,7 +128,8 @@ def factor_profile_figure(families: pd.Series, ranks: pd.Series, dark: bool) -> 
     Bars wear their family's categorical slot; the solid reference line marks the peer median (50).
     """
     theme = _theme(dark)
-    family_colors = {family: theme['slots'][i] for i, family in enumerate(FAMILIES)}
+    slots = theme['slots']   # user-defined factors add a family, so the palette wraps rather than runs out
+    family_colors = {family: slots[index % len(slots)] for index, family in enumerate(FAMILIES)}
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.24, 0.76], vertical_spacing=0.06,
                         subplot_titles=('family score', 'individual factors'))
     fig.add_trace(go.Bar(

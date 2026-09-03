@@ -230,17 +230,28 @@ def refresh_grid(_refresh, checks, severity, ticker, tables, _tick):
 
 
 @callback(
-    Output('dq-selected', 'data'), Output('dq-evidence', 'children'),
-    Input('dq-grid', 'cellClicked'), State('dq-grid', 'rowData'), State('theme-switch', 'checked'),
+    Output('dq-selected', 'data'),
+    Input('dq-grid', 'cellClicked'), State('dq-grid', 'rowData'),
     prevent_initial_call=True,
 )
-def select_row(cell, rows, dark):
-    """Store the clicked row and render its evidence."""
+def select_row(cell, rows):
+    """Store the clicked row; drawing it is `render_evidence`'s job."""
     row_id = (cell or {}).get('rowId')
     if row_id is None or not str(row_id).isdigit() or not rows or int(row_id) >= len(rows):
         raise PreventUpdate
-    row = rows[int(row_id)]
-    return row, evidence.safe_evidence_children(row, bool(dark))
+    return rows[int(row_id)]
+
+
+@callback(
+    Output('dq-evidence', 'children'),
+    Input('dq-selected', 'data'), Input('theme-switch', 'checked'),
+    prevent_initial_call=True,
+)
+def render_evidence(row, dark):
+    """Draw the selected row's evidence, redrawn when the theme switch moves so it never lags it."""
+    if not row:
+        raise PreventUpdate
+    return evidence.safe_evidence_children(row, bool(dark))
 
 
 @callback(

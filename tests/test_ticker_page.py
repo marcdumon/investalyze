@@ -163,3 +163,23 @@ def test_peer_percentiles_orientation_and_families():
     assert ranks['earnings_yield'] == pytest.approx(100.0 / 3)   # higher is better, ME lowest
     assert ranks['vol_252'] == pytest.approx(100.0)              # lower is better, ME lowest
     assert families['momentum'] == pytest.approx(100.0 / 3)
+
+
+def test_the_factor_profile_colors_every_family_even_past_the_palette(monkeypatch):
+    """Defining custom factors adds a family; the categorical palette must wrap, not run out."""
+    import pandas as pd
+
+    from investalyze.apps.ticker import charts
+
+    families = dict(charts.FAMILIES)
+    families['custom'] = ['my_blend']
+    families['another'] = ['my_other']
+    monkeypatch.setattr(charts, 'FAMILIES', families)
+
+    scores = pd.Series({name: 50.0 for name in families})
+    ranks = pd.Series({factor: 50.0 for members in families.values() for factor in members})
+    figure = charts.factor_profile_figure(scores, ranks, dark=True)
+
+    colors = figure.data[0].marker.color
+    assert len(colors) == len(families)
+    assert all(color is not None for color in colors)
