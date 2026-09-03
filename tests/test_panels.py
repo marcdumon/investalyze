@@ -308,3 +308,53 @@ def test_live_complete_case_panel_has_no_gaps(live_db):
     tickers = panels.complete_universe(live_db, calendar, n_top=50)
     panel = panels.close_panel(live_db, tickers, calendar)
     assert not panel.isna().to_numpy().any()
+
+
+# --- a universe that does not require surviving ---
+
+def _listing_con() -> duckdb.DuckDBPyConnection:
+    """Four sessions, three names: one throughout, one that lists late, one that stops early."""
+    connection = duckdb.connect()
+    connection.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, O DOUBLE, H DOUBLE, '
+                       'L DOUBLE, C DOUBLE, V BIGINT, AC DOUBLE)')
+    rows = []
+    for index, date in enumerate(SESSIONS):
+        rows.append(('WHOLE', date, 10.0, 10.0, 10.0, 10.0, 1_000_000, 10.0))
+        if index >= 2:
+            rows.append(('LATE', date, 20.0, 20.0, 20.0, 20.0, 1_000_000, 20.0))
+        if index <= 1:
+            rows.append(('GONE', date, 30.0, 30.0, 30.0, 30.0, 1_000_000, 30.0))
+    connection.executemany('INSERT INTO prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)', rows)
+    # the ranking joins share counts for the mcap option, so the table has to exist
+    connection.execute('CREATE TABLE income (Ticker VARCHAR, Period VARCHAR, "Report Date" DATE, '
+                       '"Shares (Basic)" BIGINT, "Shares (Diluted)" BIGINT)')
+    return connection
+
+
+def test_the_complete_rule_still_wants_every_session():
+    """The correlation studies need a hole-free matrix, so this one is unchanged."""
+    connection = _listing_con()
+    calendar = pd.DatetimeIndex(SESSIONS)
+    kept = panels.complete_universe(connection, calendar, require_sector=False)
+    assert kept == ['WHOLE']
+
+
+def test_the_traded_rule_keeps_a_name_that_listed_partway_through():
+    """Excluding it is survivorship bias; the engine simply cannot buy it before it exists."""
+    connection = _listing_con()
+    kept = panels.traded_universe(connection, pd.DatetimeIndex(SESSIONS), require_sector=False)
+    assert 'LATE' in kept
+
+
+def test_the_traded_rule_keeps_a_name_that_stopped_trading():
+    connection = _listing_con()
+    kept = panels.traded_universe(connection, pd.DatetimeIndex(SESSIONS), require_sector=False)
+    assert 'GONE' in kept
+
+
+def test_a_tenure_floor_can_still_be_asked_for():
+    """Not the default: a tenure rule is itself a filter on survival."""
+    connection = _listing_con()
+    strict = panels.traded_universe(connection, pd.DatetimeIndex(SESSIONS), require_sector=False,
+                                    min_sessions_frac=1.0)
+    assert strict == ['WHOLE']

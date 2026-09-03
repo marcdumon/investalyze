@@ -241,6 +241,51 @@ def _merge_pending(carried: OrderBatch, fresh: OrderBatch, decision: Decision) -
     return OrderBatch.concat(keep, fresh)
 
 
+def last_tradable_session(market: MarketData) -> np.ndarray:
+    """The final session each name could be traded on, or -1 for one that never could.
+
+    A name whose prices stop is delisted as far as this data is concerned: Yahoo removes the symbol,
+    the history already stored keeps its last bar, and nothing arrives after it.
+    """
+    tradable = market.tradable
+    ever = tradable.any(axis=0)
+    last = np.where(ever, tradable.shape[0] - 1 - np.argmax(tradable[::-1], axis=0), -1)
+    return last.astype(np.int64)
+
+
+def _liquidate_delisted(book: Book, market: MarketData, marks: np.ndarray, last_tradable: np.ndarray,
+                        session: int) -> float:
+    """Close out any position whose name stopped trading, at the last price it traded at.
+
+    Without this a delisted holding is marked from its final close straight to nothing, because the
+    close is NaN and the mark treats NaN as zero. That writes off the whole position overnight with
+    no fill, no cash and no record, and leaves the shares on the book contributing nothing for the
+    rest of the run.
+
+    The last close is the honest figure to use when the reason for the delisting is unknown: a
+    company taken over paid something close to it, and one that failed had already fallen to near
+    nothing by then. No costs are charged, because this is a corporate event rather than a trade.
+    """
+    proceeds = 0.0
+    gone = np.flatnonzero((book.shares != 0) & (last_tradable == session - 1))
+    for asset in gone:
+        shares = float(book.shares[asset])
+        price = float(marks[last_tradable[asset], asset])
+        if not np.isfinite(price):
+            continue
+        notional = shares * price
+        book.cash += notional
+        book.shares[asset] = 0.0
+        book.cost_basis[asset] = 0.0
+        proceeds += notional
+        book.fills.append({
+            'Date': market.dates[session], 'Ticker': market.tickers[asset],
+            'Side': 'sell' if shares > 0 else 'buy', 'Shares': abs(shares), 'Price': price,
+            'Notional': abs(notional), 'Cost': 0.0, 'Kind': 'delisting',
+        })
+    return proceeds
+
+
 def run_backtest(market: MarketData, step, *, starting_cash: float, costs: Costs, limits: Limits,
                  check_accounting: bool = False, opening_shares: np.ndarray | None = None) -> Book:
     """Walk the calendar, filling each session's orders at its open and marking the book at its close.
@@ -264,15 +309,18 @@ def run_backtest(market: MarketData, step, *, starting_cash: float, costs: Costs
     _mark_to_market(book, marks, 0)
     pending = _decide_orders(step(0, book), book, market, marks, 0, limits)
 
+    last_tradable = last_tradable_session(market)
+
     for session in range(1, sessions):
         opening_cash = book.cash
         paid = _accrue_dividends(book, market, session)
         financed = _accrue_financing(book, marks, session, costs)
+        delisted = _liquidate_delisted(book, market, marks, last_tradable, session)
         carried, bought, sold, charged = _execute(pending, book, market, session, costs, limits)
         _mark_to_market(book, marks, session)
 
         if check_accounting:
-            expected = opening_cash + paid + financed - bought + sold - charged
+            expected = opening_cash + paid + financed + delisted - bought + sold - charged
             _assert_close(book.cash, expected, f'cash at session {session}')
             values = book.shares * np.nan_to_num(marks[session], nan=0.0)
             _assert_close(book.equity[session], book.cash + values.sum(), f'equity at session {session}')

@@ -260,10 +260,15 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
 
 def _run_universe(con, args: argparse.Namespace, run_cfg: backtest_config.Config,
                   calendar_start: str, calendar_end: str) -> list[str]:
-    """The names a run trades: the named universe, else the most liquid complete names in the range."""
+    """The names a run trades: every one in the universe that traded during the range.
+
+    Traded during, not throughout. A name that listed partway in cannot be bought before it exists,
+    and one that stops trading is liquidated at its last price, so neither has to be excluded. The
+    old rule dropped both, which is the shape survivorship bias takes when it is built into a filter.
+    """
     named = _resolve_universe(args, run_cfg)
     calendar = panels.trading_calendar(con, start=calendar_start, end=calendar_end)
-    kept = panels.complete_universe(con, calendar,
+    kept = panels.traded_universe(con, calendar,
                                     n_top=args.n_top or run_cfg.universe.n_top,
                                     rank_by=args.rank_by or run_cfg.universe.rank_by,
                                     require_sector=run_cfg.universe.require_sector,

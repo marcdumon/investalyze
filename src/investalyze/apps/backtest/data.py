@@ -261,16 +261,16 @@ def tradable_names(universe: str | None, start: str, end: str, n_top: int,
                    rank_by: str) -> tuple[int, int | None]:
     """How many names a run would actually trade, and how many the universe holds.
 
-    A run needs one tradable set across its whole span, so a name that listed partway through is
-    dropped. That turns a seven-name universe into a one-name run over a long enough range, which
-    is worth knowing before pressing rather than after reading the fill count.
+    A name counts if it traded at any point in the range, since one that listed later cannot be
+    bought before it exists and one that stopped is liquidated at its last price. What is reported
+    here is therefore how many of a saved universe have any history in the window at all.
     """
     candidates = universes.load_universe(universe) if universe else None
     con = _connect()
     try:
         calendar = panels.trading_calendar(con, start=start, end=end)
-        kept = panels.complete_universe(con, calendar, n_top=n_top, rank_by=rank_by,
-                                        require_sector=True, candidates=candidates)
+        kept = panels.traded_universe(con, calendar, n_top=n_top, rank_by=rank_by,
+                                      require_sector=True, candidates=candidates)
     finally:
         con.close()
     return len(kept), len(candidates) if candidates is not None else None

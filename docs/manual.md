@@ -340,6 +340,41 @@ require_sector = true
 ```
 
 
+### Delisted companies, and the bias they leave behind
+
+`prices` holds the full history of the tickers listed **today**. A company that was taken over or
+failed is gone from Yahoo entirely: asking its chart endpoint returns `404 No data found, symbol may
+be delisted`. Measured on this database, 8,987 companies have fundamentals and 6,470 have prices, so
+**2,181 companies filed statements and have no price history at all**, 966 of them filing in 2024 or
+later. Every backtest here is biased upward by their absence and no engine change can recover them.
+
+**No source for them has been found yet.** SimFin still serves their fundamentals but its prices are
+not trusted here. Finding a provider that retains delisted history is the single most valuable thing
+outstanding, because until then no strategy result can be taken at face value.
+
+Two things are in place so the bias stops growing:
+
+**The database keeps what Yahoo deletes.** A ticker delisting tomorrow leaves its stored history
+untouched; only new bars stop arriving. So delisted names accumulate from now on, and the gap is
+historical rather than ongoing.
+
+**A run no longer excludes them.** The universe rule used to demand a name be priced on every
+session of the range, which dropped every company that listed partway through and every one that
+stopped: exactly the names whose absence is the bias. Runs now take every name that traded at any
+point in the range. A name cannot be bought before it exists, and one that stops trading is
+liquidated at its last traded price and recorded as a fill:
+
+```
+      Date Ticker Side  Shares  Price   Notional  Cost      Kind
+2026-07-31   GREE sell 10000.0   2.14   21400.00   0.0  delisting
+```
+
+No costs are charged, because a delisting is a corporate event rather than a trade, and the last
+close is the honest figure when the reason is unknown: a takeover paid close to it, and a failure had
+already fallen to near nothing. Before this the position stayed frozen at that price to the end of
+the run, untradeable and unusable, with the capital trapped.
+
+
 ### Two frequencies, two names
 
 They used to be one setting. They answer different questions and no longer have to agree:

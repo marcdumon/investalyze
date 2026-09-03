@@ -89,6 +89,39 @@ def complete_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex
         ticker      alphabetical, i.e. no preference at all, for when `candidates` is already the
                     answer and only the completeness filter is wanted.
     """
+    return _ranked_universe(con, calendar, min_sessions=len(calendar), n_top=n_top, rank_by=rank_by,
+                            require_sector=require_sector, candidates=candidates)
+
+
+def traded_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex, *,
+                    n_top: int | None = None, rank_by: str = 'liquidity', require_sector: bool = True,
+                    candidates: list[str] | None = None,
+                    min_sessions_frac: float = 0.0) -> list[str]:
+    """Tickers that traded at some point in `calendar`, whether or not they traded throughout.
+
+    This is the universe a backtest wants. Requiring a name on every session, as
+    `complete_universe` does for the correlation studies it was written for, drops every company
+    that listed partway through and every one that stopped: exactly the names whose absence is
+    survivorship bias. The engine already declines to trade a name on a session it has no price
+    for, and liquidates a holding whose name stops trading, so neither case needs excluding here.
+
+    `min_sessions_frac` raises the bar if a run wants some minimum tenure; the default asks only
+    that a name traded at all, since a tenure rule is itself a filter on survival.
+    """
+    minimum = max(1, round(min_sessions_frac * len(calendar)))
+    return _ranked_universe(con, calendar, min_sessions=minimum, n_top=n_top, rank_by=rank_by,
+                            require_sector=require_sector, candidates=candidates)
+
+
+def _ranked_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex, *, min_sessions: int,
+                     n_top: int | None, rank_by: str, require_sector: bool,
+                     candidates: list[str] | None) -> list[str]:
+    """Names trading on at least `min_sessions` of the calendar, ordered by the chosen ranking.
+
+    The liquidity median is taken over the sessions a name actually traded, so a name present for
+    part of the window is ranked on how it traded while it existed rather than penalised for the
+    sessions it did not.
+    """
     if rank_by not in RANKINGS:
         raise ValueError(f'rank_by must be one of {RANKINGS}, got {rank_by!r}')
 
@@ -97,7 +130,7 @@ def complete_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex
     params: list = [list(calendar.date)]
     if candidates is not None:
         params.append(candidates)
-    params.append(len(calendar))
+    params.append(min_sessions)
 
     ranked = con.execute(f"""
         WITH complete AS (
@@ -106,7 +139,7 @@ def complete_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex
             {sector_join}
             WHERE p.AC IS NOT NULL AND p.AC > 0 AND p.Date IN (SELECT unnest(?::DATE[])) {candidate_filter}
             GROUP BY p.Ticker
-            HAVING count(*) = ?
+            HAVING count(*) >= ?
         )
         SELECT c.Ticker, c.liquidity, shares.n * close.last * 1.0 AS mcap
         FROM complete c

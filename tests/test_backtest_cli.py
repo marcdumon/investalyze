@@ -239,7 +239,7 @@ def test_a_run_universe_that_nothing_survives_says_why(monkeypatch):
     monkeypatch.setattr(cli, '_resolve_universe', lambda args, cfg: ['ARRY', 'ENPH'])
     monkeypatch.setattr(cli.panels, 'trading_calendar',
                         lambda con, start, end: pd.DatetimeIndex(['2000-01-03']))
-    monkeypatch.setattr(cli.panels, 'complete_universe', lambda *args, **kwargs: [])
+    monkeypatch.setattr(cli.panels, 'traded_universe', lambda *args, **kwargs: [])
 
     with pytest.raises(SystemExit, match='traded across the whole of'):
         cli._run_universe(con, _args(universe='solar'), backtest_config.read(), '2000-01-01', '2026-09-03')
@@ -357,7 +357,7 @@ def test_a_refusal_names_the_earliest_start_that_would_work(monkeypatch):
     monkeypatch.setattr(cli, '_resolve_universe', lambda args, cfg: ['FSLR', 'ENPH'])
     monkeypatch.setattr(cli.panels, 'trading_calendar',
                         lambda con, start, end: pd.DatetimeIndex(['2000-01-03']))
-    monkeypatch.setattr(cli.panels, 'complete_universe', lambda *args, **kwargs: [])
+    monkeypatch.setattr(cli.panels, 'traded_universe', lambda *args, **kwargs: [])
 
     with pytest.raises(SystemExit, match='earliest start that keeps one is 2006-11-17'):
         cli._run_universe(con, _args(universe='solar'), backtest_config.read(),

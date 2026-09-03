@@ -292,3 +292,80 @@ def test_a_backtest_needs_more_than_one_session():
     market = _market(closes=np.array([100.0]))
     with pytest.raises(ValueError, match='at least 2 sessions'):
         engine.run_backtest(market, _hold, starting_cash=1.0, costs=FREE, limits=OPEN_LIMITS)
+
+
+# --- a name that stops trading ---
+
+def _delisting_market(sessions: int = 6, last: int = 2) -> MarketData:
+    """One name priced through `last`, then nothing: what a delisting looks like in stored data."""
+    closes = np.array([10.0, 10.0, 12.0, np.nan, np.nan, np.nan])[:sessions]
+    tradable = np.array([True] * (last + 1) + [False] * (sessions - last - 1))
+    return _market(closes=closes, tradable=tradable, tickers=['GONE'])
+
+
+def test_the_final_tradable_session_of_each_name_is_found():
+    market = _delisting_market()
+    assert list(engine.last_tradable_session(market)) == [2]
+
+
+def test_a_name_that_never_trades_has_no_final_session():
+    market = _market(closes=np.array([10.0, 10.0, 10.0]),
+                     tradable=np.zeros((3, 1), dtype=bool), tickers=['NEVER'])
+    assert list(engine.last_tradable_session(market)) == [-1]
+
+
+def test_a_delisted_holding_becomes_cash_at_its_last_traded_price():
+    """Otherwise the position is frozen at that price and can never be sold or redeployed."""
+    market = _delisting_market()
+    book = engine.run_backtest(market, _fully_invested, starting_cash=10_000.0,
+                               costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5))
+
+    assert book.shares[0] == 0
+    assert book.cash == pytest.approx(book.equity[-1])
+
+
+def test_the_delisting_is_recorded_as_a_fill_rather_than_happening_in_silence():
+    market = _delisting_market()
+    book = engine.run_backtest(market, _fully_invested, starting_cash=10_000.0,
+                               costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5))
+
+    delistings = [fill for fill in book.fills if fill['Kind'] == 'delisting']
+    assert len(delistings) == 1
+    assert delistings[0]['Ticker'] == 'GONE'
+    assert delistings[0]['Price'] == pytest.approx(12.0)
+    assert delistings[0]['Cost'] == 0.0
+
+
+def test_the_liquidation_price_is_the_last_close_not_a_later_one():
+    """A corporate event has no market price to fill against, so the last print is what there is."""
+    market = _delisting_market()
+    book = engine.run_backtest(market, _fully_invested, starting_cash=10_000.0,
+                               costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5))
+
+    delisting = next(fill for fill in book.fills if fill['Kind'] == 'delisting')
+    assert delisting['Price'] == pytest.approx(market.close[2, 0])
+
+
+def test_equity_does_not_jump_when_a_name_delists():
+    """The position was already marked at the forward-filled close, so turning it to cash is neutral."""
+    market = _delisting_market()
+    book = engine.run_backtest(market, _hold, starting_cash=10_000.0,
+                               costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5))
+
+    assert book.equity[3] == pytest.approx(book.equity[2])
+
+
+def test_a_name_still_trading_is_left_alone():
+    market = _market(closes=np.array([10.0, 11.0, 12.0, 13.0]), tickers=['ALIVE'])
+    book = engine.run_backtest(market, _fully_invested, starting_cash=10_000.0,
+                               costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5))
+
+    assert not [fill for fill in book.fills if fill['Kind'] == 'delisting']
+    assert book.shares[0] > 0
+
+
+def test_cash_still_reconciles_across_a_delisting():
+    market = _delisting_market()
+    engine.run_backtest(market, _fully_invested, starting_cash=10_000.0,
+                        costs=Costs(0, 0, 0, 0, 0, 0), limits=Limits(1, 1, 1, 1, 1, 5),
+                        check_accounting=True)
