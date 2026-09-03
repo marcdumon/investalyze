@@ -123,10 +123,14 @@ def _build_factors(con, args: argparse.Namespace, run_cfg: backtest_config.Confi
     if args.start is None or args.end is None:
         raise SystemExit('factors needs --start and --end')
     freq = args.panel_freq
-    grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=freq)
+    asked = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=freq)
     tickers = _panel_universe(con, args, run_cfg)
     if tickers is not None and not tickers:
         raise SystemExit('the chosen universe resolved to no tickers; nothing to build a panel over')
+    grid = factors_pit.buildable_dates(con, asked, tickers)
+    if len(grid) < len(asked):
+        log.info(f'{len(asked) - len(grid)} of the {len(asked)} dates asked for are before any of '
+                 'these names traded, so there is nothing to build on them')
     scope = f'{len(tickers):,} tickers' if tickers is not None else 'every priced ticker'
 
     building, why = _dates_to_build(con, args, grid, tickers)

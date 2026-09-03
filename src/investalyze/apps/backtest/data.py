@@ -214,7 +214,8 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
     con = _connect()
     try:
         coverage = factors_pit.panel_coverage(con, vintage)
-        grid = factors_pit.rebalance_dates(con, start=start, end=end, freq=panel_freq)
+        grid = factors_pit.buildable_dates(
+            con, factors_pit.rebalance_dates(con, start=start, end=end, freq=panel_freq), tickers)
         build = writer.latest_panel_build(con, vintage) \
             if storage.table_exists(con, 'factor_panel_builds') else None
         held = factors_pit.stored_dates(con, vintage, tickers)

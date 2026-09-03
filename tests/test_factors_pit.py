@@ -521,3 +521,40 @@ def test_dropping_a_rank_column_leaves_the_absolute_ones_alone():
     columns = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
     assert 'roe' in columns
     assert 'quality_blend' not in columns
+
+
+# --- dates a name could not have had a row on ---
+
+def test_dates_before_a_name_first_traded_are_not_buildable():
+    """A panel row comes from a close, so a date before the name listed has nothing to hold."""
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
+    con.execute("INSERT INTO prices VALUES ('FSLR', DATE '2006-11-17', 24.0)")
+    grid = pd.DatetimeIndex(['2000-01-31', '2006-10-31', '2006-11-30', '2007-01-31'])
+
+    buildable = factors_pit.buildable_dates(con, grid, ['FSLR'])
+
+    assert list(buildable) == [pd.Timestamp('2006-11-30'), pd.Timestamp('2007-01-31')]
+
+
+def test_a_ticker_list_with_no_prices_can_build_nothing():
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
+    grid = pd.DatetimeIndex(['2020-01-31'])
+
+    assert len(factors_pit.buildable_dates(con, grid, ['NOPE'])) == 0
+
+
+def test_the_whole_database_keeps_every_date_it_was_asked_for():
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
+    con.execute("INSERT INTO prices VALUES ('AAA', DATE '1990-01-02', 1.0)")
+    grid = pd.DatetimeIndex(['2000-01-31', '2020-01-31'])
+
+    assert list(factors_pit.buildable_dates(con, grid, None)) == list(grid)

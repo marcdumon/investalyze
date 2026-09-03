@@ -438,6 +438,24 @@ def stored_dates(con: duckdb.DuckDBPyConnection, vintage: str,
     return {pd.Timestamp(row[0]) for row in rows}
 
 
+def buildable_dates(con: duckdb.DuckDBPyConnection, grid: pd.DatetimeIndex,
+                    tickers: list[str] | None = None) -> pd.DatetimeIndex:
+    """The as-of dates that can produce rows at all: those on or after these names first traded.
+
+    A panel row comes from a close, so a date before every requested name listed has nothing to
+    hold. Seven solar companies asked for from 2000 have no row until FSLR listed in 2006, and
+    treating those dates as missing would report a gap that no build can ever close.
+    """
+    if not storage.table_exists(con, 'prices'):
+        return grid
+    clause = 'WHERE Ticker IN (SELECT unnest(?::VARCHAR[]))' if tickers is not None else ''
+    params = [sorted(tickers)] if tickers is not None else []
+    first = con.execute(f'SELECT min(Date) FROM prices {clause}', params).fetchone()[0]
+    if first is None:
+        return pd.DatetimeIndex([], name=grid.name)
+    return grid[grid >= pd.Timestamp(first)]
+
+
 def empty_factors(con: duckdb.DuckDBPyConnection, vintage: str,
                   tickers: list[str] | None = None) -> list[str]:
     """Stored factors with no value at all in the rows this vintage holds for these names.
