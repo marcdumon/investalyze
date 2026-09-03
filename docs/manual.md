@@ -350,7 +350,8 @@ later. Every backtest here is biased upward by their absence and no engine chang
 
 **No source for them has been found yet.** SimFin still serves their fundamentals but its prices are
 not trusted here. Finding a provider that retains delisted history is the single most valuable thing
-outstanding, because until then no strategy result can be taken at face value.
+outstanding, because until then no strategy result can be taken at face value. It is item 1 in
+[the backlog](backlog.md).
 
 Two things are in place so the bias stops growing:
 

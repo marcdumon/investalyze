@@ -1,7 +1,7 @@
 """Walk-forward evaluation: fit on one span, trade the next, and step both forward.
 
 Two things here are load bearing. The universe is chosen from each fold's training span alone, since
-`panels.complete_universe` asks which names were priced across a whole calendar and handing it the
+`panels.traded_universe` asks which names traded during a calendar, and handing it the
 full history would pick the survivors of the entire sample. And the book carries across fold
 boundaries, so the seams show the turnover and cost a real transition would pay instead of restarting
 flat at every one.
@@ -130,9 +130,9 @@ def run_walk_forward(con: duckdb.DuckDBPyConnection, factory: SignalFactory, win
     for window in windows:
         training = panels.trading_calendar(con, start=window.train_start.date().isoformat(),
                                            end=window.train_end.date().isoformat())
-        tickers = panels.complete_universe(con, training, n_top=config.universe.n_top,
-                                           rank_by=config.universe.rank_by,
-                                           require_sector=config.universe.require_sector)
+        tickers = panels.traded_universe(con, training, n_top=config.universe.n_top,
+                                         rank_by=config.universe.rank_by,
+                                         require_sector=config.universe.require_sector)
         if not tickers:
             continue
 
