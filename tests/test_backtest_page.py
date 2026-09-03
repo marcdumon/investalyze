@@ -791,3 +791,33 @@ def test_an_uncounted_scope_names_itself_rather_than_saying_zero():
     assert logic._scope_words(None, 0) == 'the whole database'
     assert logic._scope_words('solar', None) == 'the names in solar'
     assert logic._scope_words('solar', 7) == '7 names in solar'
+
+
+# --- how much of a universe a run actually trades ---
+
+def test_a_universe_fully_priced_across_the_range_says_nothing_extra():
+    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(7, 7))
+    assert 'Trades' not in sentence
+
+
+def test_a_universe_thinned_by_the_range_says_how_much_survived():
+    """Sixteen years of a seven-name solar universe leaves one stock, which is worth knowing first."""
+    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(1, 7))
+    assert 'Trades 1 of the 7 names in solar' in sentence
+    assert 'the other 6 were not priced across the whole range' in sentence
+
+
+def test_one_dropped_name_reads_as_a_singular():
+    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(6, 7))
+    assert 'the other 1 was not priced' in sentence
+
+
+def test_a_universe_nothing_survives_says_to_start_later():
+    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(0, 7))
+    assert 'None of the names in solar traded across this whole range' in sentence
+    assert 'start later' in sentence
+
+
+def test_the_whole_database_needs_no_such_note():
+    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', None, tradable=(500, None))
+    assert 'Trades' not in sentence

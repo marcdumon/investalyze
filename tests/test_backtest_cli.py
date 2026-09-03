@@ -234,13 +234,15 @@ def test_building_over_a_universe_that_resolved_to_nothing_is_refused(monkeypatc
 
 
 def test_a_run_universe_that_nothing_survives_says_why(monkeypatch):
+    con = duckdb.connect()
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE)')
     monkeypatch.setattr(cli, '_resolve_universe', lambda args, cfg: ['ARRY', 'ENPH'])
     monkeypatch.setattr(cli.panels, 'trading_calendar',
                         lambda con, start, end: pd.DatetimeIndex(['2000-01-03']))
     monkeypatch.setattr(cli.panels, 'complete_universe', lambda *args, **kwargs: [])
 
     with pytest.raises(SystemExit, match='traded across the whole of'):
-        cli._run_universe(None, _args(universe='solar'), backtest_config.read(), '2000-01-01', '2026-09-03')
+        cli._run_universe(con, _args(universe='solar'), backtest_config.read(), '2000-01-01', '2026-09-03')
 
 
 def test_the_parser_defaults_to_not_building():
@@ -345,3 +347,23 @@ def test_a_range_already_stored_builds_nothing(monkeypatch):
 def test_the_two_frequencies_are_separate_flags():
     args = cli._parser().parse_args(['run', '--freq', 'W', '--panel-freq', 'Q'])
     assert (args.freq, args.panel_freq) == ('W', 'Q')
+
+
+def test_a_refusal_names_the_earliest_start_that_would_work(monkeypatch):
+    """Telling someone to shorten the range begs the question of how much."""
+    con = duckdb.connect()
+    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE)')
+    con.execute("INSERT INTO prices VALUES ('FSLR', DATE '2006-11-17'), ('ENPH', DATE '2012-03-30')")
+    monkeypatch.setattr(cli, '_resolve_universe', lambda args, cfg: ['FSLR', 'ENPH'])
+    monkeypatch.setattr(cli.panels, 'trading_calendar',
+                        lambda con, start, end: pd.DatetimeIndex(['2000-01-03']))
+    monkeypatch.setattr(cli.panels, 'complete_universe', lambda *args, **kwargs: [])
+
+    with pytest.raises(SystemExit, match='earliest start that keeps one is 2006-11-17'):
+        cli._run_universe(con, _args(universe='solar'), backtest_config.read(),
+                          '2000-01-01', '2026-09-03')
+
+
+def test_a_refusal_over_the_whole_database_falls_back_to_advice():
+    con = duckdb.connect()
+    assert 'shorten the range' in cli._earliest_workable(con, None)

@@ -230,14 +230,37 @@ def _cadence_note(gaps: dict) -> str:
             'dates repeat the last scores.')
 
 
+def _tradable_note(tradable: tuple[int, int | None] | None, universe: str | None) -> str:
+    """How much of a universe a run will actually trade, said only when it is not all of it.
+
+    A name that listed partway through the range is dropped, since a run needs one tradable set
+    across its whole span. Over a long enough range that quietly turns a universe into one stock.
+    """
+    if tradable is None:
+        return ''
+    kept, total = tradable
+    if not kept:
+        return (f' None of the names in {universe} traded across this whole range, so there is '
+                'nothing to trade; start later.')
+    if total is None or kept == total:
+        return ''
+    where = f' in {universe}' if universe else ''
+    dropped = total - kept
+    verb = 'was' if dropped == 1 else 'were'
+    return (f' Trades {kept} of the {total} names{where}: the other {dropped} {verb} not priced '
+            'across the whole range.')
+
+
 def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
-                  vintage: str = 'as_reported') -> tuple[bool, str]:
+                  vintage: str = 'as_reported',
+                  tradable: tuple[int, int | None] | None = None) -> tuple[bool, str]:
     """Whether Run can go straight to the engine, and the sentence saying so."""
     if kind != CROSS_SECTIONAL:
-        return True, f'{signal} reads prices only. Nothing to build.'
+        return True, f'{signal} reads prices only. Nothing to build.{_tradable_note(tradable, universe)}'
     if not _gap_reasons(gaps):
         return True, (f'Runs {signal} over {_scope_words(universe, gaps["n_tickers"])} from the '
-                      f'stored panel.{_cadence_note(gaps)}{_empty_note(gaps)}')
+                      f'stored panel.{_tradable_note(tradable, universe)}{_cadence_note(gaps)}'
+                      f'{_empty_note(gaps)}')
     return False, _needs_sentence(gaps, universe, vintage)
 
 

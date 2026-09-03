@@ -315,8 +315,19 @@ panel row exists as soon as a ticker has a close, so a name that listed halfway 
 belongs in it. **A run keeps only the names priced across its entire range**, capped at Top N and
 ordered by Ranked by, because a run needs one tradable set for its whole span.
 
-That distinction matters. Seven solar names put through a run's filter over a range starting in 2000
-leave nothing, since none of them were listed then.
+That makes a longer range stricter, not looser, which is counterintuitive enough that the card now
+says how much of the universe survives before you press:
+
+| range | of 7 solar names |
+|---|---|
+| 2022 to 2026 | Trades 6, the other 1 was not priced across the whole range |
+| 2016 to 2026 | Trades 4 |
+| 2010 to 2026 | Trades 1 |
+| 2000 to 2026 | None of them traded across this whole range; start later |
+
+Without that, a sixteen-year backtest of a seven-name universe silently becomes a one-stock
+backtest. Refusing outright, the CLI names the earliest start that would keep something: *the
+earliest start that keeps one is 2006-11-17, when FSLR first traded*.
 
 The same settings live in `backtest.toml` as defaults for a run started from the command line:
 

@@ -373,16 +373,28 @@ def show_research_plan(_tick, start, end, universe, vintage, panel_freq):
           Input('bt-runs-tick', 'data'), Input('bt-run-signal', 'value'),
           Input('bt-run-start', 'value'), Input('bt-run-end', 'value'), Input('bt-run-freq', 'value'),
           Input('bt-run-universe', 'value'), Input('bt-run-vintage', 'value'),
-          Input('bt-run-panel-freq', 'value'))
-def show_backtest_plan(_tick, signal, start, end, freq, universe, vintage, panel_freq):
-    """Say what Run will do before it is pressed, including anything it would have to build."""
+          Input('bt-run-panel-freq', 'value'), Input('bt-run-ntop', 'value'),
+          Input('bt-run-rankby', 'value'))
+def show_backtest_plan(_tick, signal, start, end, freq, universe, vintage, panel_freq, n_top, rank_by):
+    """Say what Run will do before it is pressed, what it would build, and how much it will trade."""
     kind = registry.SIGNALS[signal][0] if signal in registry.SIGNALS else registry.CROSS_SECTIONAL
+    tradable = _tradable_for(universe, start, end, n_top, rank_by)
     if kind != registry.CROSS_SECTIONAL:
-        return _plan_alert(*logic.backtest_plan({'n_tickers': 0}, kind, signal, universe))
+        return _plan_alert(*logic.backtest_plan({'n_tickers': 0}, kind, signal, universe,
+                                                tradable=tradable))
     gaps = _gaps_for(vintage, universe, start, end, panel_freq or 'M', freq or 'M')
     if gaps is None:
         return _note(BUSY)
-    return _plan_alert(*logic.backtest_plan(gaps, kind, signal, universe, vintage or 'as_reported'))
+    return _plan_alert(*logic.backtest_plan(gaps, kind, signal, universe, vintage or 'as_reported',
+                                            tradable))
+
+
+def _tradable_for(universe, start, end, n_top, rank_by):
+    """How much of a universe a run would trade, or None while the database is busy."""
+    try:
+        return data.tradable_names(universe, start, end, int(n_top or 500), rank_by or 'liquidity')
+    except (duckdb.Error, ValueError):
+        return None
 
 
 @callback(Output('bt-res-universe', 'data'), Output('bt-run-universe', 'data'),

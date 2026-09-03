@@ -272,8 +272,23 @@ def _run_universe(con, args: argparse.Namespace, run_cfg: backtest_config.Config
         source = f'the {len(named)} names in {args.universe or run_cfg.universe.name}' if named is not None \
             else 'the database'
         raise SystemExit(f'none of {source} traded across the whole of {calendar_start} to '
-                         f'{calendar_end}; shorten the range or pick another universe')
+                         f'{calendar_end}{_earliest_workable(con, named)}')
     return kept
+
+
+def _earliest_workable(con, named: list[str] | None) -> str:
+    """The soonest start that keeps a name, since telling someone to shorten the range begs the question.
+
+    A name qualifies only if it traded across the whole span, so the earliest usable start is the
+    first date any of them traded.
+    """
+    if named is None:
+        return '; shorten the range or pick another universe'
+    row = con.execute('SELECT min(Date), arg_min(Ticker, Date) FROM prices '
+                      'WHERE Ticker IN (SELECT unnest(?::VARCHAR[]))', [sorted(named)]).fetchone()
+    if row is None or row[0] is None:
+        return '; none of them has any prices at all'
+    return f'. The earliest start that keeps one is {row[0]}, when {row[1]} first traded'
 
 
 def _ensure_panel(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
