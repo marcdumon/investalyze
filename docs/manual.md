@@ -5,9 +5,12 @@ User guide for the `investalyze` repo, built in parts and documented here as eac
 **Part 1, the CLIs**: **ingest** (getting market data into the DB), **cleaning** (persistent
 manual fixes for bad vendor data) and **quality** (anomaly detection over the ingested data).
 
-**Part 2, the apps**: a four-page Dash UI over the same data. See
+**Part 2, the apps**: a five-page Dash UI over the same data. See
 [Apps: the Dash UI](#apps-the-dash-ui), which is also the easier way to drive everything in
 Part 1.
+
+**Part 3, the backtest**: point-in-time factors, factor evaluation and an event-driven engine.
+See [Backtest](#backtest-signals-evaluation-and-simulated-portfolios).
 
 ---
 
@@ -211,13 +214,148 @@ worst tickers and sample rows. Confirmed data bug → quirks-log entry → `clea
 
 ---
 
+## Backtest: signals, evaluation and simulated portfolios
+
+Everything below is a button on the **Backtest** page, which is the easier way to drive it. The
+commands are what those buttons run.
+
+```bash
+# 1. build the point-in-time factor panel (needed by every cross-sectional signal)
+python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --freq M
+
+# 2. score every factor against forward returns
+python -m investalyze.backtest evaluate --horizon 21
+
+# 3. run a signal through the engine
+python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 --end 2024-12-31
+
+# 4. or run it fold by fold, out of sample
+python -m investalyze.backtest walkforward --signal factor_composite --start 2014-01-01 \
+    --end 2024-12-31 --train 756 --test 252 --embargo 21
+
+# what signals exist
+python -m investalyze.backtest list
+```
+
+Settings live in `backtest.toml`: starting cash, benchmark, rebalance frequency, the universe
+rule, the cost model (slippage, commission, market impact, borrow) and the position limits.
+Every key is optional.
+
+**Read the survivorship note before any number.** `prices` holds the full history of the names
+listed *today* and nothing for names that delisted earlier, so every backtest over this data is
+biased upward. The note is computed per run, stored in `backtest_runs.SurvivorshipNote`, and
+printed above the metrics rather than beneath them. It will weaken on its own if delisted price
+history is ever ingested.
+
+### Defining your own factors
+
+**Screener page -> "Your factors"** at the top. The panel lists what is defined, and the form below
+adds one, checking the formula as you type and showing the exact TOML it will write. Saving makes the
+factor live in the Screener immediately; giving it values in backtests takes one press of "1. Build
+factor panel" on the Backtest page.
+
+It is stored in `factors.toml` at the repo root, which you can also edit by hand. Either way a
+factor behaves like a built-in: a Screener column, a rank and a composite-score option, a column in
+`factor_panel`, a row in the `evaluate` output, and a name a signal can trade on.
+
+Two kinds share the file.
+
+**Expression** factors combine columns the panel already holds:
+
+```toml
+[factors.cheap_quality]
+expression = '(rank_fcf_yield + rank_roe + rank_op_margin) / 3'
+higher_is_better = true
+description = 'A name has to be cheap on free cash flow and profitable, not just one of the two.'
+```
+
+Alongside every built-in factor `x` you may use `rank_x`, its percentile from 0 to 100 within that
+date's cross-section, already oriented so 100 is the good end. Ranking before combining is what puts
+factors measured in different units on one scale. `last_close`, `mcap` and `mcap_bn` are available
+too. Arithmetic and comparisons only: a function call is refused when the file is read.
+
+**Ratio** factors read the statements directly, reaching quantities the built-in library does not
+hold:
+
+```toml
+[factors.rd_intensity]
+numerator = '-Research & Development'
+denominator = 'Revenue'
+higher_is_better = true
+```
+
+The statement is inferred from the column name, and a name appearing in two statements is refused as
+ambiguous rather than resolved by guesswork. Income and cashflow terms are summed over the trailing
+four published quarters; balance terms take the latest published quarter. A denominator of zero or
+less yields NaN, matching how every built-in ratio guards its scale term.
+
+SimFin stores expenses as negative numbers, so prefix a term with `-` to read its magnitude:
+`-Research & Development` gives research spend as a positive share of revenue.
+
+A new factor adds a column to `factor_panel` rather than needing the table rebuilt.
+
+Errors are raised when the file is read, naming the factor and the offending term, so a typo fails
+at startup rather than producing a column of NaN much later. Setting `INVESTALYZE_FACTORS_FILE` to
+another path reads definitions from there; setting it empty leaves the library at its built-in 24,
+which is what the test suite does so nobody's own factors can change what it asserts.
+
+### Selecting the stocks a run trades
+
+The **Universe** picker on the Backtest page lists every universe saved from the Screener. It is the
+candidate pool; **Top N** and **Ranked by** then cut it to the names priced across the whole range.
+Leaving it blank ranks the whole database.
+
+The same settings live in `backtest.toml` as defaults for a run started from the command line:
+
+```toml
+[universe]
+name = 'mid_large_mega_non_fin_realest'
+n_top = 300
+rank_by = 'mcap'                          # or 'liquidity', 'ticker'
+require_sector = true
+```
+
+
+### What the pieces do
+
+| Step | Module | Produces |
+|------|--------|----------|
+| Factor panel | `analysis/factors_pit.py` | `factor_panel`, one row per ticker and as-of date |
+| Evaluation | `backtest/evaluation.py` | `factor_ic`, `factor_quantiles` |
+| Weights | `backtest/portfolio.py` | Target weights from a cross-section of scores |
+| Engine | `backtest/engine.py` | `backtest_runs`, `backtest_equity`, `backtest_trades` |
+| Walk-forward | `backtest/walkforward.py` | Per-fold out-of-sample statistics |
+
+### Point-in-time rules
+
+Fundamentals are read as first reported (`IsRestated = FALSE`) and a quarterly window becomes
+visible only once its newest filing was published. Publish lag runs a median 43 days and a 95th
+percentile of 397, so quarters do arrive out of order; each window carries the publish date of
+its latest member, which is what holds a window back until all of it was knowable.
+
+`--vintage restated` reads the same rows the screener reads. That is look-ahead for any
+historical date and exists so the two can be compared on the latest one.
+
+### Two rules the engine holds to
+
+- **Decide at a close, fill at the next open.** Orders generated from information at session `t`
+  fill at session `t + 1`'s open, which is the primary look-ahead guard.
+- **Fills come from the split-adjusted bars; dividends arrive as cash.** `O/H/L/C/V` are
+  mutually consistent, so fills, stops and marks all read from them, and `AC` serves the signal
+  layer alone. A position's share count is therefore constant across a split.
+
+Long-only is the default. With total survivorship bias a short book never contains a company
+that went to zero, which makes a long-short result the most misleading output available here.
+
+---
+
 ## Apps: the Dash UI
 
 ```bash
 python -m investalyze.apps          # then open http://127.0.0.1:8050
 ```
 
-One server, four pages, a shared shell with a light/dark toggle in the sidebar. Every page
+One server, five pages, a shared shell with a light/dark toggle in the sidebar. Every page
 reads through a short-lived read-only connection.
 
 DuckDB allows a single writer, so a running job locks the DB. Pages that hit it show a
@@ -227,9 +365,10 @@ jobs started from the UI. Close them first.
 | Page | Path | For |
 |------|------|-----|
 | Control Panel | `/` | Run ingest, housekeeping, quality and cleaning; watch the job log. |
-| Screener | `/screener` | Filter the universe down to a saved list of tickers. |
+| Screener | `/screener` | Define your own factors, then filter the universe down to a saved list of tickers. |
 | Data Quality | `/quality` | Triage anomalies into the quality log or a staged cleaning fix. |
 | Stock | `/ticker` | One ticker in depth: performance, fundamentals, statements, peers, risk. |
+| Backtest | `/backtest` | Configure and launch a run, then read its equity curve, fills and factor evaluation. |
 
 ---
 

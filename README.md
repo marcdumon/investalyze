@@ -37,11 +37,13 @@ Start with the UI. Every CLI below is also a button in its Control Panel.
 | `src/investalyze/ingest/` | Provider adapters (Yahoo, SimFin, Stooq), orchestration, housekeeping, listings scans. |
 | `src/investalyze/quality/` | Anomaly checks over prices, corporate actions and fundamentals. Findings only. |
 | `src/investalyze/cleaning/` | Persistent manual corrections, replayed after any reload. |
-| `src/investalyze/analysis/` | Factor computation, price segments, encodings, dimensionality reduction. |
-| `src/investalyze/apps/` | The Dash UI: control panel, screener, data quality, stock. |
+| `src/investalyze/analysis/` | Factor computation (snapshot and point-in-time), return panels, price segments, encodings, dimensionality reduction. |
+| `src/investalyze/backtest/` | Signals, portfolio construction, the event-driven engine, factor evaluation, walk-forward. |
+| `src/investalyze/apps/` | The Dash UI: control panel, screener (with the factor editor), data quality, stock, backtest. |
 | `notebooks/` | Exploration, plus `9999_data_quirks.ipynb`, the running findings-and-decisions log. |
 | `experiments/` | Model work over saved universes (classification, ranking, forecasting). |
-| `tests/` | `pytest`, 362 tests. |
+| `tests/` | `pytest`, 731 tests. |
+| `factors.toml` | Your own factor definitions, merged into the factor library at import. |
 | `docs/manual.md` | The user guide: how to actually run all of the above. |
 | `docs/ingest_data.md` | Data reference: every table, column and provider decision. |
 
