@@ -167,8 +167,14 @@ def _gap_reasons(gaps: dict) -> list[str]:
     return reasons
 
 
-def _scope_words(universe: str | None, n_tickers: int) -> str:
-    """How the names a request covers are described in a sentence."""
+def _scope_words(universe: str | None, n_tickers: int | None) -> str:
+    """How the names a request covers are described in a sentence.
+
+    An unknown or zero count names the scope in words instead. Saying a request covers no names when
+    it covers every one of them is worse than not counting.
+    """
+    if not n_tickers:
+        return f'the names in {universe}' if universe else 'the whole database'
     return f'{n_tickers:,} names in {universe}' if universe else f'{n_tickers:,} names'
 
 

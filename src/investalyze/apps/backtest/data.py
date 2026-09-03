@@ -214,11 +214,11 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
         build = writer.latest_panel_build(con, vintage) \
             if storage.table_exists(con, 'factor_panel_builds') else None
         held = factors_pit.stored_dates(con, vintage, tickers)
+        n_tickers = len(tickers) if tickers is not None else _priced_tickers(con)
     finally:
         con.close()
 
     missing = [date for date in grid if date not in held]
-    n_tickers = len(tickers) if tickers is not None else (coverage['n_tickers'] if coverage else 0)
     return {
         'requested_dates': len(grid),
         'missing_dates': len(missing),
@@ -231,6 +231,17 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
         'panel_frequency': coverage['frequency'] if coverage else None,
         'rebalance': rebalance,
     }
+
+
+def _priced_tickers(con: duckdb.DuckDBPyConnection) -> int | None:
+    """How many names a build over the whole database would cover.
+
+    Counted from the prices rather than from the stored panel: a vintage with no panel yet would
+    otherwise report no names, when what it means is that nothing has been built for it.
+    """
+    if not storage.table_exists(con, 'prices'):
+        return None
+    return con.execute('SELECT count(DISTINCT Ticker) FROM prices').fetchone()[0]
 
 
 def _build_estimate(build: dict | None, rows: int) -> float | None:

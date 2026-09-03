@@ -758,3 +758,16 @@ def test_the_build_wording_uses_the_cadence_being_built_not_the_one_stored():
     _ready, sentence = logic.research_plan(_gaps(missing_dates=42, build_frequency='W',
                                                  panel_frequency='M'), None)
     assert '42 weekly dates' in sentence
+
+
+def test_a_vintage_with_no_panel_still_counts_the_names_a_build_would_cover():
+    """The count used to come from the panel, so a vintage with none reported no names at all."""
+    _ready, sentence = logic.research_plan(_gaps(missing_dates=120, n_tickers=6470), None, 'restated')
+    assert 'for 6,470 names' in sentence
+    assert 'for 0 names' not in sentence
+
+
+def test_an_uncounted_scope_names_itself_rather_than_saying_zero():
+    assert logic._scope_words(None, 0) == 'the whole database'
+    assert logic._scope_words('solar', None) == 'the names in solar'
+    assert logic._scope_words('solar', 7) == '7 names in solar'
