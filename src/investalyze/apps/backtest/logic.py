@@ -219,16 +219,6 @@ def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
     return False, _needs_sentence(gaps, universe, vintage)
 
 
-def build_prompt(gaps: dict, universe: str | None, vintage: str) -> str:
-    """The dialog body shown before anything is built: what, why, and how long."""
-    timing = (f'Time: {_estimate_words(gaps["seconds_estimate"]).lstrip(", ")}.'
-              if gaps['seconds_estimate'] else 'Time: no earlier build to estimate from.')
-    lines = [f'This builds {_build_words(gaps, universe, vintage)}.', '']
-    lines += [f'  {reason}' for reason in _gap_reasons(gaps)]
-    lines += ['', timing]
-    return '\n'.join(lines)
-
-
 def _universe_argv(universe: str | None, n_top: int | None, rank_by: str | None) -> list[str]:
     """The flags that narrow a run to one universe, left out where the card said nothing."""
     argv = []

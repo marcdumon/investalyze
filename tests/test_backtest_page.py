@@ -574,21 +574,7 @@ def test_a_backtest_past_the_panel_is_not_ready():
     assert ready is False
 
 
-def test_the_dialog_names_what_it_builds_every_reason_and_the_cost():
-    body = logic.build_prompt(_gaps(missing_dates=42, changed_factors=['x'], seconds_estimate=200.0),
-                              'solar', 'as_reported')
-    assert 'This builds the as reported panel: 42 monthly dates for 7 names in solar.' in body
-    assert '42 of the 120 monthly dates it needs do not exist yet' in body
-    assert 'x was redefined since the last build' in body
-    assert 'Time: about 3 minutes.' in body
-
-
-def test_the_dialog_says_when_it_cannot_estimate_the_time():
-    body = logic.build_prompt(_gaps(missing_dates=42), None, 'as_reported')
-    assert 'Time: no earlier build to estimate from.' in body
-
-
-# --- the build only ever travels with a confirmation ---
+# --- the build travels with the command, never on its own ---
 
 def test_neither_command_builds_unless_asked():
     _t, evaluate = logic.evaluate_argv(21, 'as_reported', 'solar', '2015-01-01', '2024-12-31')
@@ -610,82 +596,6 @@ def test_a_confirmed_build_travels_with_an_evaluation_too():
     assert 'build panel, then evaluate' in title
 
 
-def test_the_page_asks_before_building(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-run'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps(missing_dates=42))
-
-    _launched, opened, text, pending = page.launch(
-        None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21,
-        'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity', 'as_reported')
-
-    assert opened is True
-    assert 'This builds the as reported panel: 42 monthly dates' in text
-    assert pending['kind'] == 'run'
-    assert started == []
-
-
-def test_the_page_launches_straight_away_when_nothing_needs_building(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-evaluate'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps())
-
-    _launched, opened, _text, pending = page.launch(
-        1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21,
-        'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity', 'as_reported')
-
-    assert opened is False
-    assert pending is None
-    assert len(started) == 1
-    assert '--build-panel' not in started[0]
-
-
-def test_confirming_the_dialog_starts_the_job_with_the_build(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-yes'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    pending = {'kind': 'run', 'signal': 'factor_composite', 'start': '2015-01-01',
-               'end': '2024-12-31', 'freq': 'M', 'universe': None, 'n_top': 500,
-               'rank_by': 'liquidity', 'vintage': 'as_reported'}
-
-    assert page.resolve_build(1, None, pending) == (False, None)
-    assert '--build-panel' in started[0]
-
-
-def test_cancelling_the_dialog_builds_nothing(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-no'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-
-    assert page.resolve_build(None, 1, {'kind': 'evaluate'}) == (False, None)
-    assert started == []
-
-
-def test_a_build_button_that_reports_no_click_starts_nothing(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-yes'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-
-    assert page.resolve_build(None, None, {'kind': 'evaluate'}) == (False, None)
-    assert started == []
-
-
 def test_a_rebalance_finer_than_the_panel_runs_and_says_what_it_trades_on():
     """As-of reading makes this work, so it is a note about staleness, not a reason to rebuild."""
     ready, sentence = logic.backtest_plan(_gaps(requested_frequency='W'), 'cross_sectional',
@@ -697,3 +607,62 @@ def test_a_rebalance_finer_than_the_panel_runs_and_says_what_it_trades_on():
 def test_a_rebalance_matching_the_panel_says_nothing_extra():
     _ready, sentence = logic.backtest_plan(_gaps(), 'cross_sectional', 'factor_composite', None)
     assert 'panel updates' not in sentence
+
+
+def test_a_press_that_needs_a_build_launches_one_command_that_does_both(monkeypatch):
+    """The line under the button already said this would happen, so it happens on one press."""
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps(missing_dates=42))
+
+    page.launch(None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21,
+                'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
+                'as_reported')
+
+    assert len(started) == 1
+    assert '--build-panel' in started[0]
+
+
+def test_a_press_that_needs_nothing_built_leaves_the_flag_off(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-evaluate'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps())
+
+    page.launch(1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21,
+                'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
+                'as_reported')
+
+    assert '--build-panel' not in started[0]
+
+
+def test_a_running_job_offers_a_way_out_of_it(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page.MANAGER, 'current', SimpleNamespace(title='backtest run', lines=[]))
+    assert 'bt-btn-cancel' in str(page.show_job_status(1))
+
+
+def test_cancelling_stops_the_running_job(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    cancelled = []
+    monkeypatch.setattr(page.MANAGER, 'cancel', lambda: cancelled.append(True))
+    page.cancel_job(1)
+    assert cancelled == [True]
+
+
+def test_a_cancel_button_that_reports_no_click_stops_nothing(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    cancelled = []
+    monkeypatch.setattr(page.MANAGER, 'cancel', lambda: cancelled.append(True))
+    page.cancel_job(None)
+    assert cancelled == []

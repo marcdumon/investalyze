@@ -195,17 +195,7 @@ def layout() -> html.Div:
                           value='runs', pt=10),
             dmc.TabsPanel(factors_panel, value='factors', pt=10),
         ], value='runs'),
-        dmc.Modal(
-            id='bt-build-modal', title='Build the factor panel first?', centered=True, size='lg',
-            children=[
-                dmc.Text(id='bt-build-text', size='sm', style={'whiteSpace': 'pre-line'}),
-                dmc.Group([
-                    dmc.Button('Cancel', id='bt-build-no', variant='default', size='xs'),
-                    dmc.Button('Build and continue', id='bt-build-yes', color='orange', size='xs'),
-                ], justify='flex-end', mt=12),
-            ],
-        ),
-        dcc.Store(id='bt-pending-job'),
+        dcc.Store(id='bt-cancel-tick'),
         dmc.Modal(
             id='bt-delete-modal', title='Delete runs', centered=True, size='lg',
             children=[
@@ -360,20 +350,21 @@ def load_universe_options(_tick):
 
 @callback(Output('bt-job-status', 'children'), Input('bt-poll', 'n_intervals'))
 def show_job_status(_n):
-    """Show what the job runner is doing, so a launched job is visibly running."""
+    """Show what the job runner is doing, with a way out of it while it is still running."""
     job = MANAGER.current or (MANAGER.history[0] if MANAGER.history else None)
     if job is None:
         return None
     if MANAGER.current is not None:
-        return dmc.Group([dmc.Loader(size='xs'), dmc.Text(job.title, size='xs')], gap=6)
+        return dmc.Group([dmc.Loader(size='xs'), dmc.Text(job.title, size='xs'),
+                          dmc.Button('Cancel', id='bt-btn-cancel', size='xs', color='red',
+                                     variant='subtle')], gap=6)
     tail = '\n'.join(job.lines[-12:]) if getattr(job, 'lines', None) else ''
     colour = 'green' if getattr(job, 'returncode', 1) == 0 else 'red'
     return dmc.Alert(dmc.Code(tail, block=True) if tail else 'finished',
                      title=f'{job.title} finished', color=colour, variant='light')
 
 
-@callback(Output('bt-launched', 'data'), Output('bt-build-modal', 'opened'),
-          Output('bt-build-text', 'children'), Output('bt-pending-job', 'data'),
+@callback(Output('bt-launched', 'data'),
           Input('bt-btn-evaluate', 'n_clicks'), Input('bt-btn-run', 'n_clicks'),
           State('bt-res-start', 'value'), State('bt-res-end', 'value'),
           State('bt-res-universe', 'value'), State('bt-res-vintage', 'value'),
@@ -384,17 +375,18 @@ def show_job_status(_n):
           prevent_initial_call=True)
 def launch(_evaluate, _run, res_start, res_end, res_universe, res_vintage, res_horizon,
            signal, run_start, run_end, freq, run_universe, n_top, rank_by, run_vintage):
-    """Start a card's job, or ask first when it would have to build the factor panel.
+    """Start a card's job, building the factor panel first when the card said it would have to.
 
-    The card has already said what the press will do, so the dialog only appears when that says a
-    build is needed. Nothing is launched from here in that case: the confirmation launches it.
+    One press: the line under the button has already said what will happen, and asking again would
+    only repeat it back. What a press cannot promise is how long a build takes, so the job is
+    interruptible instead, through the Cancel that appears beside it while it runs.
     """
     if MANAGER.current is not None:
         raise PreventUpdate
 
     if ctx.triggered_id == 'bt-btn-evaluate':
         gaps = _gaps_for(res_vintage, res_universe, res_start, res_end, 'M')
-        ready, _ = logic.research_plan(gaps, res_universe, res_vintage) if gaps else (False, '')
+        ready = gaps is not None and logic.research_plan(gaps, res_universe, res_vintage)[0]
         pending = {'kind': 'evaluate', 'horizon': int(res_horizon or 21), 'vintage': res_vintage,
                    'universe': res_universe, 'start': res_start, 'end': res_end}
     else:
@@ -406,13 +398,11 @@ def launch(_evaluate, _run, res_start, res_end, res_universe, res_vintage, res_h
         pending = {'kind': 'run', 'signal': signal, 'start': run_start, 'end': run_end, 'freq': freq,
                    'universe': run_universe, 'n_top': n_top, 'rank_by': rank_by, 'vintage': run_vintage}
 
-    if ready:
-        title, argv = _job_argv(pending, build_panel=False)
-        MANAGER.start(title, argv)
-        return title, False, dash.no_update, None
-    if gaps is None:
-        raise PreventUpdate
-    return dash.no_update, True, logic.build_prompt(gaps, pending['universe'], pending['vintage']), pending
+    if not ready and gaps is None:
+        raise PreventUpdate   # the database is busy, so what is missing is unknown
+    title, argv = _job_argv(pending, build_panel=not ready)
+    MANAGER.start(title, argv)
+    return title
 
 
 def _job_argv(pending: dict, *, build_panel: bool) -> tuple[str, list[str]]:
@@ -425,19 +415,13 @@ def _job_argv(pending: dict, *, build_panel: bool) -> tuple[str, list[str]]:
                           pending['vintage'], build_panel)
 
 
-@callback(Output('bt-build-modal', 'opened', allow_duplicate=True),
-          Output('bt-pending-job', 'data', allow_duplicate=True),
-          Input('bt-build-yes', 'n_clicks'), Input('bt-build-no', 'n_clicks'),
-          State('bt-pending-job', 'data'), prevent_initial_call=True)
-def resolve_build(yes_clicks, _no, pending):
-    """Launch the job with the build in front of it on Build and continue; close on Cancel.
-
-    A click is required, not merely a callback firing with the button as its trigger: a remounted
-    button reports no clicks, and nothing that writes to the database should start from one.
-    """
-    if ctx.triggered_id == 'bt-build-yes' and yes_clicks and pending and MANAGER.current is None:
-        MANAGER.start(*_job_argv(pending, build_panel=True))
-    return False, None
+@callback(Output('bt-cancel-tick', 'data'), Input('bt-btn-cancel', 'n_clicks'),
+          prevent_initial_call=True)
+def cancel_job(n_clicks):
+    """Stop the running job, since a single press cannot promise how long a build will take."""
+    if n_clicks:
+        MANAGER.cancel()
+    return n_clicks
 
 
 @callback(Output('bt-runs-tick', 'data'), Input('bt-poll', 'n_intervals'),

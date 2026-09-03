@@ -348,13 +348,16 @@ Runs factor_composite over 7 names in solar_small_mid_large from the stored pane
 sma_cross reads prices only. Nothing to build.
 ```
 
-When the panel cannot answer, the line names what would be built and why, and pressing asks before
-anything is written:
+When the panel cannot answer, the line names what would be built and why:
 
 ```
 Builds the restated panel: 321 monthly dates for 7 names in solar_small_mid_large.
 The panel holds nothing for this vintage and these names yet.
 ```
+
+Pressing then does exactly that, in one job and one press. There is no confirmation, because the
+line has already said what will happen. What a press cannot promise is how long a build takes, so
+a **Cancel** appears beside the running job instead.
 
 Three things make a panel insufficient, and all three are detected: dates that were never built, a
 factor with no values, and a factor whose formula changed since the build. The last one is invisible
@@ -369,7 +372,7 @@ A run the panel genuinely cannot reach is refused rather than traded flat: if fe
 rebalance dates carry a score, or a factor it needs has no values, it stops and says so.
 
 Nothing is ever built implicitly. The CLI only builds behind `--build-panel`, and the page passes
-that flag only after you have confirmed the dialog:
+that flag only when its line said it would:
 
 ```bash
 python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 \
