@@ -17,7 +17,6 @@ from investalyze.analysis import panels
 from investalyze.ingest import storage
 
 ADV_WINDOW = 21          # sessions in the median dollar-volume estimate the fill cap uses
-STALE_DAYS = 180         # a name last traded this long before the end counts as having stopped
 ERROR_CHECKS = ('ohlc_inconsistent', 'nonpositive_price')  # default anomalies to treat as untradable
 
 
@@ -137,41 +136,6 @@ def build_market(con: duckdb.DuckDBPyConnection, tickers: list[str], *, start: s
         tradable=tradable.to_numpy(dtype=bool),
         adjusted_close=adjusted.to_numpy(dtype=np.float64),
     )
-
-
-def universe_caveats(con: duckdb.DuckDBPyConnection, tickers: list[str], end: str) -> list[str]:
-    """Facts about this universe a reader needs before believing any performance number from it.
-
-    The survivorship sentence is computed rather than boilerplate, so it weakens on its own if price
-    history for delisted names is ever ingested.
-    """
-    cutoff = (pd.Timestamp(end) - pd.Timedelta(days=STALE_DAYS)).date().isoformat()
-    names = sorted(tickers) if tickers else [row[0] for row in
-                                             con.execute('SELECT DISTINCT Ticker FROM prices').fetchall()]
-    stopped = con.execute("""
-        SELECT count(*) FROM (
-            SELECT Ticker, max(Date) AS last_date
-            FROM prices
-            WHERE Ticker IN (SELECT unnest(?::VARCHAR[]))
-            GROUP BY Ticker
-            HAVING max(Date) < ?
-        )
-    """, [names, cutoff]).fetchone()[0]
-
-    caveats = []
-    if stopped == 0:
-        caveats.append(
-            f'survivorship: 0 of {len(names):,} universe members stop trading before {cutoff}; '
-            'every backtested name survived to the present, so these returns are biased upward by an '
-            'unmeasurable amount'
-        )
-    else:
-        share = stopped / len(names)
-        caveats.append(
-            f'survivorship: {stopped:,} of {len(names):,} universe members ({share:.1%}) stop trading '
-            f'before {cutoff}, so some delisting history is represented'
-        )
-    return caveats
 
 
 def benchmark_caveat(name: str, benchmark_end: pd.Timestamp | None, run_end: pd.Timestamp) -> str | None:

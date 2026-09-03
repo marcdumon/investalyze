@@ -359,9 +359,7 @@ def _run(con, args: argparse.Namespace, run_cfg: backtest_config.Config, data_ro
     benchmark_returns = benchmark_equity.pct_change() if benchmark_equity is not None else None
     stats = performance.summary(equity, fills, benchmark_returns)
 
-    caveats = market_data.universe_caveats(con, tickers, args.end)
-    if benchmark_note:
-        caveats.append(benchmark_note)
+    caveats = [benchmark_note] if benchmark_note else []
 
     identifier = writer.run_id({'signal': args.signal, 'start': args.start, 'end': args.end,
                                 'params': params, 'universe': sorted(tickers),
@@ -448,8 +446,6 @@ def _walk_forward(con, args: argparse.Namespace, run_cfg: backtest_config.Config
                                             'max_weight': run_cfg.limits.max_weight}
     result = walkforward.run_walk_forward(con, factory, windows, run_cfg, params)
 
-    for caveat in market_data.universe_caveats(con, [], args.end):
-        log.warning(caveat)
     columns = ['fold', 'n_tickers', 'cagr', 'vol', 'sharpe', 'max_drawdown', 'turnover', 'n_trades']
     print(result.folds[columns].to_string(index=False, float_format=lambda value: f'{value:.4f}'))
     combined = performance.summary(result.equity, result.fills)

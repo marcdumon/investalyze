@@ -135,8 +135,7 @@ TABLES: dict[str, Table] = {
         'Vintage, Universe, Factor, Date, Horizon, Quantile'),
     'backtest_runs': Table(
         BACKTEST,
-        'One row per stored run: the settings behind it, its headline statistics, and the '
-        'survivorship note that belongs with any number read off it.',
+        'One row per stored run: the settings behind it and its headline statistics.',
         'python -m investalyze.backtest run',
         'RunId'),
     'backtest_equity': Table(

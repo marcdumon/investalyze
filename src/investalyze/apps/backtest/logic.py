@@ -10,21 +10,28 @@ from investalyze.analysis import custom_factors
 from investalyze.analysis.factors import BUILTIN_FACTORS, FACTORS, HIGHER_IS_BETTER
 from investalyze.backtest.engine import CROSS_SECTIONAL
 
-# no widths: the grid autosizes these to their contents, so nothing is clipped. The run id
-# sits last because it identifies a run for the CLI rather than describing it; what a reader
-# recognises a run by is when it was made and what it ran.
+# the grid autosizes these to their contents; minWidth is a floor under that, since
+# autoSize's canvas measurement has been seen to under-size a column when browser zoom or
+# DPI scaling changes rendered text width independently of it, which otherwise reads as
+# truncated data rather than a rendering quirk. The run id sits last because it identifies a
+# run for the CLI rather than describing it; what a reader recognises a run by is when it was
+# made and what it ran.
 RUN_COLUMNS = [
-    {'field': 'Created', 'headerName': 'Run made'},
-    {'field': 'Signal', 'headerName': 'Signal'},
-    {'field': 'StartDate', 'headerName': 'From'},
-    {'field': 'EndDate', 'headerName': 'To'},
-    {'field': 'NTickers', 'headerName': 'Names'},
-    {'field': 'Cagr', 'headerName': 'CAGR', 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
-    {'field': 'Sharpe', 'headerName': 'Sharpe', 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
-    {'field': 'MaxDrawdown', 'headerName': 'Max DD', 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
-    {'field': 'Turnover', 'headerName': 'Turnover', 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
-    {'field': 'NTrades', 'headerName': 'Fills'},
-    {'field': 'RunId', 'headerName': 'Run id'},
+    {'field': 'Created', 'headerName': 'Run made', 'minWidth': 150},
+    {'field': 'Signal', 'headerName': 'Signal', 'minWidth': 130},
+    {'field': 'StartDate', 'headerName': 'From', 'minWidth': 100},
+    {'field': 'EndDate', 'headerName': 'To', 'minWidth': 100},
+    {'field': 'NTickers', 'headerName': 'Names', 'minWidth': 90},
+    {'field': 'Cagr', 'headerName': 'CAGR', 'minWidth': 90,
+     'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
+    {'field': 'Sharpe', 'headerName': 'Sharpe', 'minWidth': 90,
+     'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
+    {'field': 'MaxDrawdown', 'headerName': 'Max DD', 'minWidth': 95,
+     'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
+    {'field': 'Turnover', 'headerName': 'Turnover', 'minWidth': 95,
+     'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
+    {'field': 'NTrades', 'headerName': 'Fills', 'minWidth': 90},
+    {'field': 'RunId', 'headerName': 'Run id', 'minWidth': 130},
 ]
 
 FACTOR_COLUMNS = [

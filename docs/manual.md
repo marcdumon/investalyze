@@ -247,11 +247,11 @@ Settings live in `backtest.toml`: starting cash, benchmark, rebalance frequency,
 rule, the cost model (slippage, commission, market impact, borrow) and the position limits.
 Every key is optional.
 
-**Read the survivorship note before any number.** `prices` holds the full history of the names
-listed *today* and nothing for names that delisted earlier, so every backtest over this data is
-biased upward. The note is computed per run, stored in `backtest_runs.SurvivorshipNote`, and
-printed above the metrics rather than beneath them. It will weaken on its own if delisted price
-history is ever ingested.
+**Read "Delisted companies" below before trusting any number.** No run carries a per-run
+survivorship note any more: `prices` holds no history for names that delisted before this database
+started tracking them, so the note could only ever say the same thing, every time, for every run.
+That gap is real and open; see
+[Delisted companies, and the bias they leave behind](#delisted-companies-and-the-bias-they-leave-behind).
 
 ### Defining your own factors
 
@@ -609,7 +609,7 @@ and a test fails when a table exists in the database without a line here.
 | `factor_panel_builds` | One row per build of the factor panel: what was asked for, how long it took, and a fingerprint of the factor formulas in force, which is how a redefined factor is noticed. | `python -m investalyze.backtest factors` |
 | `factor_ic` | Information coefficient per date: the rank correlation between a factor and the return that followed it. Averaged, this is the Mean IC column on the Factors tab. | `python -m investalyze.backtest evaluate` |
 | `factor_quantiles` | Forward return of each score bucket per date, as a mean and as a median. The two part company on a universe that was never filtered for price. | `python -m investalyze.backtest evaluate` |
-| `backtest_runs` | One row per stored run: the settings behind it, its headline statistics, and the survivorship note that belongs with any number read off it. | `python -m investalyze.backtest run` |
+| `backtest_runs` | One row per stored run: the settings behind it and its headline statistics. | `python -m investalyze.backtest run` |
 | `backtest_equity` | A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it. | `python -m investalyze.backtest run` |
 | `backtest_trades` | Every fill a stored run made, with the price it paid and what the trade cost. | `python -m investalyze.backtest run` |
 

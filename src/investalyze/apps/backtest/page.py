@@ -4,9 +4,6 @@ The panel at the top builds a factor panel, evaluates factors and runs a signal,
 `python -m investalyze.backtest` job, since every CLI writes to the same single-writer DuckDB file
 and the page itself only ever reads. Selecting a run draws its equity against the benchmark with a
 drawdown band beneath, and lists the fills. Deleting one goes through the same job runner.
-
-The survivorship note travels with the run rather than being written into the page, so a run made
-against a universe that does contain delisted names will say so on its own.
 """
 
 import dash
@@ -60,7 +57,10 @@ def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = Fal
         options['rowSelection'] = _MULTI_SELECT
     return dag.AgGrid(
         id=grid_id, columnDefs=columns, rowData=[],
-        defaultColDef={'sortable': True, 'resizable': True},
+        # minWidth is the floor under autoSize/sizeToFit: seen to under-size a column when
+        # browser zoom or DPI scaling changes rendered text width independently of the
+        # canvas autoSize measures with, which otherwise reads as truncated data
+        defaultColDef={'sortable': True, 'resizable': True, 'minWidth': 70},
         dashGridOptions=options,
         columnSize='autoSize' if selectable else 'sizeToFit',
         columnSizeOptions={'skipHeader': False},
@@ -312,11 +312,10 @@ def show_run(selected, dark):
 
     rebased = logic.rebase(curve, ['Equity', 'BenchmarkEquity'])
     drawdown = logic.drawdown_from_equity(curve['Equity'])
-    notes = [run['SurvivorshipNote']]
+    caveats = None
     if len(selected) > 1:
-        notes.insert(0, f'{len(selected)} runs selected; the chart below is run {run["RunId"]}.')
-    caveats = dmc.Alert([dmc.Text(note, size='sm') for note in notes],
-                        title='Read this first', color='yellow', variant='light')
+        note = f'{len(selected)} runs selected; the chart below is run {run["RunId"]}.'
+        caveats = dmc.Alert(dmc.Text(note, size='sm'), title='Note', color='yellow', variant='light')
     return _curve_figure(rebased, drawdown, run, dark), trades.to_dict('records'), caveats
 
 

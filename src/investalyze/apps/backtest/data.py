@@ -43,7 +43,7 @@ def get_runs() -> pd.DataFrame:
             SELECT RunId, Signal, Kind, StartDate::VARCHAR AS StartDate, EndDate::VARCHAR AS EndDate,
                    NTickers, Benchmark, Cagr, Vol, Sharpe,
                    Sortino, MaxDrawdown, Calmar, Turnover, HitRate, NTrades, FinalEquity, TotalCosts,
-                   SurvivorshipNote, strftime(CreatedAt, '%Y-%m-%d %H:%M') AS Created
+                   strftime(CreatedAt, '%Y-%m-%d %H:%M') AS Created
             FROM backtest_runs ORDER BY CreatedAt DESC
         """).df()
     finally:

@@ -1,8 +1,8 @@
 """Tests for the run report: the rows it stores and the order it renders things in.
 
 The rule under test is that a reader meets the caveats before the numbers. A report whose headline
-Sharpe appears above the note about what the universe cannot contain is a report that misleads, so
-the ordering is asserted rather than left to the template.
+Sharpe appears above a caveat about the run is a report that misleads, so the ordering is asserted
+rather than left to the template.
 """
 
 from pathlib import Path
@@ -15,7 +15,7 @@ from investalyze.backtest import performance, report, writer
 from investalyze.backtest.config import read as read_config
 
 DATES = pd.bdate_range('2020-01-01', periods=10)
-SURVIVORSHIP = 'survivorship: 0 of 3 universe members stop trading before 2020-01-01; biased upward'
+BENCHMARK_NOTE = 'benchmark ^NDX covers only to 2019-12-31'
 
 
 @pytest.fixture
@@ -29,7 +29,7 @@ def finished() -> report.BacktestReport:
         run_id='abc123def456', signal='factor_composite', kind='cross_sectional',
         config=read_config(), params={'factors': ['roe']}, start=DATES[0], end=DATES[-1],
         tickers=['AAA', 'BBB', 'CCC'], benchmark='^NDX',
-        caveats=[SURVIVORSHIP, 'benchmark ^NDX covers only to 2019-12-31'],
+        caveats=[BENCHMARK_NOTE],
         stats=performance.summary(equity, fills), equity=equity, gross=gross, net=gross,
         cash=equity - gross, fills=fills,
         exposure=performance.exposures(gross, gross, equity),
@@ -39,7 +39,12 @@ def finished() -> report.BacktestReport:
 def test_the_caveats_are_rendered_above_the_performance_numbers(finished):
     rendered = finished.render()
     assert rendered.index('Read this first') < rendered.index('## Performance')
-    assert rendered.index(SURVIVORSHIP) < rendered.index('| sharpe |')
+    assert rendered.index(BENCHMARK_NOTE) < rendered.index('| sharpe |')
+
+
+def test_a_report_with_no_caveats_skips_the_section_entirely(finished):
+    finished.caveats = []
+    assert 'Read this first' not in finished.render()
 
 
 def test_every_caveat_reaches_the_page(finished):
@@ -53,16 +58,6 @@ def test_the_cost_assumptions_are_rendered_beside_the_numbers(finished):
     assert 'slippage 5 bps' in rendered
     assert 'commission 2 bps' in rendered
     assert rendered.index('Cost assumptions') < rendered.index('## Performance')
-
-
-def test_the_survivorship_note_is_the_one_the_run_row_stores(finished):
-    assert finished.survivorship_note() == SURVIVORSHIP
-    assert finished.run_row().iloc[0]['SurvivorshipNote'] == SURVIVORSHIP
-
-
-def test_a_report_without_a_survivorship_caveat_still_says_so(finished):
-    finished.caveats = ['benchmark note only']
-    assert finished.survivorship_note() == 'survivorship: not assessed'
 
 
 def test_the_run_row_matches_the_stored_column_contract(finished):
@@ -94,7 +89,7 @@ def test_the_config_json_records_the_costs_the_run_used(finished):
 def test_the_report_writes_to_a_directory_named_for_the_run(finished, tmp_path: Path):
     path = report.write_report(finished, tmp_path)
     assert path == tmp_path / 'backtests' / 'abc123def456' / 'report.md'
-    assert SURVIVORSHIP in path.read_text()
+    assert BENCHMARK_NOTE in path.read_text()
 
 
 def test_a_statistic_that_could_not_be_computed_renders_as_not_available(finished):
@@ -110,9 +105,9 @@ def test_the_stored_run_round_trips_through_the_writer(finished):
     written = writer.replace_run(con, finished.run_id, finished.run_row(),
                                  finished.equity_rows(), finished.trade_rows())
     assert written == len(DATES)
-    stored = con.execute('SELECT SurvivorshipNote FROM backtest_runs WHERE RunId = ?',
+    stored = con.execute('SELECT Signal FROM backtest_runs WHERE RunId = ?',
                          [finished.run_id]).fetchone()
-    assert stored[0] == SURVIVORSHIP
+    assert stored[0] == finished.signal
 
 
 def test_deleting_a_run_reports_what_it_removed_from_each_table(finished):

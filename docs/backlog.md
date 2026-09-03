@@ -35,7 +35,8 @@ Ruled out:
   trusted here. Its fundamentals are fine and are already in use.
 
 What "done" looks like: a provider that retains delisted history, ingested alongside Yahoo into
-`prices`, with the survivorship note in every backtest report rewritten to say what it now covers.
+`prices`. Whether a caveat belongs back on a run's report once real delisted history exists is a
+separate call, made then, not promised now.
 
 When evaluating any new provider, ask this question first, before price or coverage or API quality.
 

@@ -45,13 +45,6 @@ class BacktestReport:
     universe_equity: pd.Series | None = None
     exposure: dict[str, float] = field(default_factory=dict)
 
-    def survivorship_note(self) -> str:
-        """The caveat about which names the universe could ever have contained."""
-        for caveat in self.caveats:
-            if caveat.startswith('survivorship'):
-                return caveat
-        return 'survivorship: not assessed'
-
     def config_json(self) -> str:
         """The resolved settings behind this run, as the stored run row keeps them.
 
@@ -71,10 +64,12 @@ class BacktestReport:
         lines += [f'`{self.signal}` ({self.kind}), {self.start.date()} to {self.end.date()}, '
                   f'{len(self.tickers):,} names, rebalanced {self.params.get("rebalance", "?")}', '']
 
-        lines += ['## Read this first', '']
-        for caveat in self.caveats:
-            lines.append(f'- {caveat}')
-        lines += ['', '## Cost assumptions', '']
+        if self.caveats:
+            lines += ['## Read this first', '']
+            for caveat in self.caveats:
+                lines.append(f'- {caveat}')
+            lines.append('')
+        lines += ['## Cost assumptions', '']
         costs = self.config.costs
         lines += [f'- slippage {costs.slippage_bps:g} bps, commission {costs.commission_bps:g} bps '
                   f'(minimum {costs.min_commission:g}), impact coefficient {costs.impact_coef:g}',
@@ -120,7 +115,6 @@ class BacktestReport:
             'RunId': self.run_id, 'Signal': self.signal, 'Kind': self.kind,
             'ConfigJson': self.config_json(), 'StartDate': self.start.date(), 'EndDate': self.end.date(),
             'NTickers': len(self.tickers), 'Benchmark': self.benchmark,
-            'SurvivorshipNote': self.survivorship_note(),
             'Cagr': self.stats.get('cagr'), 'Vol': self.stats.get('vol'),
             'Sharpe': self.stats.get('sharpe'), 'Sortino': self.stats.get('sortino'),
             'MaxDrawdown': self.stats.get('max_drawdown'), 'Calmar': self.stats.get('calmar'),

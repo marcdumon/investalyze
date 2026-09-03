@@ -16,7 +16,7 @@ import pandas as pd
 RUN_SCHEMA_VERSION = 1  # bump when engine semantics change, so old runs do not collide with new
 
 RUN_COLS = ['RunId', 'Signal', 'Kind', 'ConfigJson', 'StartDate', 'EndDate', 'NTickers', 'Benchmark',
-            'SurvivorshipNote', 'Cagr', 'Vol', 'Sharpe', 'Sortino', 'MaxDrawdown', 'Calmar',
+            'Cagr', 'Vol', 'Sharpe', 'Sortino', 'MaxDrawdown', 'Calmar',
             'Turnover', 'HitRate', 'NTrades', 'FinalEquity', 'TotalCosts']
 EQUITY_COLS = ['RunId', 'Date', 'Equity', 'Gross', 'Net', 'Cash', 'BenchmarkEquity']
 TRADE_COLS = ['RunId', 'Date', 'Ticker', 'Side', 'Shares', 'Price', 'Notional', 'Cost', 'Kind']
@@ -39,7 +39,6 @@ _DDL = [
         EndDate          DATE NOT NULL,
         NTickers         BIGINT NOT NULL,
         Benchmark        VARCHAR,
-        SurvivorshipNote VARCHAR NOT NULL,
         Cagr             DOUBLE,
         Vol              DOUBLE,
         Sharpe           DOUBLE,
@@ -129,9 +128,14 @@ _ADDED_COLUMNS = {
     'factor_panel_builds': [('Seconds', 'DOUBLE'), ('Definitions', 'VARCHAR')],
 }
 
+# columns a table used to carry that no longer belong: an older database still has them
+_DROPPED_COLUMNS = {
+    'backtest_runs': ['SurvivorshipNote'],
+}
+
 
 def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
-    """Create every backtest output table that does not exist yet, and widen the older ones."""
+    """Create every backtest output table that does not exist yet, and bring the older ones in line."""
     for statement in _DDL:
         con.execute(statement)
     for table, columns in _ADDED_COLUMNS.items():
@@ -139,6 +143,11 @@ def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
         for column, definition in columns:
             if column not in existing:
                 con.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
+    for table, columns in _DROPPED_COLUMNS.items():
+        existing = {row[0] for row in con.execute(f'DESCRIBE {table}').fetchall()}
+        for column in columns:
+            if column in existing:
+                con.execute(f'ALTER TABLE {table} DROP COLUMN {column}')
 
 
 def run_id(cfg: dict) -> str:

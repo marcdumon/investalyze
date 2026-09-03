@@ -183,7 +183,7 @@ def test_replace_run_writes_a_run_and_rewriting_it_leaves_the_row_counts_unchang
     summary = pd.DataFrame([dict.fromkeys(writer.RUN_COLS, None)])
     summary.loc[0, ['RunId', 'Signal', 'Kind', 'ConfigJson']] = ['abc', 'hold_cash', 'timing', '{}']
     summary.loc[0, ['StartDate', 'EndDate']] = ['2026-01-05', '2026-01-07']
-    summary.loc[0, ['NTickers', 'SurvivorshipNote']] = [2, 'every name survived to the present']
+    summary.loc[0, 'NTickers'] = 2
     equity = pd.DataFrame({'RunId': ['abc', 'abc'], 'Date': ['2026-01-05', '2026-01-06'],
                            'Equity': [100.0, 101.0], 'Gross': [0.0, 0.0], 'Net': [0.0, 0.0],
                            'Cash': [100.0, 101.0], 'BenchmarkEquity': [100.0, 100.5]})
@@ -199,7 +199,7 @@ def test_rerunning_over_a_shorter_range_leaves_no_orphan_equity_rows(con: duckdb
     summary = pd.DataFrame([dict.fromkeys(writer.RUN_COLS, None)])
     summary.loc[0, ['RunId', 'Signal', 'Kind', 'ConfigJson']] = ['abc', 'hold_cash', 'timing', '{}']
     summary.loc[0, ['StartDate', 'EndDate']] = ['2026-01-05', '2026-01-07']
-    summary.loc[0, ['NTickers', 'SurvivorshipNote']] = [2, 'every name survived to the present']
+    summary.loc[0, 'NTickers'] = 2
     long_equity = pd.DataFrame({'RunId': ['abc'] * 3, 'Date': ['2026-01-05', '2026-01-06', '2026-01-07'],
                                 'Equity': [100.0, 101.0, 102.0], 'Gross': [0.0] * 3, 'Net': [0.0] * 3,
                                 'Cash': [100.0, 101.0, 102.0], 'BenchmarkEquity': [100.0, 100.5, 101.0]})
