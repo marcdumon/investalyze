@@ -191,12 +191,17 @@ def get_last_session() -> pd.Timestamp | None:
         con.close()
 
 
-def panel_gaps(vintage: str, universe: str | None, start: str, end: str, freq: str) -> dict:
+def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_freq: str,
+               rebalance: str | None = None) -> dict:
     """Everything about the stored panel that stands between a request and a result.
 
     Dates are counted for the requested names rather than for the panel as a whole: a date built for
     other tickers is no use to these ones. Factor definitions are compared against the fingerprint
     the last build recorded, since a redefined factor leaves the dates in place and the values wrong.
+
+    `panel_freq` is the cadence a build would use, which is the card's own field rather than
+    anything read off what is stored. `rebalance` is the separate question of how often a run
+    trades, and is only carried through so the caller can say what a finer one would trade on.
 
     The estimate comes from how long the last build took per row. Without a recorded build there is
     nothing to estimate from, and None says so rather than a number pulled from the air.
@@ -205,13 +210,10 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, freq: s
     con = _connect()
     try:
         coverage = factors_pit.panel_coverage(con, vintage)
-        # checked at the panel's own cadence, not the requested one: a session between panel
-        # dates reads the most recent one before it, so a coarser panel is a choice, not a hole
-        cadence = (coverage['frequency'] if coverage else None) or freq
-        grid = factors_pit.rebalance_dates(con, start=start, end=end, freq=cadence)
+        grid = factors_pit.rebalance_dates(con, start=start, end=end, freq=panel_freq)
         build = writer.latest_panel_build(con, vintage) \
             if storage.table_exists(con, 'factor_panel_builds') else None
-        held = _panel_dates(con, vintage, tickers)
+        held = factors_pit.stored_dates(con, vintage, tickers)
     finally:
         con.close()
 
@@ -225,22 +227,10 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, freq: s
         'changed_factors': custom_factors.changed_since(build['definitions'] if build else None, CUSTOM),
         'seconds_estimate': _build_estimate(build, len(missing) * n_tickers),
         'has_panel': coverage is not None,
-        'panel_frequency': cadence,
-        'requested_frequency': freq,
+        'build_frequency': panel_freq,
+        'panel_frequency': coverage['frequency'] if coverage else None,
+        'rebalance': rebalance,
     }
-
-
-def _panel_dates(con: duckdb.DuckDBPyConnection, vintage: str, tickers: list[str] | None) -> set:
-    """The distinct panel dates stored for one vintage, narrowed to a ticker list when given."""
-    if not storage.table_exists(con, 'factor_panel'):
-        return set()
-    clauses, params = ['Vintage = ?'], [vintage]
-    if tickers is not None:
-        clauses.append('Ticker IN (SELECT unnest(?::VARCHAR[]))')
-        params.append(sorted(tickers))
-    rows = con.execute(f'SELECT DISTINCT Date FROM factor_panel WHERE {" AND ".join(clauses)}',
-                       params).fetchall()
-    return {pd.Timestamp(row[0]) for row in rows}
 
 
 def _build_estimate(build: dict | None, rows: int) -> float | None:

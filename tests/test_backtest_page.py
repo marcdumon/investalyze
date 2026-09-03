@@ -517,7 +517,7 @@ def _gaps(**overrides) -> dict:
     """A request the stored panel can answer in full, with overrides applied."""
     base = {'requested_dates': 120, 'missing_dates': 0, 'n_tickers': 7, 'missing_factors': [],
             'changed_factors': [], 'seconds_estimate': None, 'has_panel': True,
-            'panel_frequency': 'M', 'requested_frequency': 'M'}
+            'build_frequency': 'M', 'panel_frequency': 'M', 'rebalance': 'M'}
     return base | overrides
 
 
@@ -598,7 +598,7 @@ def test_a_confirmed_build_travels_with_an_evaluation_too():
 
 def test_a_rebalance_finer_than_the_panel_runs_and_says_what_it_trades_on():
     """As-of reading makes this work, so it is a note about staleness, not a reason to rebuild."""
-    ready, sentence = logic.backtest_plan(_gaps(requested_frequency='W'), 'cross_sectional',
+    ready, sentence = logic.backtest_plan(_gaps(rebalance='W'), 'cross_sectional',
                                           'factor_composite', None)
     assert ready is True
     assert 'panel updates monthly' in sentence
@@ -619,9 +619,9 @@ def test_a_press_that_needs_a_build_launches_one_command_that_does_both(monkeypa
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
     monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps(missing_dates=42))
 
-    page.launch(None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21,
+    page.launch(None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21, 'M',
                 'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
-                'as_reported')
+                'as_reported', 'M')
 
     assert len(started) == 1
     assert '--build-panel' in started[0]
@@ -636,9 +636,9 @@ def test_a_press_that_needs_nothing_built_leaves_the_flag_off(monkeypatch):
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
     monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps())
 
-    page.launch(1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21,
+    page.launch(1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21, 'M',
                 'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
-                'as_reported')
+                'as_reported', 'M')
 
     assert '--build-panel' not in started[0]
 
@@ -723,3 +723,38 @@ def test_one_dialog_tells_the_two_kinds_of_delete_apart(monkeypatch):
     page.resolve_delete(1, None, {'kind': 'evaluation', 'vintage': 'as_reported', 'universe': 'x'})
 
     assert started == ['delete', 'delete-evaluation']
+
+
+# --- both cadences are the card's, never the file's ---
+
+def test_both_cards_carry_a_panel_cadence():
+    """The research card used to have none, so its builds took a value from backtest.toml."""
+    from investalyze.apps.backtest import page
+
+    assert 'bt-res-panel-freq' in str(page._research_panel())
+    assert 'bt-run-panel-freq' in str(page._backtest_panel())
+
+
+def test_only_the_backtest_card_carries_a_rebalance():
+    from investalyze.apps.backtest import page
+
+    assert 'bt-run-freq' in str(page._backtest_panel())
+    assert 'bt-res-freq' not in str(page._research_panel())
+
+
+def test_the_two_frequencies_reach_a_run_separately():
+    _title, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'W',
+                                  panel_freq='Q')
+    assert argv[argv.index('--freq') + 1] == 'W'
+    assert argv[argv.index('--panel-freq') + 1] == 'Q'
+
+
+def test_an_evaluation_states_the_cadence_it_would_build_at():
+    _title, argv = logic.evaluate_argv(21, 'as_reported', panel_freq='W')
+    assert argv[argv.index('--panel-freq') + 1] == 'W'
+
+
+def test_the_build_wording_uses_the_cadence_being_built_not_the_one_stored():
+    _ready, sentence = logic.research_plan(_gaps(missing_dates=42, build_frequency='W',
+                                                 panel_frequency='M'), None)
+    assert '42 weekly dates' in sentence

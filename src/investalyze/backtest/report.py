@@ -53,10 +53,14 @@ class BacktestReport:
         return 'survivorship: not assessed'
 
     def config_json(self) -> str:
-        """The resolved settings behind this run, as the stored run row keeps them."""
+        """The resolved settings behind this run, as the stored run row keeps them.
+
+        The rebalance is inside `params`, where the run put it, rather than read from the config
+        file: it is a property of this run, not of the machine it ran on.
+        """
         return json.dumps({
             'signal': self.signal, 'params': self.params, 'benchmark': self.benchmark,
-            'rebalance': self.config.rebalance, 'long_only': self.config.long_only,
+            'long_only': self.config.long_only,
             'starting_cash': self.config.starting_cash,
             'costs': vars(self.config.costs), 'limits': vars(self.config.limits),
         }, sort_keys=True, default=str)
@@ -65,7 +69,7 @@ class BacktestReport:
         """The run as markdown: caveats, then costs, then the numbers, then the trading."""
         lines = [f'# Backtest {self.run_id}', '']
         lines += [f'`{self.signal}` ({self.kind}), {self.start.date()} to {self.end.date()}, '
-                  f'{len(self.tickers):,} names, rebalanced {self.config.rebalance}', '']
+                  f'{len(self.tickers):,} names, rebalanced {self.params.get("rebalance", "?")}', '']
 
         lines += ['## Read this first', '']
         for caveat in self.caveats:

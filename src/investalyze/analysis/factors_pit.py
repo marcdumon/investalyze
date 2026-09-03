@@ -39,6 +39,11 @@ VINTAGES = (AS_REPORTED, RESTATED)
 IDENTITY_COLS = ['name', 'sector', 'industry', 'last_close', 'mcap', 'mcap_bn']
 PANEL_KEY = ['Ticker', 'Date', 'Vintage']
 
+# a rank-based factor is a property of a ticker, a date and the names it was ranked against,
+# so it cannot be stored per ticker and date. Everything else is an absolute quantity.
+POPULATION_DEPENDENT = custom_factors.population_dependent(CUSTOM)
+STORED_FACTORS = [factor for factor in FACTORS if factor not in POPULATION_DEPENDENT]
+
 # balance columns the built-in factors already pull, so a ratio term naming one reuses it
 BALANCE_LATEST = {'Total Equity': 'equity', 'Total Assets': 'assets'}
 
@@ -346,11 +351,21 @@ def build_factor_panel(con: duckdb.DuckDBPyConnection, as_of: pd.DatetimeIndex, 
     df['mcap_bn'] = (df['mcap'] / 1e9).round(3)
     df = _derive_factors(df)
     df = custom_factors.apply_ratios(df, CUSTOM, resolved, aliases)
-    # ranks are taken within each as-of date, so an expression compares a name to its own
-    # cross-section rather than to every date pooled together
-    df = custom_factors.apply_expressions(df, CUSTOM, BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER, by='Date')
+    df = apply_derived(df)
     df['Vintage'] = vintage
-    return df[PANEL_KEY + IDENTITY_COLS + FACTORS].sort_values(['Date', 'Ticker'], ignore_index=True)
+    return df[PANEL_KEY + IDENTITY_COLS + STORED_FACTORS].sort_values(['Date', 'Ticker'],
+                                                                     ignore_index=True)
+
+
+def apply_derived(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add the factors computed from the frame's own columns, ranked within each as-of date.
+
+    Called once on a build for the expressions that hold whatever population they are given, and
+    again by every reader for the ones that do not, so a rank is always taken over the names the
+    caller is actually working with rather than over whoever happened to be in the last build.
+    """
+    return custom_factors.apply_expressions(frame, CUSTOM, BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER,
+                                            by='Date')
 
 
 def _derive_factors(df: pd.DataFrame) -> pd.DataFrame:
@@ -405,6 +420,24 @@ def infer_frequency(dates: pd.DatetimeIndex) -> str | None:
     return min(FREQUENCY_DAYS, key=lambda freq: abs(FREQUENCY_DAYS[freq] - gap))
 
 
+def stored_dates(con: duckdb.DuckDBPyConnection, vintage: str,
+                 tickers: list[str] | None = None) -> set[pd.Timestamp]:
+    """The as-of dates the panel already holds, narrowed to a ticker list when one is given.
+
+    Narrowed rather than global on purpose: a date built for other names is no use to these ones, so
+    what counts as already built depends on who is asking.
+    """
+    if not storage.table_exists(con, 'factor_panel'):
+        return set()
+    clauses, params = ['Vintage = ?'], [vintage]
+    if tickers is not None:
+        clauses.append('Ticker IN (SELECT unnest(?::VARCHAR[]))')
+        params.append(sorted(tickers))
+    rows = con.execute(f'SELECT DISTINCT Date FROM factor_panel WHERE {" AND ".join(clauses)}',
+                       params).fetchall()
+    return {pd.Timestamp(row[0]) for row in rows}
+
+
 def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -> dict | None:
     """What the stored panel actually holds for one vintage, or None when it holds nothing.
 
@@ -425,7 +458,7 @@ def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -
                         [vintage]).df()['Date']
 
     populated = []
-    for factor in FACTORS:
+    for factor in STORED_FACTORS:
         if factor not in stored:
             continue
         filled = con.execute(f'SELECT count("{factor}") FROM factor_panel WHERE Vintage = ?',
@@ -436,14 +469,19 @@ def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -
             'start': pd.Timestamp(rows[2]), 'end': pd.Timestamp(rows[3]),
             'frequency': infer_frequency(pd.DatetimeIndex(dates)),
             'factors': populated,
-            'missing_factors': [factor for factor in FACTORS if factor not in populated]}
+            'missing_factors': [factor for factor in STORED_FACTORS if factor not in populated]}
 
 
 def _widen_stored_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> None:
-    """Add any column the panel carries that the stored table does not have yet.
+    """Bring the stored table's columns into line with what a build now writes.
 
     Defining a new factor grows the panel by a column, and the merge writes into a table created by
-    an earlier run. Adding the column first lets a new factor land without rebuilding the table.
+    an earlier run, so a missing column is added rather than requiring a rebuild.
+
+    A column for a rank-based factor is dropped instead. Those are no longer stored, because their
+    value depends on which names were in the cross-section, and a table keyed by ticker and date has
+    nowhere to record that. Rows written by an earlier build hold a number ranked against whatever
+    universe that build covered, which is not comparable with the rest of its own column.
 
     The table is described rather than looked up by name, since a session with another database
     attached can see a `factor_panel` that the write target does not hold.
@@ -455,11 +493,14 @@ def _widen_stored_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> 
     for column in panel.columns:
         if column not in existing:
             con.execute(f'ALTER TABLE factor_panel ADD COLUMN "{column}" DOUBLE')
+    for column in POPULATION_DEPENDENT:
+        if column in existing:
+            con.execute(f'ALTER TABLE factor_panel DROP COLUMN "{column}"')
 
 
 def store_factor_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> int:
     """Merge the panel into `factor_panel`, keyed on ticker, date and vintage. Returns the table's row count."""
-    if list(panel.columns) != PANEL_KEY + IDENTITY_COLS + FACTORS:
-        raise ValueError('panel columns must be PANEL_KEY + IDENTITY_COLS + FACTORS')
+    if list(panel.columns) != PANEL_KEY + IDENTITY_COLS + STORED_FACTORS:
+        raise ValueError('panel columns must be PANEL_KEY + IDENTITY_COLS + STORED_FACTORS')
     _widen_stored_panel(con, panel)
     return storage.store(con, 'factor_panel', panel, PANEL_KEY)

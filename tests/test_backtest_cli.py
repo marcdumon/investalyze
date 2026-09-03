@@ -20,8 +20,8 @@ from investalyze.backtest import registry, writer
 def _args(**overrides) -> argparse.Namespace:
     """A parsed-argument namespace with every flag defaulted, then the overrides applied."""
     defaults = dict(command='factors', signal=None, factor=None, horizon=21, start=None, end=None,
-                    freq=None, universe=None, n_top=None, rank_by=None, vintage='as_reported',
-                    run_id=None, build_panel=False)
+                    freq='M', panel_freq='M', rebuild=False, universe=None, n_top=None,
+                    rank_by=None, vintage='as_reported', run_id=None, build_panel=False)
     return argparse.Namespace(**(defaults | overrides))
 
 
@@ -291,3 +291,57 @@ def test_deleting_an_evaluation_leaves_the_other_universes_alone():
                            backtest_config.read())
 
     assert con.execute('SELECT Universe FROM factor_ic').fetchall() == [('all',)]
+
+
+# --- building only what is not stored ---
+
+def test_a_build_asks_for_the_dates_the_panel_does_not_hold(monkeypatch):
+    grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28', '2020-03-31'])
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates',
+                        lambda con, vintage, tickers: {pd.Timestamp('2020-01-31')})
+    monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: False)
+
+    building, why = cli._dates_to_build(None, _args(), grid, None)
+
+    assert list(building) == [pd.Timestamp('2020-02-28'), pd.Timestamp('2020-03-31')]
+    assert 'not stored yet' in why
+
+
+def test_rebuild_asks_for_every_date_in_the_range(monkeypatch):
+    grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+
+    building, why = cli._dates_to_build(None, _args(rebuild=True), grid, None)
+
+    assert list(building) == list(grid)
+    assert 'rebuilding every one' in why
+
+
+def test_a_redefined_factor_forces_a_full_rebuild(monkeypatch):
+    """The stored values came from a formula that no longer exists, so the dates are not reusable."""
+    grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+    monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: True)
+    monkeypatch.setattr(cli.writer, 'latest_panel_build',
+                        lambda con, vintage: {'definitions': 'blend=old_formula:high'})
+    monkeypatch.setattr(cli.custom_factors, 'changed_since', lambda recorded, customs: ['blend'])
+
+    building, why = cli._dates_to_build(None, _args(), grid, None)
+
+    assert list(building) == list(grid)
+    assert 'blend was redefined' in why
+
+
+def test_a_range_already_stored_builds_nothing(monkeypatch):
+    grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+    monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: False)
+
+    building, _why = cli._dates_to_build(None, _args(), grid, None)
+
+    assert len(building) == 0
+
+
+def test_the_two_frequencies_are_separate_flags():
+    args = cli._parser().parse_args(['run', '--freq', 'W', '--panel-freq', 'Q'])
+    assert (args.freq, args.panel_freq) == ('W', 'Q')

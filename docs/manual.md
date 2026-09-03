@@ -227,7 +227,7 @@ python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 
 
 # build the point-in-time factor panel both of those read. Add --build-panel to either command
 # above to have it built first when the stored one does not cover what was asked for
-python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --freq M
+python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M
 
 # or run a signal fold by fold, out of sample
 python -m investalyze.backtest walkforward --signal factor_composite --start 2014-01-01 \
@@ -326,6 +326,53 @@ name = 'mid_large_mega_non_fin_realest'
 n_top = 300
 rank_by = 'mcap'                          # or 'liquidity', 'ticker'
 require_sector = true
+```
+
+
+### Two frequencies, two names
+
+They used to be one setting. They answer different questions and no longer have to agree:
+
+| | means | set on |
+|---|---|---|
+| **Panel cadence** | how often factor values are recomputed | both cards, used only when one would build |
+| **Rebalance** | how often the portfolio trades | the Backtest card |
+
+A session between panel dates reads the most recent one before it, so a monthly panel drives a
+weekly run correctly and the card says the scores repeat between panel dates.
+
+Neither is read from `backtest.toml` any more. That key had exactly one live effect, silently
+choosing the cadence of a panel built from the Research card, which had no such field. A setting
+that changes a result without appearing on the page that asked for it is worse than no setting.
+
+### What the panel can and cannot hold
+
+A factor like `0.5 * rank_roe + 0.5 * rank_roa` is a percentile, so its value depends on which names
+were in the cross-section. That makes it a property of a ticker, a date **and a population**, and
+`factor_panel` is keyed by the first two only. A build over seven solar names wrote those tickers
+ranks against seven peers, into the same column that held ranks against six thousand.
+
+So rank-based factors are not stored. They are computed by whoever reads the panel, over the names
+that reader is working with, which is also the more correct answer: a signal choosing among 500
+names should rank within those 500. Everything else is an absolute quantity and is stored as before.
+
+The columns an earlier build left behind are dropped the next time one runs, since the numbers in
+them are not comparable with each other.
+
+### What a build actually costs
+
+Measured on a 6,465-name database: about 4.5 seconds fixed, plus 0.13 seconds per as-of date. The
+fixed part is six SQL joins over the whole fundamentals history, paid once whatever comes out of
+them, which is why building only the factors a signal uses would save nothing worth having.
+
+So a build computes only the dates not already stored for that vintage and those names. Refreshing
+2000 to 2026 after a month passes builds one date in about 5 seconds instead of 321 in 46. Two
+things override that: `--rebuild`, and a factor definition edited since the last build, whose stored
+values came from a formula that no longer exists.
+
+```bash
+python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M
+python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M --rebuild
 ```
 
 

@@ -11,6 +11,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from investalyze.analysis import factors_pit
 from investalyze.analysis.factors import FACTORS, HIGHER_IS_BETTER
 from investalyze.backtest import portfolio
 from investalyze.backtest.book import Book
@@ -54,7 +55,9 @@ def read_panel(con: duckdb.DuckDBPyConnection, tickers: np.ndarray, dates: pd.Da
     if panel.empty:
         raise ValueError(f'factor_panel holds no {vintage} rows for this universe and date range')
     panel['Date'] = pd.to_datetime(panel['Date'])
-    return panel
+    # rank-based factors are ranked here, over this run's names, since that is the
+    # cross-section the signal actually chooses from
+    return factors_pit.apply_derived(panel)
 
 
 def composite_scores(panel: pd.DataFrame, factors: list[str], tickers: np.ndarray,

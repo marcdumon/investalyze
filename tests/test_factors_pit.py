@@ -447,3 +447,77 @@ def test_an_empty_ticker_list_means_no_names_rather_than_all_of_them():
     """A universe that resolved to nothing used to build over the whole database."""
     assert factors_pit._ticker_clause([]) != 'TRUE'
     assert factors_pit._ticker_params([]) == [[]]
+
+
+# --- a rank is not a property of a ticker and a date ---
+
+def _customs(**expressions):
+    """Expression definitions parsed the way the file would give them."""
+    from investalyze.analysis import custom_factors
+    from investalyze.analysis.factors import BUILTIN_FACTORS
+
+    text = '\n'.join(custom_factors.serialize_factor(
+        name, {'expression': expression, 'higher_is_better': True, 'description': ''})
+        for name, expression in expressions.items())
+    return custom_factors.parse(text, BUILTIN_FACTORS)
+
+
+def test_a_factor_referencing_a_rank_is_not_storable():
+    """Its value depends on the names it was ranked against, which the key cannot record."""
+    from investalyze.analysis import custom_factors
+
+    customs = _customs(blend='0.5 * rank_roe + 0.5 * rank_roa')
+    assert custom_factors.population_dependent(customs) == ['blend']
+
+
+def test_an_expression_without_ranks_stays_stored():
+    """`ret_12_1 / vol_252` is an absolute quantity, so it means the same whoever else is present."""
+    from investalyze.analysis import custom_factors
+
+    customs = _customs(rar='ret_12_1 / vol_252')
+    assert custom_factors.population_dependent(customs) == []
+
+
+def test_every_factor_is_either_stored_or_derived_at_read_time():
+    assert set(factors_pit.STORED_FACTORS) | set(factors_pit.POPULATION_DEPENDENT) == set(factors_pit.FACTORS)
+    assert not set(factors_pit.STORED_FACTORS) & set(factors_pit.POPULATION_DEPENDENT)
+
+
+def test_a_reader_ranks_over_its_own_cross_section(monkeypatch):
+    """The same ticker and date score differently against one peer than against four."""
+    from investalyze.analysis import custom_factors
+    from investalyze.analysis.factors import BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER
+
+    customs = _customs(blend='0.5 * rank_roe + 0.5 * rank_roa')
+    wide = pd.DataFrame({'Date': [pd.Timestamp('2020-01-31')] * 5, 'Ticker': list('ABCDE'),
+                         'roe': [0.1, 0.2, 0.3, 0.4, 0.5], 'roa': [0.1, 0.2, 0.3, 0.4, 0.5]})
+    narrow = wide.iloc[:2].reset_index(drop=True)
+
+    def ranked(frame):
+        return custom_factors.apply_expressions(frame, customs, BUILTIN_FACTORS,
+                                                BUILTIN_HIGHER_IS_BETTER, by='Date')
+
+    assert ranked(wide).set_index('Ticker')['blend']['A'] != \
+        ranked(narrow).set_index('Ticker')['blend']['A']
+
+
+def test_dropping_a_rank_column_leaves_the_absolute_ones_alone():
+    """An older table holds ranks from whatever universe wrote them; they are not comparable."""
+    import duckdb
+
+    con = duckdb.connect()
+    con.execute('CREATE TABLE factor_panel (Ticker VARCHAR, Date DATE, Vintage VARCHAR, '
+                'roe DOUBLE, quality_blend DOUBLE)')
+    con.execute("INSERT INTO factor_panel VALUES ('AAA', DATE '2020-01-31', 'as_reported', 0.2, 37.5)")
+
+    monkeypatch_dependent = ['quality_blend']
+    original = factors_pit.POPULATION_DEPENDENT
+    factors_pit.POPULATION_DEPENDENT = monkeypatch_dependent
+    try:
+        factors_pit._widen_stored_panel(con, pd.DataFrame(columns=['Ticker', 'Date', 'Vintage', 'roe']))
+    finally:
+        factors_pit.POPULATION_DEPENDENT = original
+
+    columns = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
+    assert 'roe' in columns
+    assert 'quality_blend' not in columns

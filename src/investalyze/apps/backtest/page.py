@@ -88,6 +88,13 @@ def _universe_select(prefix: str) -> dmc.Select:
                       data=[], clearable=True, searchable=True, size='xs', w=260)
 
 
+def _cadence_select(prefix: str) -> dmc.Select:
+    """How often the factor panel recomputes its values, on whichever card might cause a build."""
+    return dmc.Select(id=f'{prefix}-panel-freq', label='Panel cadence', value='M', size='xs', w=130,
+                      data=[{'value': f, 'label': label} for f, label in
+                            (('D', 'daily'), ('W', 'weekly'), ('M', 'monthly'), ('Q', 'quarterly'))])
+
+
 def _vintage_select(prefix: str) -> dmc.Select:
     """Which fundamentals vintage a card works from."""
     return dmc.Select(id=f'{prefix}-vintage', label='Vintage', value='as_reported', size='xs', w=140,
@@ -104,6 +111,7 @@ def _research_panel() -> dmc.Paper:
         dmc.Group(_date_fields('bt-res', date.today().isoformat()) + [
             _universe_select('bt-res'),
             _vintage_select('bt-res'),
+            _cadence_select('bt-res'),
             dmc.NumberInput(id='bt-res-horizon', label='IC horizon', value=21, min=1, size='xs', w=110),
         ], gap='xs', mb=8),
         dmc.Button('Evaluate factors', id='bt-btn-evaluate', size='xs', color='orange'),
@@ -130,8 +138,11 @@ def _backtest_panel() -> dmc.Paper:
             dmc.Select(id='bt-run-rankby', label='Ranked by', value='liquidity', size='xs', w=130,
                        data=[{'value': r, 'label': r} for r in ('liquidity', 'mcap', 'ticker')]),
             _vintage_select('bt-run'),
+            _cadence_select('bt-run'),
         ], gap='xs', mb=6),
-        dmc.Text('A run trades the names in the universe that were priced across its whole range, '
+        dmc.Text('Rebalance is how often the portfolio trades; Panel cadence is how often the factor '
+                 'values behind it are recomputed, and only matters when this run would build them. '
+                 'A run trades the names in the universe that were priced across its whole range, '
                  'capped at Top N. Leaving the universe blank uses the whole database.',
                  size='xs', c='dimmed', mb=8),
         dmc.Button('Run backtest', id='bt-btn-run', size='xs', color='orange'),
@@ -334,20 +345,25 @@ def _plan_alert(ready: bool, sentence: str) -> dmc.Alert:
     return dmc.Alert(sentence, color='green' if ready else 'yellow', variant='light')
 
 
-def _gaps_for(vintage, universe, start, end, freq):
-    """What the stored panel is missing for one card's settings, or None while the DB is busy."""
+def _gaps_for(vintage, universe, start, end, panel_freq, rebalance=None):
+    """What the stored panel is missing for one card's settings, or None while the DB is busy.
+
+    `panel_freq` is the cadence the card would build at; `rebalance` is how often a run would trade,
+    which the research card has no opinion on and leaves unset.
+    """
     try:
-        return data.panel_gaps(vintage or 'as_reported', universe, start, end, freq)
+        return data.panel_gaps(vintage or 'as_reported', universe, start, end, panel_freq, rebalance)
     except (duckdb.IOException, duckdb.Error, ValueError):
         return None
 
 
 @callback(Output('bt-res-plan', 'children'),
           Input('bt-runs-tick', 'data'), Input('bt-res-start', 'value'), Input('bt-res-end', 'value'),
-          Input('bt-res-universe', 'value'), Input('bt-res-vintage', 'value'))
-def show_research_plan(_tick, start, end, universe, vintage):
+          Input('bt-res-universe', 'value'), Input('bt-res-vintage', 'value'),
+          Input('bt-res-panel-freq', 'value'))
+def show_research_plan(_tick, start, end, universe, vintage, panel_freq):
     """Say what Evaluate will do before it is pressed, including anything it would have to build."""
-    gaps = _gaps_for(vintage, universe, start, end, 'M')
+    gaps = _gaps_for(vintage, universe, start, end, panel_freq or 'M')
     if gaps is None:
         return _note(BUSY)
     return _plan_alert(*logic.research_plan(gaps, universe, vintage or 'as_reported'))
@@ -356,13 +372,14 @@ def show_research_plan(_tick, start, end, universe, vintage):
 @callback(Output('bt-run-plan', 'children'),
           Input('bt-runs-tick', 'data'), Input('bt-run-signal', 'value'),
           Input('bt-run-start', 'value'), Input('bt-run-end', 'value'), Input('bt-run-freq', 'value'),
-          Input('bt-run-universe', 'value'), Input('bt-run-vintage', 'value'))
-def show_backtest_plan(_tick, signal, start, end, freq, universe, vintage):
+          Input('bt-run-universe', 'value'), Input('bt-run-vintage', 'value'),
+          Input('bt-run-panel-freq', 'value'))
+def show_backtest_plan(_tick, signal, start, end, freq, universe, vintage, panel_freq):
     """Say what Run will do before it is pressed, including anything it would have to build."""
     kind = registry.SIGNALS[signal][0] if signal in registry.SIGNALS else registry.CROSS_SECTIONAL
     if kind != registry.CROSS_SECTIONAL:
         return _plan_alert(*logic.backtest_plan({'n_tickers': 0}, kind, signal, universe))
-    gaps = _gaps_for(vintage, universe, start, end, freq or 'M')
+    gaps = _gaps_for(vintage, universe, start, end, panel_freq or 'M', freq or 'M')
     if gaps is None:
         return _note(BUSY)
     return _plan_alert(*logic.backtest_plan(gaps, kind, signal, universe, vintage or 'as_reported'))
@@ -396,13 +413,15 @@ def show_job_status(_n):
           Input('bt-btn-evaluate', 'n_clicks'), Input('bt-btn-run', 'n_clicks'),
           State('bt-res-start', 'value'), State('bt-res-end', 'value'),
           State('bt-res-universe', 'value'), State('bt-res-vintage', 'value'),
-          State('bt-res-horizon', 'value'),
+          State('bt-res-horizon', 'value'), State('bt-res-panel-freq', 'value'),
           State('bt-run-signal', 'value'), State('bt-run-start', 'value'), State('bt-run-end', 'value'),
           State('bt-run-freq', 'value'), State('bt-run-universe', 'value'), State('bt-run-ntop', 'value'),
           State('bt-run-rankby', 'value'), State('bt-run-vintage', 'value'),
+          State('bt-run-panel-freq', 'value'),
           prevent_initial_call=True)
 def launch(_evaluate, _run, res_start, res_end, res_universe, res_vintage, res_horizon,
-           signal, run_start, run_end, freq, run_universe, n_top, rank_by, run_vintage):
+           res_panel_freq, signal, run_start, run_end, freq, run_universe, n_top, rank_by,
+           run_vintage, run_panel_freq):
     """Start a card's job, building the factor panel first when the card said it would have to.
 
     One press: the line under the button has already said what will happen, and asking again would
@@ -413,18 +432,20 @@ def launch(_evaluate, _run, res_start, res_end, res_universe, res_vintage, res_h
         raise PreventUpdate
 
     if ctx.triggered_id == 'bt-btn-evaluate':
-        gaps = _gaps_for(res_vintage, res_universe, res_start, res_end, 'M')
+        gaps = _gaps_for(res_vintage, res_universe, res_start, res_end, res_panel_freq or 'M')
         ready = gaps is not None and logic.research_plan(gaps, res_universe, res_vintage)[0]
         pending = {'kind': 'evaluate', 'horizon': int(res_horizon or 21), 'vintage': res_vintage,
-                   'universe': res_universe, 'start': res_start, 'end': res_end}
+                   'universe': res_universe, 'start': res_start, 'end': res_end,
+                   'panel_freq': res_panel_freq or 'M'}
     else:
         kind = registry.SIGNALS[signal][0] if signal in registry.SIGNALS else registry.CROSS_SECTIONAL
-        gaps = _gaps_for(run_vintage, run_universe, run_start, run_end, freq or 'M') \
-            if kind == registry.CROSS_SECTIONAL else None
+        gaps = _gaps_for(run_vintage, run_universe, run_start, run_end, run_panel_freq or 'M',
+                         freq or 'M') if kind == registry.CROSS_SECTIONAL else None
         ready = kind != registry.CROSS_SECTIONAL or (
             gaps is not None and logic.backtest_plan(gaps, kind, signal, run_universe, run_vintage)[0])
         pending = {'kind': 'run', 'signal': signal, 'start': run_start, 'end': run_end, 'freq': freq,
-                   'universe': run_universe, 'n_top': n_top, 'rank_by': rank_by, 'vintage': run_vintage}
+                   'universe': run_universe, 'n_top': n_top, 'rank_by': rank_by,
+                   'vintage': run_vintage, 'panel_freq': run_panel_freq or 'M'}
 
     if not ready and gaps is None:
         raise PreventUpdate   # the database is busy, so what is missing is unknown
@@ -437,10 +458,11 @@ def _job_argv(pending: dict, *, build_panel: bool) -> tuple[str, list[str]]:
     """The command one card's settings turn into, with or without the panel build in front of it."""
     if pending['kind'] == 'evaluate':
         return logic.evaluate_argv(pending['horizon'], pending['vintage'], pending['universe'],
-                                   pending['start'], pending['end'], build_panel)
+                                   pending['start'], pending['end'], build_panel,
+                                   pending['panel_freq'])
     return logic.run_argv(pending['signal'], pending['start'], pending['end'], pending['freq'],
                           pending['universe'], pending['n_top'], pending['rank_by'],
-                          pending['vintage'], build_panel)
+                          pending['vintage'], build_panel, pending['panel_freq'])
 
 
 @callback(Output('bt-cancel-tick', 'data'), Input('bt-btn-cancel', 'n_clicks'),

@@ -153,7 +153,7 @@ def _estimate_words(seconds: float | None) -> str:
 
 def _gap_reasons(gaps: dict) -> list[str]:
     """Why the stored panel cannot answer a request, each clause naming a concrete thing."""
-    cadence = FREQUENCY_WORDS.get(gaps.get('panel_frequency'), '')
+    cadence = FREQUENCY_WORDS.get(gaps.get('build_frequency'), '')
     reasons = []
     if gaps['missing_dates'] and gaps['missing_dates'] == gaps['requested_dates']:
         reasons.append('the panel holds nothing for this vintage and these names yet')
@@ -174,7 +174,7 @@ def _scope_words(universe: str | None, n_tickers: int) -> str:
 
 def _build_words(gaps: dict, universe: str | None, vintage: str) -> str:
     """What a build would actually produce, in the terms the fields on the card are set in."""
-    cadence = FREQUENCY_WORDS.get(gaps.get('panel_frequency'), '')
+    cadence = FREQUENCY_WORDS.get(gaps.get('build_frequency'), '')
     return (f'the {vintage.replace("_", " ")} panel: {gaps["missing_dates"]} {cadence} dates for '
             f'{_scope_words(universe, gaps["n_tickers"])}')
 
@@ -195,13 +195,13 @@ def research_plan(gaps: dict, universe: str | None, vintage: str = 'as_reported'
 
 
 def _cadence_note(gaps: dict) -> str:
-    """What a rebalance finer than the panel's own cadence actually trades on.
+    """What a rebalance finer than the stored panel's cadence actually trades on.
 
     Not a fault: a session between panel dates reads the most recent one before it, which is what a
     reader could have known. Worth saying, because the signal then updates on the panel's schedule
     rather than the one the card asks to rebalance on.
     """
-    panel, asked = gaps.get('panel_frequency'), gaps.get('requested_frequency')
+    panel, asked = gaps.get('panel_frequency'), gaps.get('rebalance')
     if not panel or not asked or panel == asked:
         return ''
     return (f' The panel updates {FREQUENCY_WORDS.get(panel, panel)}, so rebalances between its '
@@ -247,13 +247,14 @@ def factors_argv(start: str, end: str, freq: str, vintage: str, universe: str | 
 
 def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
                   start: str | None = None, end: str | None = None,
-                  build_panel: bool = False) -> tuple[str, list[str]]:
+                  build_panel: bool = False, panel_freq: str = 'M') -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest evaluate` across every factor.
 
     The dates narrow which stored panel rows are scored, so the range on the form means the same
     thing here as it does for the other two buttons.
     """
-    argv = ['-m', 'investalyze.backtest', 'evaluate', '--horizon', str(horizon), '--vintage', vintage]
+    argv = ['-m', 'investalyze.backtest', 'evaluate', '--horizon', str(horizon), '--vintage', vintage,
+            '--panel-freq', panel_freq]
     if start:
         argv += ['--start', start]
     if end:
@@ -312,15 +313,18 @@ def delete_prompt(runs: list[dict]) -> str:
 
 
 def run_argv(signal: str, start: str, end: str, freq: str, universe: str | None = None,
-             n_top: int | None = None, rank_by: str | None = None,
-             vintage: str = 'as_reported', build_panel: bool = False) -> tuple[str, list[str]]:
+             n_top: int | None = None, rank_by: str | None = None, vintage: str = 'as_reported',
+             build_panel: bool = False, panel_freq: str = 'M') -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest run` on one signal.
 
     The vintage travels with the run because it decides which panel a cross-sectional signal ranks;
-    without it the choice on the form went nowhere and every run scored as-reported values.
+    without it the choice on the form went nowhere and every run scored as-reported values. The two
+    frequencies travel separately: `--freq` is how often the portfolio trades, `--panel-freq` how
+    often the factor values behind it are recomputed.
     """
     argv = (['-m', 'investalyze.backtest', 'run', '--signal', signal, '--start', start, '--end', end,
-             '--freq', freq, '--vintage', vintage] + _universe_argv(universe, n_top, rank_by))
+             '--freq', freq, '--vintage', vintage, '--panel-freq', panel_freq]
+            + _universe_argv(universe, n_top, rank_by))
     if build_panel:
         argv += ['--build-panel']
     scope = universe or 'whole database'

@@ -63,8 +63,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--anchored', action='store_true', help='grow the fitting span from the first session')
     parser.add_argument('--start', help='first date of the run, ISO format')
     parser.add_argument('--end', help='last date of the run, ISO format')
-    parser.add_argument('--freq', choices=backtest_config.REBALANCE_FREQUENCIES,
-                        help='rebalance frequency (default: the config value)')
+    parser.add_argument('--freq', choices=backtest_config.REBALANCE_FREQUENCIES, default='M',
+                        help='how often a run rebalances its portfolio (default: M)')
+    parser.add_argument('--panel-freq', choices=backtest_config.REBALANCE_FREQUENCIES, default='M',
+                        help='how often the factor panel recomputes its values (default: M)')
+    parser.add_argument('--rebuild', action='store_true',
+                        help='recompute every date in the range, not only the ones not stored yet')
     parser.add_argument('--universe', help='saved universe to limit the run to (default: the config value)')
     parser.add_argument('--n-top', type=int, help='how many names to keep (default: the config value)')
     parser.add_argument('--rank-by', choices=('liquidity', 'mcap', 'ticker'),
@@ -118,27 +122,52 @@ def _build_factors(con, args: argparse.Namespace, run_cfg: backtest_config.Confi
     """Build the point-in-time factor panel over the requested range and merge it into `factor_panel`."""
     if args.start is None or args.end is None:
         raise SystemExit('factors needs --start and --end')
-    freq = args.freq or run_cfg.rebalance
+    freq = args.panel_freq
     grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=freq)
     tickers = _panel_universe(con, args, run_cfg)
     if tickers is not None and not tickers:
         raise SystemExit('the chosen universe resolved to no tickers; nothing to build a panel over')
     scope = f'{len(tickers):,} tickers' if tickers is not None else 'every priced ticker'
-    log.info(f'{args.vintage} panel over {len(grid)} {FREQUENCY_WORDS[freq]} dates, '
-             f'{args.start} to {args.end}, {scope}')
+
+    building, why = _dates_to_build(con, args, grid, tickers)
+    log.info(f'{args.vintage} panel, {args.start} to {args.end}, {scope}: '
+             f'{len(grid)} {FREQUENCY_WORDS[freq]} dates requested, {len(building)} to build ({why})')
+    if not len(building):
+        return
 
     began = time.monotonic()
-    panel = factors_pit.build_factor_panel(con, grid, tickers=tickers, vintage=args.vintage,
+    panel = factors_pit.build_factor_panel(con, building, tickers=tickers, vintage=args.vintage,
                                            benchmark=run_cfg.benchmark)
     stored = factors_pit.store_factor_panel(con, panel)
     writer.record_panel_build(con, vintage=args.vintage,
                               universe=args.universe or run_cfg.universe.name or writer.WHOLE_DATABASE,
                               start=args.start, end=args.end, frequency=freq,
-                              n_tickers=int(panel['Ticker'].nunique()), n_dates=len(grid), n_rows=len(panel),
+                              n_tickers=int(panel['Ticker'].nunique()), n_dates=len(building),
+                              n_rows=len(panel),
                               seconds=time.monotonic() - began,
                               definitions=custom_factors.fingerprint(CUSTOM))
     log.info(f'this build wrote {len(panel):,} rows for {panel["Ticker"].nunique():,} tickers; '
              f'factor_panel now holds {stored:,} rows across every build so far')
+
+
+def _dates_to_build(con, args: argparse.Namespace, grid: pd.DatetimeIndex,
+                    tickers: list[str] | None) -> tuple[pd.DatetimeIndex, str]:
+    """The dates a build should actually compute, and the reason in words.
+
+    A date already stored for these names holds the same values a rebuild would produce, so it is
+    skipped. Two things override that: `--rebuild`, and a factor definition edited since the last
+    build, whose stored values came from a formula that no longer exists.
+    """
+    if args.rebuild:
+        return grid, 'rebuilding every one'
+    build = writer.latest_panel_build(con, args.vintage) \
+        if storage.table_exists(con, 'factor_panel_builds') else None
+    changed = custom_factors.changed_since(build['definitions'] if build else None, CUSTOM)
+    if changed:
+        return grid, f'rebuilding every one, {", ".join(changed)} was redefined'
+    held = factors_pit.stored_dates(con, args.vintage, tickers)
+    missing = pd.DatetimeIndex([date for date in grid if date not in held])
+    return missing, 'the ones not stored yet'
 
 
 def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
@@ -155,7 +184,8 @@ def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
     if panel.empty:
         raise SystemExit(f'factor_panel holds no {args.vintage} rows for this range; run the factors command first')
     panel['Date'] = pd.to_datetime(panel['Date'])
-    return panel
+    # ranked over the names being evaluated, which is the population the reading is about
+    return factors_pit.apply_derived(panel)
 
 
 def _median_spread(quantiles: pd.DataFrame) -> float:
@@ -291,7 +321,7 @@ def _run(con, args: argparse.Namespace, run_cfg: backtest_config.Config, data_ro
 
     market = market_data.build_market(con, tickers, start=args.start, end=args.end,
                                       exclude_checks=run_cfg.exclude_checks)
-    params = run_cfg.signal(args.signal) | {'rebalance': args.freq or run_cfg.rebalance,
+    params = run_cfg.signal(args.signal) | {'rebalance': args.freq,
                                             'vintage': args.vintage,
                                             'max_weight': run_cfg.limits.max_weight}
     step = factory(con, market, params)
@@ -389,7 +419,7 @@ def _walk_forward(con, args: argparse.Namespace, run_cfg: backtest_config.Config
     log.info(f'{len(windows)} folds of {args.train} fitting and {args.test} test sessions, '
              f'embargo {args.embargo}')
 
-    params = run_cfg.signal(args.signal) | {'rebalance': args.freq or run_cfg.rebalance,
+    params = run_cfg.signal(args.signal) | {'rebalance': args.freq,
                                             'vintage': args.vintage,
                                             'max_weight': run_cfg.limits.max_weight}
     result = walkforward.run_walk_forward(con, factory, windows, run_cfg, params)

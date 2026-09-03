@@ -11,7 +11,6 @@ from pathlib import Path
 
 _DEFAULT_STARTING_CASH = 1_000_000.0
 _DEFAULT_BENCHMARK = '^NDX'  # current to the last price date, unlike ^SPX and ^DJI
-_DEFAULT_REBALANCE = 'M'
 _DEFAULT_LONG_ONLY = True
 _DEFAULT_EXCLUDE_CHECKS = ['ohlc_inconsistent', 'nonpositive_price']
 
@@ -34,6 +33,8 @@ _DEFAULT_MAX_POSITION_ADV = 0.25
 _DEFAULT_PARTICIPATION = 0.05
 _DEFAULT_MAX_ORDER_AGE = 5
 
+# the shared vocabulary for both frequencies; neither has a home in this file, since
+# a cadence that lives here would change a result without appearing on the page that asked
 REBALANCE_FREQUENCIES = ('D', 'W', 'M', 'Q')
 
 
@@ -77,7 +78,6 @@ class Config:
 
     starting_cash: float
     benchmark: str
-    rebalance: str
     long_only: bool
     exclude_checks: list[str]
     universe: Universe
@@ -101,13 +101,9 @@ def read(path: Path | None = None) -> Config:
     universe = raw.get('universe', {})
     costs = raw.get('costs', {})
     limits = raw.get('limits', {})
-    rebalance = raw.get('rebalance', _DEFAULT_REBALANCE)
-    if rebalance not in REBALANCE_FREQUENCIES:
-        raise ValueError(f'rebalance must be one of {REBALANCE_FREQUENCIES}, got {rebalance!r}')
     return Config(
         starting_cash=float(raw.get('starting_cash', _DEFAULT_STARTING_CASH)),
         benchmark=raw.get('benchmark', _DEFAULT_BENCHMARK),
-        rebalance=rebalance,
         long_only=bool(raw.get('long_only', _DEFAULT_LONG_ONLY)),
         exclude_checks=list(raw.get('exclude_checks', _DEFAULT_EXCLUDE_CHECKS)),
         universe=Universe(

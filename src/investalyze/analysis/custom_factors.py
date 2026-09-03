@@ -145,6 +145,22 @@ def orientation(customs: dict[str, CustomFactor], builtin: dict[str, bool]) -> d
     return builtin | {name: factor.higher_is_better for name, factor in customs.items()}
 
 
+def population_dependent(customs: dict[str, CustomFactor]) -> list[str]:
+    """Names of the factors whose value depends on which other names were in the cross-section.
+
+    An expression referencing `rank_x` asks where a name sits among its peers, so its value is a
+    property of the ticker, the date and the population it was ranked against. Storing one per
+    ticker and date loses the third, and a build over a narrow universe then writes rows that mean
+    something different from the rest of the same column.
+    """
+    dependent = []
+    for name in sorted(customs):
+        factor = customs[name]
+        if factor.kind == EXPRESSION and 'rank_' in factor.expression:
+            dependent.append(name)
+    return dependent
+
+
 def with_ranks(frame: pd.DataFrame, factors: list[str], orientations: dict[str, bool], *,
                by: str | None = None) -> pd.DataFrame:
     """Add a `rank_<factor>` column per factor, 0 to 100, oriented so 100 is best.

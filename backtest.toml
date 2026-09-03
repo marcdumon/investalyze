@@ -3,7 +3,6 @@
 
 starting_cash = 1_000_000.0
 benchmark = '^NDX'   # current to the last price date, unlike ^SPX (stale since 2026-07-02)
-rebalance = 'M'      # one of D, W, M, Q
 long_only = true     # the survivorship-biased panel makes a short book especially misleading
 exclude_checks = ['ohlc_inconsistent', 'nonpositive_price']
 

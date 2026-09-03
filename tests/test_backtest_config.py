@@ -1,7 +1,8 @@
-"""Tests for backtest configuration reading: defaults, overrides, and the rebalance guard.
+"""Tests for backtest configuration reading: defaults and overrides.
 
 Every key is optional, so the tests that matter are the ones proving a partial file still resolves
-and that a bad rebalance frequency is caught at read time rather than deep inside a run.
+Frequencies are deliberately not read from here: a cadence that lived in the file would change a
+result without appearing on the page that asked for it, so both are stated by the caller.
 """
 
 from pathlib import Path
@@ -22,7 +23,6 @@ def test_config_falls_back_to_defaults_when_the_toml_is_absent(tmp_path: Path):
     cfg = config.read(tmp_path / 'missing.toml')
     assert cfg.starting_cash == config._DEFAULT_STARTING_CASH
     assert cfg.benchmark == config._DEFAULT_BENCHMARK
-    assert cfg.rebalance == config._DEFAULT_REBALANCE
     assert cfg.long_only is config._DEFAULT_LONG_ONLY
     assert cfg.universe.n_top == config._DEFAULT_N_TOP
     assert cfg.costs.slippage_bps == config._DEFAULT_SLIPPAGE_BPS
@@ -78,12 +78,6 @@ def test_a_named_universe_is_kept_as_written(tmp_path: Path):
     assert config.read(path).universe.name == 'mid_large_mega_non_fin_realest'
 
 
-def test_an_unknown_rebalance_frequency_is_rejected_at_read_time(tmp_path: Path):
-    path = _write(tmp_path, "rebalance = 'fortnightly'\n")
-    with pytest.raises(ValueError, match='rebalance must be one of'):
-        config.read(path)
-
-
 def test_signal_parameters_are_returned_per_signal(tmp_path: Path):
     path = _write(tmp_path, '[signals.factor_composite]\nfactors = ["ret_12_1", "roe"]\ntop_n = 50\n')
     cfg = config.read(path)
@@ -93,5 +87,11 @@ def test_signal_parameters_are_returned_per_signal(tmp_path: Path):
 
 def test_the_repo_backtest_toml_reads_cleanly():
     cfg = config.read(Path('backtest.toml'))
-    assert cfg.rebalance in config.REBALANCE_FREQUENCIES
     assert cfg.costs.slippage_bps > 0
+
+
+def test_no_frequency_is_read_from_the_file():
+    """A cadence here would change a run without showing on the card that asked for it."""
+    cfg = config.read()
+    assert not hasattr(cfg, 'rebalance')
+    assert config.REBALANCE_FREQUENCIES == ('D', 'W', 'M', 'Q')
