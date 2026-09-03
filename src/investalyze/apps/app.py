@@ -23,13 +23,14 @@ app = Dash(__name__, use_pages=True, pages_folder='', suppress_callback_exceptio
           external_stylesheets=[ag_grid_themes.BASE, ag_grid_themes.ALPINE], update_title=None)
 
 # Registers each page (dash.register_page at import time) before the layout below reads dash.page_registry.
+from investalyze.apps.backtest import page as backtest_page  # noqa: E402,F401
 from investalyze.apps.control_panel import page as control_panel_page  # noqa: E402,F401
 from investalyze.apps.data_quality import page as data_quality_page  # noqa: E402,F401
 from investalyze.apps.screener import page as screener_page  # noqa: E402,F401
 from investalyze.apps.ticker import page as ticker_page  # noqa: E402,F401
 
 _NAV_ICONS = {'/': 'tabler:layout-dashboard', '/screener': 'tabler:list-search', '/quality': 'tabler:shield-check',
-              '/ticker': 'tabler:chart-candle'}
+              '/ticker': 'tabler:chart-candle', '/backtest': 'tabler:chart-histogram'}
 
 
 def nav_link(page: dict) -> dmc.NavLink:
