@@ -262,3 +262,32 @@ def test_an_evaluation_builds_only_when_the_flag_is_set(monkeypatch):
     with pytest.raises(SystemExit):
         cli._evaluate(None, args, backtest_config.read())
     assert len(called) == 1
+
+
+def test_deleting_an_evaluation_without_a_universe_is_refused():
+    with pytest.raises(SystemExit, match='delete-evaluation needs --universe'):
+        cli._delete_evaluation(None, _args(command='delete-evaluation'), backtest_config.read())
+
+
+def test_deleting_an_evaluation_that_was_never_stored_says_so():
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    with pytest.raises(SystemExit, match='no as_reported evaluation stored for ghost'):
+        cli._delete_evaluation(con, _args(command='delete-evaluation', universe='ghost'),
+                               backtest_config.read())
+
+
+def test_deleting_an_evaluation_leaves_the_other_universes_alone():
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    for universe in ('all', 'unrecorded'):
+        rows = pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': 'roe',
+                              'Date': pd.Timestamp('2020-01-31'), 'Horizon': 21, 'Ic': 0.1,
+                              'NNames': 50}])
+        writer.replace_evaluation(con, 'as_reported', universe, 'roe', rows,
+                                  pd.DataFrame(columns=writer.QUANTILE_COLS))
+
+    cli._delete_evaluation(con, _args(command='delete-evaluation', universe='unrecorded'),
+                           backtest_config.read())
+
+    assert con.execute('SELECT Universe FROM factor_ic').fetchall() == [('all',)]

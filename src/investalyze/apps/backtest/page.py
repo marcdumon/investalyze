@@ -166,8 +166,12 @@ def layout() -> html.Div:
     factors_panel = html.Div([
         dmc.Group([
             dmc.Text('Factor evaluation', fw=600, size='sm'),
-            dmc.Select(id='bt-factors-universe', label=None, placeholder='every universe', data=[],
-                       clearable=True, searchable=True, size='xs', w=280),
+            dmc.Group([
+                dmc.Select(id='bt-factors-universe', label=None, placeholder='every universe', data=[],
+                           clearable=True, searchable=True, size='xs', w=280),
+                dmc.Button('Delete evaluation', id='bt-btn-delete-evaluation', size='xs', color='red',
+                           variant='light', disabled=True),
+            ], gap='xs'),
         ], justify='space-between', mb=4),
         dmc.Text('IC is measured on raw values; the oriented column flips the factors whose lower '
                  'values are the better ones, so the column ranks the library on one scale. Each '
@@ -246,6 +250,30 @@ def load_evaluated_universes(_tick):
         return data.get_evaluated_universes()
     except duckdb.IOException:
         return []
+
+
+@callback(Output('bt-btn-delete-evaluation', 'disabled'), Input('bt-factors-universe', 'value'))
+def toggle_delete_evaluation(universe):
+    """One stored evaluation is deleted at a time, so one has to be picked first."""
+    return not universe
+
+
+@callback(Output('bt-delete-modal', 'opened', allow_duplicate=True),
+          Output('bt-delete-text', 'children', allow_duplicate=True),
+          Output('bt-pending-delete', 'data', allow_duplicate=True),
+          Input('bt-btn-delete-evaluation', 'n_clicks'),
+          State('bt-factors-universe', 'value'), State('bt-res-vintage', 'value'),
+          prevent_initial_call=True)
+def ask_delete_evaluation(_n, universe, vintage):
+    """Name the evaluation and what it holds, since deleting it means scoring it all again."""
+    if not universe:
+        raise PreventUpdate
+    vintage = vintage or 'as_reported'
+    scopes = [scope for scope in data.get_evaluation_scopes(vintage) if scope['universe'] == universe]
+    if not scopes:
+        raise PreventUpdate
+    return True, logic.delete_evaluation_prompt(scopes[0]), {'kind': 'evaluation', 'vintage': vintage,
+                                                             'universe': universe}
 
 
 @callback(Output('bt-curve', 'figure'), Output('bt-trades', 'rowData'), Output('bt-caveats', 'children'),
@@ -455,22 +483,26 @@ def ask_delete(_n, selected):
     """Name every selected run and what goes with it, since the page offers no way back."""
     if not selected:
         raise PreventUpdate
-    return True, logic.delete_prompt(selected), [run['RunId'] for run in selected]
+    return True, logic.delete_prompt(selected), {'kind': 'runs',
+                                                'ids': [run['RunId'] for run in selected]}
 
 
 @callback(Output('bt-delete-modal', 'opened', allow_duplicate=True),
           Output('bt-pending-delete', 'data', allow_duplicate=True),
           Input('bt-delete-yes', 'n_clicks'), Input('bt-delete-no', 'n_clicks'),
           State('bt-pending-delete', 'data'), prevent_initial_call=True)
-def resolve_delete(yes_clicks, _no, run_ids):
-    """Start one delete job covering every selected run on Delete; just close the modal on Cancel.
+def resolve_delete(yes_clicks, _no, pending):
+    """Start the pending delete on Delete; just close the modal on Cancel.
 
     A click is required, not merely a callback firing with Delete as its trigger: a remounted button
-    reports no clicks, and nothing irreversible should start from one. The selection is cleared
-    either way, so a payload left over from a closed dialog can never be spent twice.
+    reports no clicks, and nothing irreversible should start from one. The payload is cleared either
+    way, so one left over from a closed dialog can never be spent twice.
     """
-    if ctx.triggered_id == 'bt-delete-yes' and yes_clicks and run_ids:
-        MANAGER.start(*logic.delete_argv(run_ids))
+    if ctx.triggered_id == 'bt-delete-yes' and yes_clicks and pending:
+        if pending['kind'] == 'runs':
+            MANAGER.start(*logic.delete_argv(pending['ids']))
+        else:
+            MANAGER.start(*logic.delete_evaluation_argv(pending['vintage'], pending['universe']))
     return False, None
 
 dash.register_page(__name__, path='/backtest', name='Backtest', layout=layout)

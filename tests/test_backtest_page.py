@@ -323,7 +323,7 @@ def test_the_confirmation_names_the_run_and_what_goes_with_it():
 
     opened, text, pending = page.ask_delete(1, _selected())
     assert opened is True
-    assert pending == ['abc123def456']
+    assert pending == {'kind': 'runs', 'ids': ['abc123def456']}
     assert 'abc123def456' in text
     assert 'sma_cross' in text
     assert '2,538 fills' in text
@@ -335,7 +335,7 @@ def test_the_confirmation_totals_the_fills_of_every_selected_run():
 
     selection = _selected() + _selected(RunId='def456abc123', NTrades=1_000)
     opened, text, pending = page.ask_delete(1, selection)
-    assert pending == ['abc123def456', 'def456abc123']
+    assert pending['ids'] == ['abc123def456', 'def456abc123']
     assert 'these 2 runs' in text
     assert '3,538 fills in total' in text
     assert 'def456abc123' in text
@@ -347,7 +347,7 @@ def test_confirming_starts_the_delete_job(monkeypatch):
     started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    opened, pending = page.resolve_delete(1, None, ['abc123def456'])
+    opened, pending = page.resolve_delete(1, None, {'kind': 'runs', 'ids': ['abc123def456']})
     assert (opened, pending) == (False, None)
     assert started == [['-m', 'investalyze.backtest', 'delete', '--run-id', 'abc123def456']]
 
@@ -358,7 +358,7 @@ def test_cancelling_leaves_the_run_where_it_is(monkeypatch):
     started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    opened, pending = page.resolve_delete(None, 1, ['abc123def456'])
+    opened, pending = page.resolve_delete(None, 1, {'kind': 'runs', 'ids': ['abc123def456']})
     assert (opened, pending) == (False, None)
     assert started == []
 
@@ -477,7 +477,7 @@ def test_a_delete_button_that_reports_no_click_starts_nothing(monkeypatch):
     started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    assert page.resolve_delete(None, None, ['abc123def456']) == (False, None)
+    assert page.resolve_delete(None, None, {'kind': 'runs', 'ids': ['abc']}) == (False, None)
     assert started == []
 
 
@@ -487,7 +487,7 @@ def test_the_selection_is_cleared_once_the_dialog_closes(monkeypatch):
 
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: None)
-    _opened, pending = page.resolve_delete(None, 1, ['abc123def456', 'def456abc123'])
+    _opened, pending = page.resolve_delete(None, 1, {'kind': 'runs', 'ids': ['abc', 'def']})
     assert pending is None
 
 
@@ -666,3 +666,60 @@ def test_a_cancel_button_that_reports_no_click_stops_nothing(monkeypatch):
     monkeypatch.setattr(page.MANAGER, 'cancel', lambda: cancelled.append(True))
     page.cancel_job(None)
     assert cancelled == []
+
+
+# --- throwing a stored evaluation away ---
+
+def _scope(**overrides) -> dict:
+    """One stored evaluation, shaped as `get_evaluation_scopes` returns it."""
+    base = {'vintage': 'as_reported', 'universe': 'unrecorded', 'factors': 29, 'ic_rows': 9128,
+            'quantile_rows': 43895, 'first': '2000-01-31', 'last': '2026-09-02'}
+    return base | overrides
+
+
+def test_deleting_an_evaluation_builds_the_cli_argv():
+    title, argv = logic.delete_evaluation_argv('as_reported', 'unrecorded')
+    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage', 'as_reported',
+                    '--universe', 'unrecorded']
+    assert 'unrecorded' in title
+
+
+def test_the_confirmation_names_the_evaluation_and_what_it_holds():
+    body = logic.delete_evaluation_prompt(_scope())
+    assert 'as reported evaluation stored under unrecorded' in body
+    assert '29 factors, 2000-01-31 to 2026-09-02' in body
+    assert '9,128 IC rows and 43,895 quantile rows' in body
+    assert 'rebuilds it' in body
+
+
+def test_the_delete_evaluation_button_is_dead_until_one_is_picked():
+    from investalyze.apps.backtest import page
+
+    assert page.toggle_delete_evaluation(None) is True
+    assert page.toggle_delete_evaluation('unrecorded') is False
+
+
+def test_confirming_starts_the_evaluation_delete(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    pending = {'kind': 'evaluation', 'vintage': 'as_reported', 'universe': 'unrecorded'}
+
+    assert page.resolve_delete(1, None, pending) == (False, None)
+    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage',
+                        'as_reported', '--universe', 'unrecorded']]
+
+
+def test_one_dialog_tells_the_two_kinds_of_delete_apart(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv[2]))
+
+    page.resolve_delete(1, None, {'kind': 'runs', 'ids': ['abc']})
+    page.resolve_delete(1, None, {'kind': 'evaluation', 'vintage': 'as_reported', 'universe': 'x'})
+
+    assert started == ['delete', 'delete-evaluation']

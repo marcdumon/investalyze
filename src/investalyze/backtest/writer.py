@@ -225,6 +225,24 @@ def delete_run(con: duckdb.DuckDBPyConnection, identifier: str) -> dict[str, int
     return removed
 
 
+EVALUATION_TABLES = ('factor_ic', 'factor_quantiles')
+
+
+def delete_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: str) -> dict[str, int]:
+    """Delete one vintage and universe's evaluation, returning how many rows went per table.
+
+    Re-running an evaluation replaces the factors it covers; this is how a scope stops existing,
+    which is what a universe that was renamed or never recorded needs.
+    """
+    removed = {}
+    for table in EVALUATION_TABLES:
+        removed[table] = con.execute(
+            f'SELECT count(*) FROM {table} WHERE Vintage = ? AND Universe = ?',
+            [vintage, universe]).fetchone()[0]
+        con.execute(f'DELETE FROM {table} WHERE Vintage = ? AND Universe = ?', [vintage, universe])
+    return removed
+
+
 def replace_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: str, factor: str,
                        ic: pd.DataFrame, quantiles: pd.DataFrame) -> int:
     """Replace one factor's IC and quantile rows for a vintage and universe, returning the IC row count."""

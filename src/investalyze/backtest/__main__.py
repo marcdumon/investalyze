@@ -3,8 +3,9 @@
 Commands split along what they need: `factors` writes the point-in-time factor panel, `evaluate`
 scores a factor against forward returns, `run` walks one signal through the engine, `walkforward`
 repeats that fold by fold, `report` prints what a finished run wrote, `list` shows the signals, and
-`delete` removes stored runs. Only the commands that store results open the DB for writing, so an
-evaluation can run while a job holds the write lock.
+`delete` removes stored runs and `delete-evaluation` removes a stored evaluation. Only the commands
+that store results open the DB for writing, so an evaluation can run while a job holds the write
+lock.
 """
 
 import argparse
@@ -25,7 +26,8 @@ from investalyze.ingest.logging import configure_logging
 
 log = logging.getLogger('investalyze.backtest')
 
-COMMANDS = ('factors', 'evaluate', 'run', 'walkforward', 'report', 'list', 'delete')
+COMMANDS = ('factors', 'evaluate', 'run', 'walkforward', 'report', 'list', 'delete',
+            'delete-evaluation')
 FREQUENCY_WORDS = {'D': 'daily', 'W': 'weekly', 'M': 'monthly', 'Q': 'quarterly'}
 
 
@@ -339,6 +341,18 @@ def _report(args: argparse.Namespace, data_root: Path) -> None:
     print(path.read_text())
 
 
+def _delete_evaluation(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
+    """Remove one vintage and universe's stored evaluation."""
+    universe = args.universe or run_cfg.universe.name
+    if not universe:
+        raise SystemExit('delete-evaluation needs --universe, the scope the rows were stored under')
+    removed = writer.delete_evaluation(con, args.vintage, universe)
+    if not any(removed.values()):
+        raise SystemExit(f'no {args.vintage} evaluation stored for {universe}')
+    log.info(f'deleted the {args.vintage} evaluation for {universe}: '
+             f'{removed["factor_ic"]:,} IC rows, {removed["factor_quantiles"]:,} quantile rows')
+
+
 def _delete(con, args: argparse.Namespace, data_root: Path) -> None:
     """Remove stored runs: their summary rows, equity curves, blotters and rendered reports.
 
@@ -443,6 +457,15 @@ def main() -> None:
         try:
             writer.ensure_tables(con)
             _delete(con, args, cfg.data_root)
+        finally:
+            con.close()
+        return
+
+    if args.command == 'delete-evaluation':
+        con = storage.connect(cfg.data_root, cfg.db)
+        try:
+            writer.ensure_tables(con)
+            _delete_evaluation(con, args, run_cfg)
         finally:
             con.close()
         return

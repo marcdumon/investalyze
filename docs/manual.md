@@ -393,6 +393,27 @@ what its typical member did. Measured on the whole database, `ret_12_1`'s bottom
 you want the mean to mean anything. The Mean IC and t columns are rank-based and unaffected.
 
 
+### Throwing an evaluation away
+
+Re-running Evaluate replaces every factor for that vintage and universe, so a scope is rebuilt by
+running it again. Removing one is the Factors tab: pick the universe, press **Delete evaluation**.
+The confirmation names what goes:
+
+```
+Delete the as reported evaluation stored under unrecorded?
+
+  29 factors, 2000-01-31 to 2026-09-02
+  9,128 IC rows and 43,895 quantile rows
+```
+
+This is what clears a scope that should not be there any more, such as `unrecorded`, the label given
+to rows written before evaluations recorded the universe they covered.
+
+```bash
+python -m investalyze.backtest delete-evaluation --vintage as_reported --universe unrecorded
+```
+
+
 ### Throwing runs away
 
 Tick the runs in the Stored runs table and press **Delete selected**; the header checkbox ticks all

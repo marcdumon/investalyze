@@ -80,14 +80,37 @@ def get_trades(run_id: str, limit: int = 500) -> pd.DataFrame:
 
 def get_evaluated_universes() -> list[str]:
     """The universes an evaluation has been stored for, so one of them can be chosen to read."""
+    return [scope['universe'] for scope in get_evaluation_scopes()]
+
+
+def get_evaluation_scopes(vintage: str | None = None) -> list[dict]:
+    """Every stored evaluation, one row per vintage and universe, with what it holds.
+
+    The counts are what a delete would remove, so the same read answers both the picker and the
+    confirmation it leads to.
+    """
     con = _connect()
     try:
         if not storage.table_exists(con, 'factor_ic') or not _has_column(con, 'factor_ic', 'Universe'):
             return []
-        rows = con.execute('SELECT DISTINCT Universe FROM factor_ic ORDER BY Universe').fetchall()
-        return [row[0] for row in rows]
+        clause, params = ('WHERE Vintage = ?', [vintage]) if vintage else ('', [])
+        rows = con.execute(f"""
+            SELECT ic.Vintage, ic.Universe, count(DISTINCT ic.Factor) AS factors, count(*) AS ic_rows,
+                   min(ic.Date)::VARCHAR AS first_date, max(ic.Date)::VARCHAR AS last_date
+            FROM factor_ic ic {clause}
+            GROUP BY ic.Vintage, ic.Universe ORDER BY ic.Vintage, ic.Universe
+        """, params).df()
+        quantiles = dict(con.execute(
+            'SELECT Vintage || \'|\' || Universe, count(*) FROM factor_quantiles GROUP BY 1').fetchall())
     finally:
         con.close()
+
+    scopes = []
+    for row in rows.itertuples():
+        scopes.append({'vintage': row.Vintage, 'universe': row.Universe, 'factors': int(row.factors),
+                       'ic_rows': int(row.ic_rows), 'first': row.first_date, 'last': row.last_date,
+                       'quantile_rows': int(quantiles.get(f'{row.Vintage}|{row.Universe}', 0))})
+    return scopes
 
 
 def get_factor_ic(vintage: str = 'as_reported', universe: str | None = None) -> pd.DataFrame:

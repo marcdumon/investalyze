@@ -267,6 +267,26 @@ def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
     return f'backtest {prefix} ({vintage}, {scope}, horizon {horizon})', argv
 
 
+def delete_evaluation_argv(vintage: str, universe: str) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest delete-evaluation` on one stored evaluation."""
+    argv = ['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage', vintage,
+            '--universe', universe]
+    return f'backtest delete-evaluation ({vintage}, {universe})', argv
+
+
+def delete_evaluation_prompt(scope: dict) -> str:
+    """The confirmation text for deleting one stored evaluation, naming what goes with it."""
+    return '\n'.join([
+        f'Delete the {scope["vintage"].replace("_", " ")} evaluation stored under '
+        f'{scope["universe"]}?',
+        '',
+        f'  {scope["factors"]} factors, {scope["first"]} to {scope["last"]}',
+        f'  {scope["ic_rows"]:,} IC rows and {scope["quantile_rows"]:,} quantile rows',
+        '',
+        'Evaluate factors over the same universe rebuilds it.',
+    ])
+
+
 def delete_argv(run_ids: list[str]) -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest delete` on one or more stored runs."""
     argv = ['-m', 'investalyze.backtest', 'delete', '--run-id', *run_ids]
