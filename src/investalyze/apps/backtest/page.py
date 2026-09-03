@@ -186,7 +186,8 @@ def layout() -> html.Div:
         ], justify='space-between', mb=4),
         dmc.Text('IC is measured on raw values; the oriented column flips the factors whose lower '
                  'values are the better ones, so the column ranks the library on one scale. Each '
-                 'evaluation is kept per universe, so pick the one you want to read.',
+                 'evaluation belongs to a vintage and a universe together, so this reads the '
+                 "vintage chosen on the research card above and the universe picked here.",
                  size='xs', c='dimmed', mb=6),
         html.Div(id='bt-factors-notice'),
         _grid('bt-factors', logic.FACTOR_COLUMNS, 420),
@@ -242,11 +243,16 @@ def load_runs(_tick):
 
 
 @callback(Output('bt-factors', 'rowData'), Output('bt-factors-notice', 'children'),
-          Input('bt-runs-tick', 'data'), Input('bt-factors-universe', 'value'))
-def load_factors(_tick, universe):
-    """Fill the factor evaluation table for the chosen universe, or for all of them together."""
+          Input('bt-runs-tick', 'data'), Input('bt-factors-universe', 'value'),
+          Input('bt-res-vintage', 'value'))
+def load_factors(_tick, universe, vintage):
+    """Fill the factor evaluation table for the chosen universe on the research card's vintage.
+
+    A stored evaluation belongs to a vintage and a universe together, so reading one without the
+    other pools two measurements of different things into one table.
+    """
     try:
-        table = logic.orient_ic(data.get_factor_ic(universe=universe))
+        table = logic.orient_ic(data.get_factor_ic(vintage or 'as_reported', universe))
     except duckdb.IOException:
         return [], _note(BUSY)
     if table.empty:
@@ -254,11 +260,12 @@ def load_factors(_tick, universe):
     return table.to_dict('records'), None
 
 
-@callback(Output('bt-factors-universe', 'data'), Input('bt-runs-tick', 'data'))
-def load_evaluated_universes(_tick):
-    """Offer every universe an evaluation has been stored for."""
+@callback(Output('bt-factors-universe', 'data'), Input('bt-runs-tick', 'data'),
+          Input('bt-res-vintage', 'value'))
+def load_evaluated_universes(_tick, vintage):
+    """Offer the universes an evaluation has been stored for on this vintage."""
     try:
-        return data.get_evaluated_universes()
+        return data.get_evaluated_universes(vintage or 'as_reported')
     except duckdb.IOException:
         return []
 

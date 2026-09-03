@@ -821,3 +821,40 @@ def test_a_universe_nothing_survives_says_to_start_later():
 def test_the_whole_database_needs_no_such_note():
     _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', None, tradable=(500, None))
     assert 'Trades' not in sentence
+
+
+# --- a scope is a vintage and a universe together ---
+
+def test_the_universe_picker_never_offers_the_same_name_twice(monkeypatch):
+    """Evaluating one universe on both vintages gives two scopes and one name."""
+    from investalyze.apps.backtest import data as backtest_data
+
+    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes', lambda vintage=None: [
+        {'vintage': 'as_reported', 'universe': 'solar'},
+        {'vintage': 'restated', 'universe': 'solar'},
+        {'vintage': 'as_reported', 'universe': 'all'},
+    ])
+    offered = backtest_data.get_evaluated_universes()
+    assert offered == ['solar', 'all']
+
+
+def test_the_picker_is_scoped_to_one_vintage(monkeypatch):
+    from investalyze.apps.backtest import data as backtest_data
+
+    asked = []
+    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes',
+                        lambda vintage=None: asked.append(vintage) or [])
+    backtest_data.get_evaluated_universes('restated')
+    assert asked == ['restated']
+
+
+def test_the_factor_table_reads_the_vintage_from_the_research_card():
+    """Reading a universe without its vintage pools two measurements of different things."""
+    from dash._callback import GLOBAL_CALLBACK_MAP
+
+    from investalyze.apps.backtest import page  # noqa: F401  registers the callback
+
+    key = next(name for name in GLOBAL_CALLBACK_MAP if 'bt-factors.rowData' in name)
+    inputs = [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
+    assert 'bt-res-vintage' in inputs
+    assert 'bt-factors-universe' in inputs

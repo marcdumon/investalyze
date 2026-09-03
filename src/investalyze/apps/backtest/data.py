@@ -78,9 +78,18 @@ def get_trades(run_id: str, limit: int = 500) -> pd.DataFrame:
         con.close()
 
 
-def get_evaluated_universes() -> list[str]:
-    """The universes an evaluation has been stored for, so one of them can be chosen to read."""
-    return [scope['universe'] for scope in get_evaluation_scopes()]
+def get_evaluated_universes(vintage: str | None = None) -> list[str]:
+    """The distinct universes an evaluation has been stored for, so one can be chosen to read.
+
+    Distinct because a scope is a vintage and a universe together: evaluating the same universe on
+    both vintages gives two scopes and one name, and a picker offered the same name twice is a
+    picker that cannot say which it means.
+    """
+    seen = []
+    for scope in get_evaluation_scopes(vintage):
+        if scope['universe'] not in seen:
+            seen.append(scope['universe'])
+    return seen
 
 
 def get_evaluation_scopes(vintage: str | None = None) -> list[dict]:
