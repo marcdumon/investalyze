@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from investalyze.analysis import panels
 from investalyze.ingest import storage
-from notebooks import panels
 
 _DB = Path('data') / 'investalyze.duckdb'
 DATES = [f'2026-01-{day:02d}' for day in range(5, 10)]  # five consecutive business days

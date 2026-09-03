@@ -1,6 +1,6 @@
 """Aligned return panels for cross-sectional work: a shared trading calendar, wide price/return matrices, z-scores.
 
-Everything that touches DuckDB for the PCA study lives here; `eigen.py` holds the math and takes only
+Everything that touches DuckDB for the cross-sectional studies lives here; `notebooks/eigen.py` holds the math and takes only
 matrices. Splitting them keeps the numerics testable without a database.
 
 The calendar is derived from a minimum share of the busiest session's ticker count, never from the raw
