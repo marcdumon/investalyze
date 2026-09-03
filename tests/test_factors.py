@@ -114,7 +114,7 @@ def _row(df: pd.DataFrame, ticker: str) -> pd.Series:
 # ---------- building blocks ----------
 
 def test_ttm_sums_and_prior_window(con):
-    df = factors._ttm(con, 'income', factors._INCOME_TTM)
+    df = factors._ttm(con, 'income', factors.INCOME_TTM)
     row = _row(df, 'AAA')
     assert row['revenue_ttm'] == 4400.0
     assert row['revenue_prior'] == 4000.0
@@ -124,7 +124,7 @@ def test_ttm_sums_and_prior_window(con):
 
 def test_ttm_masks_incomplete_windows(con):
     con.execute("DELETE FROM income WHERE Period = 'Q' AND \"Report Date\" < DATE '2025-06-01'")
-    df = factors._ttm(con, 'income', factors._INCOME_TTM)   # 4 recent quarters left, prior window incomplete
+    df = factors._ttm(con, 'income', factors.INCOME_TTM)   # 4 recent quarters left, prior window incomplete
     row = _row(df, 'AAA')
     assert row['revenue_ttm'] == 4400.0
     assert pd.isna(row['revenue_prior'])

@@ -7,16 +7,20 @@ the latest quarter. Missing inputs or nonsensical denominators yield NaN. Factor
 natural raw values; consumers orient ranks with `HIGHER_IS_BETTER` so rank 100 always means best.
 """
 
+import os
+from pathlib import Path
 from typing import NamedTuple
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-MARKET_TICKER = '^SPX'
+from investalyze.analysis import custom_factors
+from investalyze.analysis.panels import MARKET_TICKER
+
 MIN_RISK_OBS = 200  # minimum daily return observations for vol_252 / beta_252
 
-FAMILIES: dict[str, list[str]] = {
+BUILTIN_FAMILIES: dict[str, list[str]] = {
     'value': ['earnings_yield', 'fcf_yield', 'sales_yield', 'book_to_market', 'ebitda_ev'],
     'momentum': ['ret_12_1', 'ret_6m', 'high_52w'],
     'risk': ['vol_252', 'beta_252'],
@@ -24,9 +28,43 @@ FAMILIES: dict[str, list[str]] = {
                 'debt_to_equity', 'interest_coverage'],
     'growth': ['revenue_yoy', 'revenue_3y', 'eps_yoy', 'fcf_yoy', 'share_change_1y', 'div_growth'],
 }
-FACTORS: list[str] = [factor for family in FAMILIES.values() for factor in family]
+BUILTIN_FACTORS: list[str] = [factor for family in BUILTIN_FAMILIES.values() for factor in family]
 _LOWER_IS_BETTER = {'vol_252', 'beta_252', 'accruals', 'debt_to_equity', 'share_change_1y'}
-HIGHER_IS_BETTER: dict[str, bool] = {factor: factor not in _LOWER_IS_BETTER for factor in FACTORS}
+BUILTIN_HIGHER_IS_BETTER: dict[str, bool] = {factor: factor not in _LOWER_IS_BETTER
+                                             for factor in BUILTIN_FACTORS}
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CUSTOM_FAMILY = 'custom'
+
+# balance columns the built-in factors already pull, so a ratio term naming one reuses it
+BALANCE_LATEST = {'Total Equity': 'equity', 'Total Assets': 'assets'}
+
+FACTORS_FILE_ENV = 'INVESTALYZE_FACTORS_FILE'
+
+
+def _custom_factors_path() -> Path | None:
+    """Where user factor definitions are read from, or None when they are switched off.
+
+    The environment variable points the loader at another file, and setting it empty leaves the
+    library at its built-in factors. Tests set it empty so a definition added to the repo's own
+    factors.toml cannot change what they assert.
+    """
+    override = os.environ.get(FACTORS_FILE_ENV)
+    if override is None:
+        return REPO_ROOT / custom_factors.FACTORS_FILE
+    return Path(override) if override else None
+
+
+# user definitions from factors.toml are merged in here, so every consumer of FACTORS,
+# FAMILIES and HIGHER_IS_BETTER sees them without knowing they were user-defined
+CUSTOM: dict[str, custom_factors.CustomFactor] = custom_factors.read(
+    _custom_factors_path(), BUILTIN_FACTORS)
+
+FAMILIES: dict[str, list[str]] = dict(BUILTIN_FAMILIES)
+if CUSTOM:
+    FAMILIES[CUSTOM_FAMILY] = list(CUSTOM)
+FACTORS: list[str] = [factor for family in FAMILIES.values() for factor in family]
+HIGHER_IS_BETTER: dict[str, bool] = custom_factors.orientation(CUSTOM, BUILTIN_HIGHER_IS_BETTER)
 
 
 class FactorDoc(NamedTuple):
@@ -123,16 +161,59 @@ FACTOR_DOCS: dict[str, FactorDoc] = {
         'dividends last 365d / dividends prior 365d - 1'),
 }
 
-# source column -> short alias for the TTM aggregates
-_INCOME_TTM = {
+
+def _custom_docs() -> dict[str, FactorDoc]:
+    """A documentation entry per user-defined factor, from its own description and formula."""
+    entries = {}
+    for name, factor in CUSTOM.items():
+        formula = factor.expression if factor.kind == custom_factors.EXPRESSION \
+            else f'{factor.numerator} / {factor.denominator}'
+        what = factor.description or 'Defined in factors.toml.'
+        direction = 'Higher is better.' if factor.higher_is_better else 'Lower is better.'
+        entries[name] = FactorDoc(what=f'{what} {direction}', formula=formula)
+    return entries
+
+
+BUILTIN_FACTOR_DOCS: dict[str, FactorDoc] = dict(FACTOR_DOCS)
+FACTOR_DOCS |= _custom_docs()
+
+
+def reload_custom(path: Path | None = None) -> dict[str, custom_factors.CustomFactor]:
+    """Re-read the definitions file and update the library in place.
+
+    Every collection is mutated rather than rebound, so a module that imported FACTORS or
+    HIGHER_IS_BETTER by name sees the change without being reimported. That is what lets a factor
+    saved from the UI take effect without restarting the server.
+    """
+    global CUSTOM
+
+    reloaded = custom_factors.read(_custom_factors_path() if path is None else path, BUILTIN_FACTORS)
+    CUSTOM.clear()
+    CUSTOM.update(reloaded)
+
+    FAMILIES.clear()
+    FAMILIES.update(BUILTIN_FAMILIES)
+    if CUSTOM:
+        FAMILIES[CUSTOM_FAMILY] = list(CUSTOM)
+
+    FACTORS[:] = [factor for family in FAMILIES.values() for factor in family]
+    HIGHER_IS_BETTER.clear()
+    HIGHER_IS_BETTER.update(custom_factors.orientation(CUSTOM, BUILTIN_HIGHER_IS_BETTER))
+    FACTOR_DOCS.clear()
+    FACTOR_DOCS.update(BUILTIN_FACTOR_DOCS)
+    FACTOR_DOCS.update(_custom_docs())
+    return CUSTOM
+
+# source column -> short alias for the TTM aggregates; shared with the point-in-time panel
+INCOME_TTM = {
     'Revenue': 'revenue', 'Gross Profit': 'gross_profit', 'Operating Income (Loss)': 'op_income',
     'Depreciation & Amortization': 'dep_amort', 'Interest Expense': 'interest_expense',
     'Net Income': 'net_income', 'Net Income (Common)': 'ni_common',
 }
-_CASHFLOW_TTM = {'Net Cash from Operating Activities': 'cfo', 'Change in Fixed Assets & Intangibles': 'capex'}
+CASHFLOW_TTM = {'Net Cash from Operating Activities': 'cfo', 'Change in Fixed Assets & Intangibles': 'capex'}
 
 
-def _growth(now: pd.Series, prior: pd.Series) -> np.ndarray:
+def growth(now: pd.Series, prior: pd.Series) -> np.ndarray:
     """Relative change now vs prior; NaN unless prior is strictly positive."""
     return np.where(prior > 0, now / prior - 1, np.nan)
 
@@ -167,18 +248,25 @@ def _ttm(con: duckdb.DuckDBPyConnection, table: str, columns: dict[str, str]) ->
     return df.drop(columns=['n_recent', 'n_prior'])
 
 
-def _latest_balance(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    """Latest restated quarterly balance items per ticker: equity, assets, total debt, cash."""
-    df = con.execute("""
+def _latest_balance(con: duckdb.DuckDBPyConnection, extras: dict[str, str] | None = None) -> pd.DataFrame:
+    """Latest restated quarterly balance items per ticker: equity, assets, total debt, cash.
+
+    `extras` maps additional balance columns to aliases, which is how a user-defined ratio factor
+    reaches a line item the built-in factors do not use.
+    """
+    extras = extras or {}
+    extra_selects = ''.join(f',\n               arg_max("{source}", "Report Date") AS {alias}'
+                            for source, alias in extras.items())
+    df = con.execute(f"""
         SELECT Ticker,
                arg_max("Total Equity", "Report Date") AS equity,
                arg_max("Total Assets", "Report Date") AS assets,
                arg_max(COALESCE("Short Term Debt", 0) + COALESCE("Long Term Debt", 0), "Report Date") AS debt,
-               arg_max(COALESCE("Cash & Cash Equivalents", 0), "Report Date") AS cash
+               arg_max(COALESCE("Cash & Cash Equivalents", 0), "Report Date") AS cash{extra_selects}
         FROM balance WHERE Period = 'Q' AND IsRestated
         GROUP BY Ticker
     """).df()
-    numeric = ['equity', 'assets', 'debt', 'cash']
+    numeric = ['equity', 'assets', 'debt', 'cash'] + list(extras.values())
     df[numeric] = df[numeric].astype('float64')   # equity/assets can be NULL -> nullable Int64 from DuckDB
     return df
 
@@ -244,11 +332,17 @@ def _identity(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     return df[['Ticker', 'name', 'sector', 'industry', 'last_close', 'mcap', 'mcap_bn']]
 
 
-def fundamental_factors(con: duckdb.DuckDBPyConnection, identity: pd.DataFrame) -> pd.DataFrame:
-    """Value, quality and growth factors joined onto the identity frame (div_growth comes separately)."""
-    df = identity.merge(_ttm(con, 'income', _INCOME_TTM), on='Ticker', how='left')
-    df = df.merge(_ttm(con, 'cashflow', _CASHFLOW_TTM), on='Ticker', how='left')
-    df = df.merge(_latest_balance(con), on='Ticker', how='left')
+def fundamental_factors(con: duckdb.DuckDBPyConnection, identity: pd.DataFrame,
+                        extras: dict[str, dict[str, str]] | None = None) -> pd.DataFrame:
+    """Value, quality and growth factors joined onto the identity frame (div_growth comes separately).
+
+    `extras` carries the additional statement columns user-defined ratio factors need, keyed by
+    statement.
+    """
+    extras = extras or {'income': {}, 'cashflow': {}, 'balance': {}}
+    df = identity.merge(_ttm(con, 'income', INCOME_TTM | extras['income']), on='Ticker', how='left')
+    df = df.merge(_ttm(con, 'cashflow', CASHFLOW_TTM | extras['cashflow']), on='Ticker', how='left')
+    df = df.merge(_latest_balance(con, extras['balance']), on='Ticker', how='left')
     df = df.merge(_shares_by_rank(con), on='Ticker', how='left')
     df = df.merge(_revenue_cagr_3y(con), on='Ticker', how='left')
 
@@ -276,12 +370,12 @@ def fundamental_factors(con: duckdb.DuckDBPyConnection, identity: pd.DataFrame) 
     df['interest_coverage'] = np.where(df['interest_expense_ttm'] != 0,   # interest expense is stored negative
                                        df['op_income_ttm'] / df['interest_expense_ttm'].abs(), np.nan)
 
-    df['revenue_yoy'] = _growth(df['revenue_ttm'], df['revenue_prior'])
+    df['revenue_yoy'] = growth(df['revenue_ttm'], df['revenue_prior'])
     eps = pd.Series(np.where(df['shares_latest'] > 0, df['ni_common_ttm'] / df['shares_latest'], np.nan))
     eps_prior = pd.Series(np.where(df['shares_prior'] > 0, df['ni_common_prior'] / df['shares_prior'], np.nan))
-    df['eps_yoy'] = _growth(eps, eps_prior)
-    df['fcf_yoy'] = _growth(fcf_ttm, fcf_prior)
-    df['share_change_1y'] = _growth(df['shares_latest'], df['shares_prior'])
+    df['eps_yoy'] = growth(eps, eps_prior)
+    df['fcf_yoy'] = growth(fcf_ttm, fcf_prior)
+    df['share_change_1y'] = growth(df['shares_latest'], df['shares_prior'])
     return df
 
 
@@ -339,10 +433,21 @@ def dividend_growth(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 def build_factors(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    """One row per ticker with identity columns and every factor in FACTORS."""
-    df = fundamental_factors(con, _identity(con))
+    """One row per ticker with identity columns and every factor in FACTORS.
+
+    User-defined expression factors are computed last, over the built-in columns and their
+    cross-sectional ranks, so they read the same way here as they do in the point-in-time panel.
+    """
+    existing = {'income': INCOME_TTM, 'cashflow': CASHFLOW_TTM, 'balance': BALANCE_LATEST}
+    resolved = custom_factors.resolve_terms(CUSTOM, custom_factors.statement_schema(con))
+    aliases = custom_factors.term_aliases(CUSTOM, resolved, existing)
+    extras = custom_factors.extra_columns(CUSTOM, resolved, aliases, existing)
+
+    df = fundamental_factors(con, _identity(con), extras)
     df = df.merge(price_factors(con), on='Ticker', how='left')
     df = df.merge(dividend_growth(con), on='Ticker', how='left')
-    df['div_growth'] = _growth(df['div_ttm'], df['div_prior'])
+    df['div_growth'] = growth(df['div_ttm'], df['div_prior'])
+    df = custom_factors.apply_ratios(df, CUSTOM, resolved, aliases)
+    df = custom_factors.apply_expressions(df, CUSTOM, BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER)
     keep = ['Ticker', 'name', 'sector', 'industry', 'last_close', 'mcap', 'mcap_bn'] + FACTORS
     return df[keep].sort_values('Ticker', ignore_index=True)

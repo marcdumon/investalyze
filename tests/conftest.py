@@ -5,8 +5,17 @@ app to already exist in the process; without it, importing a page module directl
 reach its pure helper functions) fails with `PageError: register_page() must be called after app
 instantiation`. Instantiating one throwaway app here, before any test module imports a page,
 satisfies that requirement for the whole session.
+
+The factors override is set before any import too. `analysis/factors.py` merges the definitions in
+the repo's factors.toml into FACTORS at import time, so without this a factor someone adds to their
+own config would change what the suite asserts. Tests that exercise user-defined factors build their
+definitions explicitly instead.
 """
 
-import dash
+import os
+
+os.environ.setdefault('INVESTALYZE_FACTORS_FILE', '')
+
+import dash  # noqa: E402
 
 dash.Dash(__name__, use_pages=True, pages_folder='')
