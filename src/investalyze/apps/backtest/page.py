@@ -1,9 +1,9 @@
-"""Backtest page: stored runs, their equity curves, and the factor evaluation behind them.
+"""Backtest page: launching runs, and reading back the runs and factor evaluations they stored.
 
-Read only. Runs are produced by `python -m investalyze.backtest run` and evaluations by the
-`evaluate` command, both reachable as buttons on the Control Panel; this page shows what they left in
-the database. Selecting a run draws its equity against the benchmark with a drawdown band beneath,
-and lists the fills.
+The panel at the top builds a factor panel, evaluates factors and runs a signal, each as a
+`python -m investalyze.backtest` job, since every CLI writes to the same single-writer DuckDB file
+and the page itself only ever reads. Selecting a run draws its equity against the benchmark with a
+drawdown band beneath, and lists the fills. Deleting one goes through the same job runner.
 
 The survivorship note travels with the run rather than being written into the page, so a run made
 against a universe that does contain delisted names will say so on its own.
@@ -20,14 +20,14 @@ from plotly.subplots import make_subplots
 
 from datetime import date
 
-from investalyze.apps import universes
+from investalyze.apps import theming, universes
 from investalyze.apps.backtest import data, logic
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.backtest import registry
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
 EMPTY_FACTORS = 'no factor evaluations yet; press Evaluate factors above'
-EMPTY_RUNS = 'no stored runs yet; configure one above and press Run signal'
+EMPTY_RUNS = 'no stored runs yet; set one up above and press Run backtest'
 
 STRATEGY_COLOR = '#4C72B0'
 BENCHMARK_COLOR = '#8C8C8C'
@@ -45,13 +45,26 @@ TRADE_COLUMNS = [
 ]
 
 
+# the checkbox column comes free with this selection mode; clicking the row still selects it
+_MULTI_SELECT = {'mode': 'multiRow', 'checkboxes': True, 'headerCheckbox': True, 'enableClickSelection': True}
+
+
 def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = False) -> dag.AgGrid:
-    """One AG Grid with the page's shared styling."""
+    """One AG Grid with the page's shared styling.
+
+    A selectable grid sizes its columns to their contents rather than stretching them to the width
+    available, so a long signal name or a six-figure fill count is never cut short.
+    """
+    options = {'theme': 'legacy'}   # without this the className theme below is ignored
+    if selectable:
+        options['rowSelection'] = _MULTI_SELECT
     return dag.AgGrid(
         id=grid_id, columnDefs=columns, rowData=[],
-        dashGridOptions={'rowSelection': 'single'} if selectable else {},
-        columnSize='sizeToFit', style={'height': height},
-        className='ag-theme-alpine-dark',
+        defaultColDef={'sortable': True, 'resizable': True},
+        dashGridOptions=options,
+        columnSize='autoSize' if selectable else 'sizeToFit',
+        columnSizeOptions={'skipHeader': False},
+        style={'height': height}, className='ag-theme-alpine-dark',
     )
 
 
@@ -60,45 +73,69 @@ def _note(text: str) -> dmc.Alert:
     return dmc.Alert(text, color='gray', variant='light')
 
 
+def _date_fields(prefix: str, today: str) -> list:
+    """The From and To inputs a card carries, debounced so a query does not run per keystroke."""
+    return [
+        dmc.TextInput(id=f'{prefix}-start', label='From', value='2015-01-01', size='xs', w=120,
+                      debounce=400),
+        dmc.TextInput(id=f'{prefix}-end', label='To', value=today, size='xs', w=120, debounce=400),
+    ]
 
 
+def _universe_select(prefix: str) -> dmc.Select:
+    """The universe picker a card carries, filled from the universes saved on the Screener."""
+    return dmc.Select(id=f'{prefix}-universe', label='Universe', placeholder='whole database',
+                      data=[], clearable=True, searchable=True, size='xs', w=260)
 
-def _run_panel() -> dmc.Paper:
-    """The controls a run needs, universe included, and the buttons that launch one."""
-    today = date.today().isoformat()
+
+def _vintage_select(prefix: str) -> dmc.Select:
+    """Which fundamentals vintage a card works from."""
+    return dmc.Select(id=f'{prefix}-vintage', label='Vintage', value='as_reported', size='xs', w=140,
+                      data=[{'value': 'as_reported', 'label': 'as reported'},
+                            {'value': 'restated', 'label': 'restated'}])
+
+
+def _research_panel() -> dmc.Paper:
+    """Scoring the factor library against forward returns. Owns its own settings."""
     return dmc.Paper([
-        dmc.Group([dmc.Text('Run a backtest', fw=600, size='sm'),
-                   dmc.Badge('writes to the database', color='orange', variant='light', size='xs')],
+        dmc.Group([dmc.Text('Research factors', fw=600, size='sm'),
+                   dmc.Text('which factors predicted returns, and how strongly', size='xs', c='dimmed')],
+                  gap=8, mb=6),
+        dmc.Group(_date_fields('bt-res', date.today().isoformat()) + [
+            _universe_select('bt-res'),
+            _vintage_select('bt-res'),
+            dmc.NumberInput(id='bt-res-horizon', label='IC horizon', value=21, min=1, size='xs', w=110),
+        ], gap='xs', mb=8),
+        dmc.Button('Evaluate factors', id='bt-btn-evaluate', size='xs', color='orange'),
+        html.Div(id='bt-res-plan', style={'marginTop': '8px'}),
+    ], p='sm', withBorder=True)
+
+
+def _backtest_panel() -> dmc.Paper:
+    """Walking one signal through the engine. Owns its own settings."""
+    return dmc.Paper([
+        dmc.Group([dmc.Text('Backtest a strategy', fw=600, size='sm'),
+                   dmc.Text('what one signal would have done, after costs', size='xs', c='dimmed')],
                   gap=8, mb=6),
         dmc.Group([
             dmc.Select(id='bt-run-signal', label='Signal', value='factor_composite', size='xs', w=200,
                        data=[{'value': name, 'label': name} for name in sorted(registry.SIGNALS)]),
-            dmc.TextInput(id='bt-run-start', label='From', value='2015-01-01', size='xs', w=120),
-            dmc.TextInput(id='bt-run-end', label='To', value=today, size='xs', w=120),
+        ] + _date_fields('bt-run', date.today().isoformat()) + [
             dmc.Select(id='bt-run-freq', label='Rebalance', value='M', size='xs', w=100,
                        data=[{'value': f, 'label': f} for f in ('D', 'W', 'M', 'Q')]),
         ], gap='xs', mb=6),
         dmc.Group([
-            dmc.Select(id='bt-run-universe', label='Universe', placeholder='whole database', data=[],
-                       clearable=True, searchable=True, size='xs', w=260),
+            _universe_select('bt-run'),
             dmc.NumberInput(id='bt-run-ntop', label='Top N', value=500, min=1, size='xs', w=100),
             dmc.Select(id='bt-run-rankby', label='Ranked by', value='liquidity', size='xs', w=130,
                        data=[{'value': r, 'label': r} for r in ('liquidity', 'mcap', 'ticker')]),
-            dmc.Select(id='bt-run-vintage', label='Vintage', value='as_reported', size='xs', w=140,
-                       data=[{'value': 'as_reported', 'label': 'as reported'},
-                             {'value': 'restated', 'label': 'restated'}]),
-            dmc.NumberInput(id='bt-run-horizon', label='IC horizon', value=21, min=1, size='xs', w=110),
+            _vintage_select('bt-run'),
         ], gap='xs', mb=6),
-        dmc.Text('Universes are saved from the Screener. Leaving it blank ranks the whole database; '
-                 'Top N then cuts it to the names priced across the whole range.',
+        dmc.Text('A run trades the names in the universe that were priced across its whole range, '
+                 'capped at Top N. Leaving the universe blank uses the whole database.',
                  size='xs', c='dimmed', mb=8),
-        dmc.Group([
-            dmc.Button('1. Build factor panel', id='bt-btn-factors', size='xs', color='orange'),
-            dmc.Button('2. Evaluate factors', id='bt-btn-evaluate', size='xs', color='orange'),
-            dmc.Button('3. Run signal', id='bt-btn-run', size='xs', color='orange'),
-        ], gap='xs'),
-        html.Div(id='bt-run-status', style={'marginTop': '8px'}),
-        dcc.Interval(id='bt-poll', interval=2000),
+        dmc.Button('Run backtest', id='bt-btn-run', size='xs', color='orange'),
+        html.Div(id='bt-run-plan', style={'marginTop': '8px'}),
     ], p='sm', withBorder=True)
 
 
@@ -106,11 +143,15 @@ def layout() -> html.Div:
     """The page body, built per request so a run stored since the last view shows up."""
     header = dmc.Group([
         dmc.Title('Backtest', order=3),
-        dmc.Text('configure a run, launch it, and read what it stored', size='sm', c='dimmed'),
+        dmc.Text('research the factors, backtest a strategy, read what they stored', size='sm', c='dimmed'),
     ], gap='md', mb=8)
 
     runs_panel = html.Div([
-        dmc.Text('Stored runs', fw=600, size='sm', mb=4),
+        dmc.Group([
+            dmc.Text('Stored runs', fw=600, size='sm'),
+            dmc.Button('Delete selected', id='bt-btn-delete-run', size='xs', color='red',
+                       variant='light', disabled=True),
+        ], justify='space-between', mb=4),
         html.Div(id='bt-runs-notice'),
         _grid('bt-runs', logic.RUN_COLUMNS, 220, selectable=True),
     ])
@@ -123,9 +164,14 @@ def layout() -> html.Div:
     ])
 
     factors_panel = html.Div([
-        dmc.Text('Factor evaluation', fw=600, size='sm', mb=4),
+        dmc.Group([
+            dmc.Text('Factor evaluation', fw=600, size='sm'),
+            dmc.Select(id='bt-factors-universe', label=None, placeholder='every universe', data=[],
+                       clearable=True, searchable=True, size='xs', w=280),
+        ], justify='space-between', mb=4),
         dmc.Text('IC is measured on raw values; the oriented column flips the factors whose lower '
-                 'values are the better ones, so the column ranks the library on one scale.',
+                 'values are the better ones, so the column ranks the library on one scale. Each '
+                 'evaluation is kept per universe, so pick the one you want to read.',
                  size='xs', c='dimmed', mb=6),
         html.Div(id='bt-factors-notice'),
         _grid('bt-factors', logic.FACTOR_COLUMNS, 420),
@@ -133,7 +179,12 @@ def layout() -> html.Div:
 
     return html.Div([
         header,
-        _run_panel(),
+        _research_panel(),
+        html.Div(style={'height': '10px'}),
+        _backtest_panel(),
+        html.Div(style={'height': '10px'}),
+        html.Div(id='bt-job-status'),
+        dcc.Interval(id='bt-poll', interval=2000),
         html.Div(style={'height': '10px'}),
         dmc.Tabs([
             dmc.TabsList([
@@ -144,7 +195,30 @@ def layout() -> html.Div:
                           value='runs', pt=10),
             dmc.TabsPanel(factors_panel, value='factors', pt=10),
         ], value='runs'),
+        dmc.Modal(
+            id='bt-build-modal', title='Build the factor panel first?', centered=True, size='lg',
+            children=[
+                dmc.Text(id='bt-build-text', size='sm', style={'whiteSpace': 'pre-line'}),
+                dmc.Group([
+                    dmc.Button('Cancel', id='bt-build-no', variant='default', size='xs'),
+                    dmc.Button('Build and continue', id='bt-build-yes', color='orange', size='xs'),
+                ], justify='flex-end', mt=12),
+            ],
+        ),
+        dcc.Store(id='bt-pending-job'),
+        dmc.Modal(
+            id='bt-delete-modal', title='Delete runs', centered=True, size='lg',
+            children=[
+                dmc.Text(id='bt-delete-text', size='sm', style={'whiteSpace': 'pre-line'}),
+                dmc.Group([
+                    dmc.Button('Cancel', id='bt-delete-no', variant='default', size='xs'),
+                    dmc.Button('Delete', id='bt-delete-yes', color='red', size='xs'),
+                ], justify='flex-end', mt=12),
+            ],
+        ),
         dcc.Store(id='bt-selected-run'),
+        dcc.Store(id='bt-pending-delete'),
+        dcc.Store(id='bt-launched'),
         dcc.Store(id='bt-runs-tick', data=0),
     ], style={'padding': '4px'})
 
@@ -163,11 +237,11 @@ def load_runs(_tick):
 
 
 @callback(Output('bt-factors', 'rowData'), Output('bt-factors-notice', 'children'),
-          Input('bt-runs-tick', 'data'))
-def load_factors(_tick):
-    """Fill the factor evaluation table once the page mounts."""
+          Input('bt-runs-tick', 'data'), Input('bt-factors-universe', 'value'))
+def load_factors(_tick, universe):
+    """Fill the factor evaluation table for the chosen universe, or for all of them together."""
     try:
-        table = logic.orient_ic(data.get_factor_ic())
+        table = logic.orient_ic(data.get_factor_ic(universe=universe))
     except duckdb.IOException:
         return [], _note(BUSY)
     if table.empty:
@@ -175,37 +249,51 @@ def load_factors(_tick):
     return table.to_dict('records'), None
 
 
+@callback(Output('bt-factors-universe', 'data'), Input('bt-runs-tick', 'data'))
+def load_evaluated_universes(_tick):
+    """Offer every universe an evaluation has been stored for."""
+    try:
+        return data.get_evaluated_universes()
+    except duckdb.IOException:
+        return []
+
+
 @callback(Output('bt-curve', 'figure'), Output('bt-trades', 'rowData'), Output('bt-caveats', 'children'),
-          Input('bt-runs', 'selectedRows'))
-def show_run(selected):
-    """Draw the selected run's equity curve, drawdown band, caveats and fills."""
+          Input('bt-runs', 'selectedRows'), Input('theme-switch', 'checked'))
+def show_run(selected, dark):
+    """Draw the selected run's equity curve, drawdown band, caveats and fills, in the current theme."""
+    dark = bool(dark)
     if not selected:
-        return _empty_figure('select a run'), [], None
+        return _empty_figure('select a run', dark), [], None
     run = selected[0]
     try:
         curve = data.get_equity(run['RunId'])
         trades = data.get_trades(run['RunId'])
     except duckdb.IOException:
-        return _empty_figure(BUSY), [], _note(BUSY)
+        return _empty_figure(BUSY, dark), [], _note(BUSY)
     if curve.empty:
-        return _empty_figure('this run stored no equity curve'), [], None
+        return _empty_figure('this run stored no equity curve', dark), [], None
 
     rebased = logic.rebase(curve, ['Equity', 'BenchmarkEquity'])
     drawdown = logic.drawdown_from_equity(curve['Equity'])
-    caveats = dmc.Alert(run['SurvivorshipNote'], title='Read this first', color='yellow', variant='light')
-    return _curve_figure(rebased, drawdown, run), trades.to_dict('records'), caveats
+    notes = [run['SurvivorshipNote']]
+    if len(selected) > 1:
+        notes.insert(0, f'{len(selected)} runs selected; the chart below is run {run["RunId"]}.')
+    caveats = dmc.Alert([dmc.Text(note, size='sm') for note in notes],
+                        title='Read this first', color='yellow', variant='light')
+    return _curve_figure(rebased, drawdown, run, dark), trades.to_dict('records'), caveats
 
 
-def _empty_figure(message: str) -> go.Figure:
+def _empty_figure(message: str, dark: bool) -> go.Figure:
     """A blank chart carrying one centred message."""
     figure = go.Figure()
     figure.add_annotation(text=message, showarrow=False, xref='paper', yref='paper', x=0.5, y=0.5)
-    figure.update_layout(template='plotly_dark', margin={'l': 40, 'r': 20, 't': 20, 'b': 30},
+    figure.update_layout(**theming.figure_layout(dark), margin={'l': 40, 'r': 20, 't': 20, 'b': 30},
                          xaxis={'visible': False}, yaxis={'visible': False})
     return figure
 
 
-def _curve_figure(rebased, drawdown, run: dict) -> go.Figure:
+def _curve_figure(rebased, drawdown, run: dict, dark: bool) -> go.Figure:
     """Equity against benchmark on top, drawdown beneath, sharing one date axis."""
     figure = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04)
     figure.add_trace(go.Scatter(x=rebased['Date'], y=rebased['Equity'], name=run['Signal'],
@@ -218,23 +306,61 @@ def _curve_figure(rebased, drawdown, run: dict) -> go.Figure:
                                 hovertemplate='%{y:.1%}<extra>drawdown</extra>'), row=2, col=1)
     figure.update_yaxes(title_text='rebased to 100', row=1, col=1)
     figure.update_yaxes(title_text='drawdown', tickformat='.0%', row=2, col=1)
-    figure.update_layout(template='plotly_dark', margin={'l': 50, 'r': 20, 't': 20, 'b': 30},
+    figure.update_layout(**theming.figure_layout(dark), margin={'l': 50, 'r': 20, 't': 20, 'b': 30},
                          legend={'orientation': 'h', 'y': 1.08}, hovermode='x unified')
     return figure
 
 
+def _plan_alert(ready: bool, sentence: str) -> dmc.Alert:
+    """The line under a button saying what pressing it will do."""
+    return dmc.Alert(sentence, color='green' if ready else 'yellow', variant='light')
 
 
+def _gaps_for(vintage, universe, start, end, freq):
+    """What the stored panel is missing for one card's settings, or None while the DB is busy."""
+    try:
+        return data.panel_gaps(vintage or 'as_reported', universe, start, end, freq)
+    except (duckdb.IOException, duckdb.Error, ValueError):
+        return None
 
-@callback(Output('bt-run-universe', 'data'), Input('bt-run-universe', 'id'))
-def load_universe_options(_):
-    """Offer every universe saved from the Screener."""
-    return universes.list_universes()
+
+@callback(Output('bt-res-plan', 'children'),
+          Input('bt-runs-tick', 'data'), Input('bt-res-start', 'value'), Input('bt-res-end', 'value'),
+          Input('bt-res-universe', 'value'), Input('bt-res-vintage', 'value'))
+def show_research_plan(_tick, start, end, universe, vintage):
+    """Say what Evaluate will do before it is pressed, including anything it would have to build."""
+    gaps = _gaps_for(vintage, universe, start, end, 'M')
+    if gaps is None:
+        return _note(BUSY)
+    return _plan_alert(*logic.research_plan(gaps, universe, vintage or 'as_reported'))
 
 
-@callback(Output('bt-run-status', 'children'), Input('bt-poll', 'n_intervals'))
+@callback(Output('bt-run-plan', 'children'),
+          Input('bt-runs-tick', 'data'), Input('bt-run-signal', 'value'),
+          Input('bt-run-start', 'value'), Input('bt-run-end', 'value'), Input('bt-run-freq', 'value'),
+          Input('bt-run-universe', 'value'), Input('bt-run-vintage', 'value'))
+def show_backtest_plan(_tick, signal, start, end, freq, universe, vintage):
+    """Say what Run will do before it is pressed, including anything it would have to build."""
+    kind = registry.SIGNALS[signal][0] if signal in registry.SIGNALS else registry.CROSS_SECTIONAL
+    if kind != registry.CROSS_SECTIONAL:
+        return _plan_alert(*logic.backtest_plan({'n_tickers': 0}, kind, signal, universe))
+    gaps = _gaps_for(vintage, universe, start, end, freq or 'M')
+    if gaps is None:
+        return _note(BUSY)
+    return _plan_alert(*logic.backtest_plan(gaps, kind, signal, universe, vintage or 'as_reported'))
+
+
+@callback(Output('bt-res-universe', 'data'), Output('bt-run-universe', 'data'),
+          Input('bt-runs-tick', 'data'))
+def load_universe_options(_tick):
+    """Offer every universe saved from the Screener, on both cards."""
+    saved = universes.list_universes()
+    return saved, saved
+
+
+@callback(Output('bt-job-status', 'children'), Input('bt-poll', 'n_intervals'))
 def show_job_status(_n):
-    """Show what the job runner is doing, so a launched run is visibly running."""
+    """Show what the job runner is doing, so a launched job is visibly running."""
     job = MANAGER.current or (MANAGER.history[0] if MANAGER.history else None)
     if job is None:
         return None
@@ -246,33 +372,129 @@ def show_job_status(_n):
                      title=f'{job.title} finished', color=colour, variant='light')
 
 
-@callback(Output('bt-runs-tick', 'data'),
-          Input('bt-btn-factors', 'n_clicks'), Input('bt-btn-evaluate', 'n_clicks'),
-          Input('bt-btn-run', 'n_clicks'),
+@callback(Output('bt-launched', 'data'), Output('bt-build-modal', 'opened'),
+          Output('bt-build-text', 'children'), Output('bt-pending-job', 'data'),
+          Input('bt-btn-evaluate', 'n_clicks'), Input('bt-btn-run', 'n_clicks'),
+          State('bt-res-start', 'value'), State('bt-res-end', 'value'),
+          State('bt-res-universe', 'value'), State('bt-res-vintage', 'value'),
+          State('bt-res-horizon', 'value'),
           State('bt-run-signal', 'value'), State('bt-run-start', 'value'), State('bt-run-end', 'value'),
           State('bt-run-freq', 'value'), State('bt-run-universe', 'value'), State('bt-run-ntop', 'value'),
           State('bt-run-rankby', 'value'), State('bt-run-vintage', 'value'),
-          State('bt-run-horizon', 'value'), State('bt-runs-tick', 'data'),
           prevent_initial_call=True)
-def launch(_factors, _evaluate, _run, signal, start, end, freq, universe, n_top, rank_by, vintage,
-           horizon, tick):
-    """Start the chosen backtest command as a job, with the universe the form selected."""
+def launch(_evaluate, _run, res_start, res_end, res_universe, res_vintage, res_horizon,
+           signal, run_start, run_end, freq, run_universe, n_top, rank_by, run_vintage):
+    """Start a card's job, or ask first when it would have to build the factor panel.
+
+    The card has already said what the press will do, so the dialog only appears when that says a
+    build is needed. Nothing is launched from here in that case: the confirmation launches it.
+    """
     if MANAGER.current is not None:
         raise PreventUpdate
-    trigger = ctx.triggered_id
-    if trigger == 'bt-btn-factors':
-        title, argv = logic.factors_argv(start, end, freq, vintage, universe, n_top, rank_by)
-    elif trigger == 'bt-btn-evaluate':
-        title, argv = logic.evaluate_argv(int(horizon or 21), vintage)
+
+    if ctx.triggered_id == 'bt-btn-evaluate':
+        gaps = _gaps_for(res_vintage, res_universe, res_start, res_end, 'M')
+        ready, _ = logic.research_plan(gaps, res_universe, res_vintage) if gaps else (False, '')
+        pending = {'kind': 'evaluate', 'horizon': int(res_horizon or 21), 'vintage': res_vintage,
+                   'universe': res_universe, 'start': res_start, 'end': res_end}
     else:
-        title, argv = logic.run_argv(signal, start, end, freq, universe, n_top, rank_by)
-    MANAGER.start(title, argv)
-    return (tick or 0) + 1
+        kind = registry.SIGNALS[signal][0] if signal in registry.SIGNALS else registry.CROSS_SECTIONAL
+        gaps = _gaps_for(run_vintage, run_universe, run_start, run_end, freq or 'M') \
+            if kind == registry.CROSS_SECTIONAL else None
+        ready = kind != registry.CROSS_SECTIONAL or (
+            gaps is not None and logic.backtest_plan(gaps, kind, signal, run_universe, run_vintage)[0])
+        pending = {'kind': 'run', 'signal': signal, 'start': run_start, 'end': run_end, 'freq': freq,
+                   'universe': run_universe, 'n_top': n_top, 'rank_by': rank_by, 'vintage': run_vintage}
+
+    if ready:
+        title, argv = _job_argv(pending, build_panel=False)
+        MANAGER.start(title, argv)
+        return title, False, dash.no_update, None
+    if gaps is None:
+        raise PreventUpdate
+    return dash.no_update, True, logic.build_prompt(gaps, pending['universe'], pending['vintage']), pending
+
+
+def _job_argv(pending: dict, *, build_panel: bool) -> tuple[str, list[str]]:
+    """The command one card's settings turn into, with or without the panel build in front of it."""
+    if pending['kind'] == 'evaluate':
+        return logic.evaluate_argv(pending['horizon'], pending['vintage'], pending['universe'],
+                                   pending['start'], pending['end'], build_panel)
+    return logic.run_argv(pending['signal'], pending['start'], pending['end'], pending['freq'],
+                          pending['universe'], pending['n_top'], pending['rank_by'],
+                          pending['vintage'], build_panel)
+
+
+@callback(Output('bt-build-modal', 'opened', allow_duplicate=True),
+          Output('bt-pending-job', 'data', allow_duplicate=True),
+          Input('bt-build-yes', 'n_clicks'), Input('bt-build-no', 'n_clicks'),
+          State('bt-pending-job', 'data'), prevent_initial_call=True)
+def resolve_build(yes_clicks, _no, pending):
+    """Launch the job with the build in front of it on Build and continue; close on Cancel.
+
+    A click is required, not merely a callback firing with the button as its trigger: a remounted
+    button reports no clicks, and nothing that writes to the database should start from one.
+    """
+    if ctx.triggered_id == 'bt-build-yes' and yes_clicks and pending and MANAGER.current is None:
+        MANAGER.start(*_job_argv(pending, build_panel=True))
+    return False, None
+
+
+@callback(Output('bt-runs-tick', 'data'), Input('bt-poll', 'n_intervals'),
+          State('bt-runs-tick', 'data'), prevent_initial_call=True)
+def refresh_after_job(_n, tick):
+    """Reload the tables when a job finishes, keyed on when it finished so one reload happens per job.
+
+    Initial calls are prevented so the tables load on their own: a PreventUpdate raised here before
+    any job has run would cancel the callbacks downstream of the tick along with it.
+    """
+    if MANAGER.current is not None or not MANAGER.history:
+        raise PreventUpdate
+    finished = MANAGER.history[0].finished
+    stamp = finished.isoformat() if finished else None
+    if stamp is None or stamp == tick:
+        raise PreventUpdate
+    return stamp
+
+
+@callback(Output('bt-btn-delete-run', 'disabled'), Input('bt-runs', 'selectedRows'))
+def toggle_delete(selected):
+    """There is nothing to delete until at least one run is ticked."""
+    return not selected
+
+
+@callback(Output('bt-delete-modal', 'opened'), Output('bt-delete-text', 'children'),
+          Output('bt-pending-delete', 'data'),
+          Input('bt-btn-delete-run', 'n_clicks'), State('bt-runs', 'selectedRows'),
+          prevent_initial_call=True)
+def ask_delete(_n, selected):
+    """Name every selected run and what goes with it, since the page offers no way back."""
+    if not selected:
+        raise PreventUpdate
+    return True, logic.delete_prompt(selected), [run['RunId'] for run in selected]
+
+
+@callback(Output('bt-delete-modal', 'opened', allow_duplicate=True),
+          Output('bt-pending-delete', 'data', allow_duplicate=True),
+          Input('bt-delete-yes', 'n_clicks'), Input('bt-delete-no', 'n_clicks'),
+          State('bt-pending-delete', 'data'), prevent_initial_call=True)
+def resolve_delete(yes_clicks, _no, run_ids):
+    """Start one delete job covering every selected run on Delete; just close the modal on Cancel.
+
+    A click is required, not merely a callback firing with Delete as its trigger: a remounted button
+    reports no clicks, and nothing irreversible should start from one. The selection is cleared
+    either way, so a payload left over from a closed dialog can never be spent twice.
+    """
+    if ctx.triggered_id == 'bt-delete-yes' and yes_clicks and run_ids:
+        MANAGER.start(*logic.delete_argv(run_ids))
+    return False, None
 
 dash.register_page(__name__, path='/backtest', name='Backtest', layout=layout)
 
-clientside_callback(
-    "(dark) => dark ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'",
-    Output('bt-runs', 'className'),
-    Input('theme-switch', 'checked'),
-)
+# every grid on the page follows the switch, not just the first one
+for _grid_id in ('bt-runs', 'bt-trades', 'bt-factors'):
+    clientside_callback(
+        "(dark) => dark ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'",
+        Output(_grid_id, 'className'),
+        Input('theme-switch', 'checked'),
+    )

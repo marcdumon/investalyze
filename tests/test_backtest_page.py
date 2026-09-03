@@ -5,9 +5,13 @@ factor whose lower values are better reads negative, and a table that ranked on 
 put the working factors at the bottom.
 """
 
+from datetime import datetime
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
+from dash.exceptions import PreventUpdate
 
 from investalyze.analysis.factors import BUILTIN_FACTORS as BUILTIN
 from investalyze.apps.backtest import logic
@@ -112,29 +116,52 @@ def test_the_run_button_builds_the_cli_argv():
     assert 'sma_cross' in title
 
 
-def test_every_registered_signal_is_offered_by_the_run_panel():
+def test_every_registered_signal_is_offered_by_the_backtest_card():
     from investalyze.apps.backtest import page
     from investalyze.backtest import registry
 
-    rendered = str(page._run_panel())
+    rendered = str(page._backtest_panel())
     for name in registry.SIGNALS:
         assert name in rendered
 
 
-def test_the_run_panel_offers_a_universe_picker():
+def test_each_card_owns_its_own_fields():
+    """Duplicated on purpose: editing the research range must not stale a backtest."""
     from investalyze.apps.backtest import page
 
-    rendered = str(page._run_panel())
-    assert 'bt-run-universe' in rendered
-    assert 'bt-run-ntop' in rendered
-    assert 'bt-run-rankby' in rendered
+    research, backtest = str(page._research_panel()), str(page._backtest_panel())
+    for field in ('start', 'end', 'universe', 'vintage'):
+        assert f'bt-res-{field}' in research
+        assert f'bt-run-{field}' in backtest
+        assert f'bt-run-{field}' not in research
+        assert f'bt-res-{field}' not in backtest
 
 
-def test_the_universe_picker_lists_the_saved_universes():
+def test_the_research_card_carries_only_what_an_evaluation_needs():
     from investalyze.apps.backtest import page
+
+    research = str(page._research_panel())
+    assert 'bt-res-horizon' in research
+    assert 'signal' not in research.lower().replace('bt-res', '')
+    assert 'bt-res-freq' not in research
+    assert 'bt-res-ntop' not in research
+
+
+def test_the_backtest_card_carries_the_sizing_an_evaluation_has_no_use_for():
+    from investalyze.apps.backtest import page
+
+    backtest = str(page._backtest_panel())
+    assert 'bt-run-ntop' in backtest
+    assert 'bt-run-rankby' in backtest
+    assert 'bt-run-horizon' not in backtest
+
+
+def test_both_universe_pickers_list_the_saved_universes():
     from investalyze.apps import universes
+    from investalyze.apps.backtest import page
 
-    assert page.load_universe_options('bt-run-universe') == universes.list_universes()
+    saved = universes.list_universes()
+    assert page.load_universe_options(0) == (saved, saved)
 
 
 def test_the_backtest_page_layout_builds():
@@ -239,16 +266,14 @@ def test_the_control_panel_no_longer_carries_a_backtest_card():
 # --- the universe picker on the control panel ---
 
 def test_the_run_button_passes_the_chosen_universe_and_sizing():
-    _, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31',
-                                                    'M', 'my_universe', 300, 'mcap')
+    _, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M', 'my_universe', 300, 'mcap')
     assert '--universe' in argv and 'my_universe' in argv
     assert '--n-top' in argv and '300' in argv
     assert '--rank-by' in argv and 'mcap' in argv
 
 
 def test_the_factors_button_passes_the_chosen_universe():
-    title, argv = logic.factors_argv('2015-01-01', '2024-12-31', 'M',
-                                                            'as_reported', 'my_universe', 100, 'ticker')
+    title, argv = logic.factors_argv('2015-01-01', '2024-12-31', 'M', 'as_reported', 'my_universe', 100, 'ticker')
     assert '--universe' in argv and 'my_universe' in argv
     assert 'my_universe' in title
 
@@ -257,3 +282,418 @@ def test_leaving_the_universe_blank_runs_over_the_whole_database():
     title, argv = logic.run_argv('hold_cash', '2020-01-01', '2020-12-31', 'M')
     assert '--universe' not in argv
     assert 'whole database' in title
+
+
+# --- deleting a run ---
+
+def _selected(**overrides) -> list[dict]:
+    """The grid's selection payload for one stored run, with overrides applied."""
+    row = {'RunId': 'abc123def456', 'Signal': 'sma_cross', 'StartDate': '2015-01-02',
+           'EndDate': '2020-12-31', 'NTrades': 2538, 'Created': '2026-09-03 08:15'}
+    return [row | overrides]
+
+
+def test_the_delete_button_builds_the_cli_argv():
+    title, argv = logic.delete_argv(['abc123def456'])
+    assert argv == ['-m', 'investalyze.backtest', 'delete', '--run-id', 'abc123def456']
+    assert 'abc123def456' in title
+
+
+def test_deleting_several_runs_builds_one_command_naming_them_all():
+    title, argv = logic.delete_argv(['aaa', 'bbb', 'ccc'])
+    assert argv == ['-m', 'investalyze.backtest', 'delete', '--run-id', 'aaa', 'bbb', 'ccc']
+    assert '3 runs' in title
+
+
+def test_the_runs_panel_offers_a_delete_button():
+    from investalyze.apps.backtest import page
+
+    assert 'bt-btn-delete-run' in str(page.layout())
+
+
+def test_the_delete_button_is_dead_until_a_run_is_selected():
+    from investalyze.apps.backtest import page
+
+    assert page.toggle_delete([]) is True
+    assert page.toggle_delete(_selected()) is False
+
+
+def test_the_confirmation_names_the_run_and_what_goes_with_it():
+    from investalyze.apps.backtest import page
+
+    opened, text, pending = page.ask_delete(1, _selected())
+    assert opened is True
+    assert pending == ['abc123def456']
+    assert 'abc123def456' in text
+    assert 'sma_cross' in text
+    assert '2,538 fills' in text
+    assert '2026-09-03 08:15' in text
+
+
+def test_the_confirmation_totals_the_fills_of_every_selected_run():
+    from investalyze.apps.backtest import page
+
+    selection = _selected() + _selected(RunId='def456abc123', NTrades=1_000)
+    opened, text, pending = page.ask_delete(1, selection)
+    assert pending == ['abc123def456', 'def456abc123']
+    assert 'these 2 runs' in text
+    assert '3,538 fills in total' in text
+    assert 'def456abc123' in text
+
+
+def test_confirming_starts_the_delete_job(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    opened, pending = page.resolve_delete(1, None, ['abc123def456'])
+    assert (opened, pending) == (False, None)
+    assert started == [['-m', 'investalyze.backtest', 'delete', '--run-id', 'abc123def456']]
+
+
+def test_cancelling_leaves_the_run_where_it_is(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    opened, pending = page.resolve_delete(None, 1, ['abc123def456'])
+    assert (opened, pending) == (False, None)
+    assert started == []
+
+
+def test_the_tables_reload_once_a_job_has_finished(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 3, 12, 0, 0))])
+    assert page.refresh_after_job(1, 0) == '2026-09-03T12:00:00'
+
+
+def test_a_finished_job_reloads_the_tables_once_and_not_on_every_poll(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 3, 12, 0, 0))])
+    with pytest.raises(PreventUpdate):
+        page.refresh_after_job(2, '2026-09-03T12:00:00')
+
+
+def test_the_tables_are_left_alone_while_a_job_is_still_running(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page.MANAGER, 'current', SimpleNamespace(title='backtest run'))
+    with pytest.raises(PreventUpdate):
+        page.refresh_after_job(1, 0)
+
+
+def test_the_runs_grid_offers_a_checkbox_on_every_row():
+    from investalyze.apps.backtest import page
+
+    assert page._MULTI_SELECT['mode'] == 'multiRow'
+    assert page._MULTI_SELECT['checkboxes'] is True
+    assert page._MULTI_SELECT['headerCheckbox'] is True
+
+
+def test_the_run_columns_are_sized_to_their_contents():
+    from investalyze.apps.backtest import page
+
+    grid = page._grid('bt-runs', logic.RUN_COLUMNS, 220, selectable=True)
+    assert grid.columnSize == 'autoSize'
+    assert not any('width' in column for column in logic.RUN_COLUMNS)
+
+
+def test_the_run_table_leads_with_when_the_run_was_made_and_ends_with_its_id():
+    fields = [column['field'] for column in logic.RUN_COLUMNS]
+    assert fields[0] == 'Created'
+    assert fields[-1] == 'RunId'
+
+
+# --- following the theme ---
+
+def test_a_figure_carries_the_template_of_the_mode_the_switch_is_on():
+    from investalyze.apps import theming
+
+    assert theming.figure_layout(True)['template'] == 'plotly_dark'
+    assert theming.figure_layout(False)['template'] == 'plotly_white'
+
+
+def test_a_figure_lets_the_page_behind_it_show_through():
+    from investalyze.apps import theming
+
+    for dark in (True, False):
+        layout = theming.figure_layout(dark)
+        assert layout['paper_bgcolor'] == 'rgba(0,0,0,0)'
+        assert layout['plot_bgcolor'] == 'rgba(0,0,0,0)'
+
+
+def test_the_empty_chart_follows_the_theme():
+    from investalyze.apps.backtest import page
+
+    assert page._empty_figure('select a run', True).layout.template.layout.paper_bgcolor is not None
+    assert page._empty_figure('select a run', False).layout.paper_bgcolor == 'rgba(0,0,0,0)'
+
+
+def test_the_run_chart_follows_the_theme():
+    from investalyze.apps.backtest import page
+
+    curve = pd.DataFrame({'Date': pd.bdate_range('2020-01-01', periods=4),
+                          'Equity': [100.0, 101.0, 102.0, 103.0],
+                          'BenchmarkEquity': [100.0, 100.5, 101.0, 101.5]})
+    drawdown = logic.drawdown_from_equity(curve['Equity'])
+    run = {'Signal': 'sma_cross', 'Benchmark': '^NDX'}
+    dark = page._curve_figure(curve, drawdown, run, True)
+    light = page._curve_figure(curve, drawdown, run, False)
+    assert dark.layout.template is not light.layout.template
+    assert light.layout.paper_bgcolor == 'rgba(0,0,0,0)'
+
+
+def test_the_run_chart_is_redrawn_when_the_theme_switch_moves():
+    """The switch is an input of the chart callback, so a toggle redraws rather than leaves it behind."""
+    from dash._callback import GLOBAL_CALLBACK_MAP
+
+    from investalyze.apps.backtest import page  # noqa: F401  registers the callback
+
+    key = next(name for name in GLOBAL_CALLBACK_MAP if 'bt-curve.figure' in name)
+    assert 'theme-switch' in [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
+
+
+def test_the_quality_evidence_is_redrawn_when_the_theme_switch_moves():
+    """It used to read the switch as State, which left an open chart in the mode it was drawn in."""
+    from dash._callback import GLOBAL_CALLBACK_MAP
+
+    from investalyze.apps.data_quality import page as quality_page  # noqa: F401  registers the callback
+
+    key = next(name for name in GLOBAL_CALLBACK_MAP if 'dq-evidence.children' in name
+               and 'allow_duplicate' not in name)
+    assert 'theme-switch' in [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
+
+
+def test_a_delete_button_that_reports_no_click_starts_nothing(monkeypatch):
+    """A remounted button fires the callback with no clicks; deleting must need a real one."""
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    assert page.resolve_delete(None, None, ['abc123def456']) == (False, None)
+    assert started == []
+
+
+def test_the_selection_is_cleared_once_the_dialog_closes(monkeypatch):
+    """Clearing it stops a payload from a closed dialog being spent by a later firing."""
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: None)
+    _opened, pending = page.resolve_delete(None, 1, ['abc123def456', 'def456abc123'])
+    assert pending is None
+
+
+def test_the_evaluate_button_passes_the_chosen_universe():
+    title, argv = logic.evaluate_argv(21, 'as_reported', 'my_universe')
+    assert '--universe' in argv and 'my_universe' in argv
+    assert 'my_universe' in title
+
+
+def test_evaluating_without_a_universe_covers_the_whole_database():
+    title, argv = logic.evaluate_argv(21, 'as_reported')
+    assert '--universe' not in argv
+    assert 'whole database' in title
+
+
+def test_the_factors_tab_offers_the_universes_an_evaluation_was_stored_for():
+    from investalyze.apps.backtest import page
+
+    assert 'bt-factors-universe' in str(page.layout())
+
+
+
+
+# --- what a card says a press will do ---
+
+def _gaps(**overrides) -> dict:
+    """A request the stored panel can answer in full, with overrides applied."""
+    base = {'requested_dates': 120, 'missing_dates': 0, 'n_tickers': 7, 'missing_factors': [],
+            'changed_factors': [], 'seconds_estimate': None, 'has_panel': True,
+            'panel_frequency': 'M', 'requested_frequency': 'M'}
+    return base | overrides
+
+
+def test_a_covered_evaluation_says_it_reads_the_stored_panel():
+    ready, sentence = logic.research_plan(_gaps(), 'solar')
+    assert ready is True
+    assert 'from the stored panel' in sentence
+    assert '7 names in solar' in sentence
+
+
+def test_an_evaluation_missing_dates_says_what_it_builds_and_how_long():
+    ready, sentence = logic.research_plan(_gaps(missing_dates=42, seconds_estimate=15.0), 'solar')
+    assert ready is False
+    assert 'Builds the as reported panel: 42 monthly dates for 7 names in solar' in sentence
+    assert 'about 15 seconds' in sentence
+    assert '42 of the 120 monthly dates it needs do not exist yet' in sentence
+
+
+def test_a_vintage_with_no_panel_says_so_rather_than_counting_to_itself():
+    _ready, sentence = logic.research_plan(_gaps(missing_dates=120), 'solar', 'restated')
+    assert 'Builds the restated panel: 120 monthly dates' in sentence
+    assert 'holds nothing for this vintage' in sentence
+    assert '120 of the 120' not in sentence
+
+
+def test_a_redefined_factor_makes_a_card_ask_for_a_rebuild():
+    """The dates are all there; only the fingerprint says the values came from another formula."""
+    ready, sentence = logic.research_plan(_gaps(changed_factors=['quality_blend']), 'solar')
+    assert ready is False
+    assert 'Quality_blend was redefined since the last build' in sentence
+
+
+def test_a_factor_with_no_values_makes_a_card_ask_for_a_rebuild():
+    ready, sentence = logic.research_plan(_gaps(missing_factors=['my_blend']), None)
+    assert ready is False
+    assert 'no values for my_blend' in sentence
+
+
+def test_a_timing_signal_never_mentions_the_panel():
+    """It has no use for one, so naming it would only invite the question of whether to build it."""
+    ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar')
+    assert ready is True
+    assert sentence == 'sma_cross reads prices only. Nothing to build.'
+
+
+def test_a_covered_backtest_names_the_signal_it_will_run():
+    ready, sentence = logic.backtest_plan(_gaps(), 'cross_sectional', 'factor_composite', None)
+    assert ready is True
+    assert 'factor_composite' in sentence
+
+
+def test_a_backtest_past_the_panel_is_not_ready():
+    ready, _ = logic.backtest_plan(_gaps(missing_dates=9), 'cross_sectional', 'factor_composite', None)
+    assert ready is False
+
+
+def test_the_dialog_names_what_it_builds_every_reason_and_the_cost():
+    body = logic.build_prompt(_gaps(missing_dates=42, changed_factors=['x'], seconds_estimate=200.0),
+                              'solar', 'as_reported')
+    assert 'This builds the as reported panel: 42 monthly dates for 7 names in solar.' in body
+    assert '42 of the 120 monthly dates it needs do not exist yet' in body
+    assert 'x was redefined since the last build' in body
+    assert 'Time: about 3 minutes.' in body
+
+
+def test_the_dialog_says_when_it_cannot_estimate_the_time():
+    body = logic.build_prompt(_gaps(missing_dates=42), None, 'as_reported')
+    assert 'Time: no earlier build to estimate from.' in body
+
+
+# --- the build only ever travels with a confirmation ---
+
+def test_neither_command_builds_unless_asked():
+    _t, evaluate = logic.evaluate_argv(21, 'as_reported', 'solar', '2015-01-01', '2024-12-31')
+    _t2, run = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M')
+    assert '--build-panel' not in evaluate
+    assert '--build-panel' not in run
+
+
+def test_a_confirmed_build_travels_with_the_command_and_shows_in_its_title():
+    title, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M',
+                                 build_panel=True)
+    assert '--build-panel' in argv
+    assert 'build panel, then run' in title
+
+
+def test_a_confirmed_build_travels_with_an_evaluation_too():
+    title, argv = logic.evaluate_argv(21, 'as_reported', build_panel=True)
+    assert '--build-panel' in argv
+    assert 'build panel, then evaluate' in title
+
+
+def test_the_page_asks_before_building(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps(missing_dates=42))
+
+    _launched, opened, text, pending = page.launch(
+        None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21,
+        'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity', 'as_reported')
+
+    assert opened is True
+    assert 'This builds the as reported panel: 42 monthly dates' in text
+    assert pending['kind'] == 'run'
+    assert started == []
+
+
+def test_the_page_launches_straight_away_when_nothing_needs_building(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-evaluate'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps())
+
+    _launched, opened, _text, pending = page.launch(
+        1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21,
+        'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity', 'as_reported')
+
+    assert opened is False
+    assert pending is None
+    assert len(started) == 1
+    assert '--build-panel' not in started[0]
+
+
+def test_confirming_the_dialog_starts_the_job_with_the_build(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-yes'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    pending = {'kind': 'run', 'signal': 'factor_composite', 'start': '2015-01-01',
+               'end': '2024-12-31', 'freq': 'M', 'universe': None, 'n_top': 500,
+               'rank_by': 'liquidity', 'vintage': 'as_reported'}
+
+    assert page.resolve_build(1, None, pending) == (False, None)
+    assert '--build-panel' in started[0]
+
+
+def test_cancelling_the_dialog_builds_nothing(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-no'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+
+    assert page.resolve_build(None, 1, {'kind': 'evaluate'}) == (False, None)
+    assert started == []
+
+
+def test_a_build_button_that_reports_no_click_starts_nothing(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-build-yes'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+
+    assert page.resolve_build(None, None, {'kind': 'evaluate'}) == (False, None)
+    assert started == []
+
+
+def test_a_rebalance_finer_than_the_panel_runs_and_says_what_it_trades_on():
+    """As-of reading makes this work, so it is a note about staleness, not a reason to rebuild."""
+    ready, sentence = logic.backtest_plan(_gaps(requested_frequency='W'), 'cross_sectional',
+                                          'factor_composite', None)
+    assert ready is True
+    assert 'panel updates monthly' in sentence
+
+
+def test_a_rebalance_matching_the_panel_says_nothing_extra():
+    _ready, sentence = logic.backtest_plan(_gaps(), 'cross_sectional', 'factor_composite', None)
+    assert 'panel updates' not in sentence

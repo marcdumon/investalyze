@@ -216,25 +216,31 @@ worst tickers and sample rows. Confirmed data bug → quirks-log entry → `clea
 
 ## Backtest: signals, evaluation and simulated portfolios
 
-Everything below is a button on the **Backtest** page, which is the easier way to drive it. The
-commands are what those buttons run.
+The **Backtest** page is the easier way to drive all of this; these are the commands behind it.
 
 ```bash
-# 1. build the point-in-time factor panel (needed by every cross-sectional signal)
-python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --freq M
+# score every factor against forward returns, over one universe or over everything
+python -m investalyze.backtest evaluate --horizon 21 --universe mid_large_mega_non_fin_realest
 
-# 2. score every factor against forward returns
-python -m investalyze.backtest evaluate --horizon 21
-
-# 3. run a signal through the engine
+# run a signal through the engine
 python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 --end 2024-12-31
 
-# 4. or run it fold by fold, out of sample
+# build the point-in-time factor panel both of those read. Add --build-panel to either command
+# above to have it built first when the stored one does not cover what was asked for
+python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --freq M
+
+# or run a signal fold by fold, out of sample
 python -m investalyze.backtest walkforward --signal factor_composite --start 2014-01-01 \
     --end 2024-12-31 --train 756 --test 252 --embargo 21
 
 # what signals exist
 python -m investalyze.backtest list
+
+# print what a finished run wrote
+python -m investalyze.backtest report --run-id 8894ca7dc4f0
+
+# throw stored runs away
+python -m investalyze.backtest delete --run-id 8894ca7dc4f0 b9da938b2434
 ```
 
 Settings live in `backtest.toml`: starting cash, benchmark, rebalance frequency, the universe
@@ -301,9 +307,16 @@ which is what the test suite does so nobody's own factors can change what it ass
 
 ### Selecting the stocks a run trades
 
-The **Universe** picker on the Backtest page lists every universe saved from the Screener. It is the
-candidate pool; **Top N** and **Ranked by** then cut it to the names priced across the whole range.
-Leaving it blank ranks the whole database.
+The **Universe** picker on the Backtest page lists every universe saved from the Screener. Leaving
+it blank uses the whole database.
+
+The two commands treat it differently, on purpose. **Building a panel uses the universe whole**: a
+panel row exists as soon as a ticker has a close, so a name that listed halfway through the range
+belongs in it. **A run keeps only the names priced across its entire range**, capped at Top N and
+ordered by Ranked by, because a run needs one tradable set for its whole span.
+
+That distinction matters. Seven solar names put through a run's filter over a range starting in 2000
+leave nothing, since none of them were listed then.
 
 The same settings live in `backtest.toml` as defaults for a run started from the command line:
 
@@ -314,6 +327,81 @@ n_top = 300
 rank_by = 'mcap'                          # or 'liquidity', 'ticker'
 require_sector = true
 ```
+
+
+### Two cards, one button each
+
+The page has two cards because there are two jobs, and the factor panel is not one of them:
+
+- **Research factors** scores the library against forward returns. From, To, Universe, Vintage, IC horizon.
+- **Backtest a strategy** walks one signal through the engine. Signal, From, To, Rebalance, Universe, Top N, Ranked by, Vintage.
+
+Each card owns its own copy of the fields it shares with the other. Editing the research range
+cannot stale a backtest, and nothing on the page depends on the order you press things in.
+
+`factor_panel` is a cache, not a task. Neither card asks you to build it. Each says under its button
+what pressing it will do:
+
+```
+Scores 29 factors over 6,465 names from the stored panel.
+Runs factor_composite over 7 names in solar_small_mid_large from the stored panel.
+sma_cross reads prices only. Nothing to build.
+```
+
+When the panel cannot answer, the line names what would be built and why, and pressing asks before
+anything is written:
+
+```
+Builds the restated panel: 321 monthly dates for 7 names in solar_small_mid_large.
+The panel holds nothing for this vintage and these names yet.
+```
+
+Three things make a panel insufficient, and all three are detected: dates that were never built, a
+factor with no values, and a factor whose formula changed since the build. The last one is invisible
+in the panel rows, so every build records a fingerprint of the definitions it used and the card
+compares against it.
+
+A rebalance finer than the panel's own cadence is not a gap. A session between panel dates reads the
+most recent one before it, so a weekly run on a monthly panel works; the card says the scores repeat
+between panel dates rather than asking you to rebuild.
+
+A run the panel genuinely cannot reach is refused rather than traded flat: if fewer than half its
+rebalance dates carry a score, or a factor it needs has no values, it stops and says so.
+
+Nothing is ever built implicitly. The CLI only builds behind `--build-panel`, and the page passes
+that flag only after you have confirmed the dialog:
+
+```bash
+python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 \
+    --end 2024-12-31 --build-panel
+```
+
+### Reading a factor evaluation
+
+Button 2 scores every factor against forward returns and stores the result under the universe it
+ran on, so evaluating on the S&P 500 and then on everything leaves two readings rather than one
+overwriting the other. The picker on the Factors tab chooses which to read; leaving it blank pools
+them all, which is only meaningful when there is one.
+
+Two figures are stored per score bucket: the mean forward return and the median. They part company
+badly on an unfiltered universe, where a handful of sub-dollar names carry a bucket's mean far from
+what its typical member did. Measured on the whole database, `ret_12_1`'s bottom bucket averaged
++22.6% while its median was +1.5%, with 11% of the rows under $5. Evaluate on a named universe when
+you want the mean to mean anything. The Mean IC and t columns are rank-based and unaffected.
+
+
+### Throwing runs away
+
+Tick the runs in the Stored runs table and press **Delete selected**; the header checkbox ticks all
+of them. The confirmation lists each run and what goes with it: its summary row, its equity curve,
+its fills, and the report written under `data/backtests/<run id>/`. Nothing else is touched, so the
+runs left unticked and the factor evaluation stay where they are.
+
+The whole selection goes in one command, so an unknown run id among good ones still deletes the
+good ones and then says which id was not found.
+
+A run is reproducible: the same signal, dates and universe give the same run id and rebuild it.
+Deleting is for clearing out trial runs, not for protecting a result.
 
 
 ### What the pieces do
@@ -368,7 +456,7 @@ jobs started from the UI. Close them first.
 | Screener | `/screener` | Define your own factors, then filter the universe down to a saved list of tickers. |
 | Data Quality | `/quality` | Triage anomalies into the quality log or a staged cleaning fix. |
 | Stock | `/ticker` | One ticker in depth: performance, fundamentals, statements, peers, risk. |
-| Backtest | `/backtest` | Configure and launch a run, then read its equity curve, fills and factor evaluation. |
+| Backtest | `/backtest` | Research the factor library or backtest one signal, then read what they stored. |
 
 ---
 

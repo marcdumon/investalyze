@@ -7,19 +7,24 @@ import numpy as np
 import pandas as pd
 
 from investalyze.analysis import custom_factors
-from investalyze.analysis.factors import BUILTIN_FACTORS, HIGHER_IS_BETTER
+from investalyze.analysis.factors import BUILTIN_FACTORS, FACTORS, HIGHER_IS_BETTER
+from investalyze.backtest.engine import CROSS_SECTIONAL
 
+# no widths: the grid autosizes these to their contents, so nothing is clipped. The run id
+# sits last because it identifies a run for the CLI rather than describing it; what a reader
+# recognises a run by is when it was made and what it ran.
 RUN_COLUMNS = [
-    {'field': 'RunId', 'headerName': 'Run', 'width': 130},
-    {'field': 'Signal', 'headerName': 'Signal', 'width': 160},
-    {'field': 'StartDate', 'headerName': 'From', 'width': 110},
-    {'field': 'EndDate', 'headerName': 'To', 'width': 110},
-    {'field': 'NTickers', 'headerName': 'Names', 'width': 90},
-    {'field': 'Cagr', 'headerName': 'CAGR', 'width': 100, 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
-    {'field': 'Sharpe', 'headerName': 'Sharpe', 'width': 100, 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
-    {'field': 'MaxDrawdown', 'headerName': 'Max DD', 'width': 100, 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
-    {'field': 'Turnover', 'headerName': 'Turnover', 'width': 110, 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
-    {'field': 'NTrades', 'headerName': 'Fills', 'width': 90},
+    {'field': 'Created', 'headerName': 'Run made'},
+    {'field': 'Signal', 'headerName': 'Signal'},
+    {'field': 'StartDate', 'headerName': 'From'},
+    {'field': 'EndDate', 'headerName': 'To'},
+    {'field': 'NTickers', 'headerName': 'Names'},
+    {'field': 'Cagr', 'headerName': 'CAGR', 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
+    {'field': 'Sharpe', 'headerName': 'Sharpe', 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
+    {'field': 'MaxDrawdown', 'headerName': 'Max DD', 'valueFormatter': {'function': 'd3.format(".1%")(params.value)'}},
+    {'field': 'Turnover', 'headerName': 'Turnover', 'valueFormatter': {'function': 'd3.format(".2f")(params.value)'}},
+    {'field': 'NTrades', 'headerName': 'Fills'},
+    {'field': 'RunId', 'headerName': 'Run id'},
 ]
 
 FACTOR_COLUMNS = [
@@ -132,10 +137,100 @@ def preview_definition(name: str | None, fields: dict) -> str:
     return custom_factors.serialize_factor((name or 'unnamed').strip() or 'unnamed', fields)
 
 
-# --- launching a run ---
+# --- what pressing a button will do ---
+
+FREQUENCY_WORDS = {'D': 'daily', 'W': 'weekly', 'M': 'monthly', 'Q': 'quarterly'}
+
+
+def _estimate_words(seconds: float | None) -> str:
+    """A rough duration in words, or nothing when no build has been timed to estimate from."""
+    if not seconds:
+        return ''
+    if seconds < 90:
+        return f', about {max(1, round(seconds))} seconds'
+    return f', about {round(seconds / 60)} minutes'
+
+
+def _gap_reasons(gaps: dict) -> list[str]:
+    """Why the stored panel cannot answer a request, each clause naming a concrete thing."""
+    cadence = FREQUENCY_WORDS.get(gaps.get('panel_frequency'), '')
+    reasons = []
+    if gaps['missing_dates'] and gaps['missing_dates'] == gaps['requested_dates']:
+        reasons.append('the panel holds nothing for this vintage and these names yet')
+    elif gaps['missing_dates']:
+        reasons.append(f'{gaps["missing_dates"]} of the {gaps["requested_dates"]} {cadence} dates '
+                       'it needs do not exist yet')
+    if gaps['missing_factors']:
+        reasons.append(f'the panel has no values for {", ".join(gaps["missing_factors"])}')
+    if gaps['changed_factors']:
+        reasons.append(f'{", ".join(gaps["changed_factors"])} was redefined since the last build')
+    return reasons
+
+
+def _scope_words(universe: str | None, n_tickers: int) -> str:
+    """How the names a request covers are described in a sentence."""
+    return f'{n_tickers:,} names in {universe}' if universe else f'{n_tickers:,} names'
+
+
+def _build_words(gaps: dict, universe: str | None, vintage: str) -> str:
+    """What a build would actually produce, in the terms the fields on the card are set in."""
+    cadence = FREQUENCY_WORDS.get(gaps.get('panel_frequency'), '')
+    return (f'the {vintage.replace("_", " ")} panel: {gaps["missing_dates"]} {cadence} dates for '
+            f'{_scope_words(universe, gaps["n_tickers"])}')
+
+
+def _needs_sentence(gaps: dict, universe: str | None, vintage: str) -> str:
+    """The amber line: what has to be built, then why, as two plain sentences."""
+    return (f'Builds {_build_words(gaps, universe, vintage)}'
+            f'{_estimate_words(gaps["seconds_estimate"])}. '
+            f'{"; ".join(_gap_reasons(gaps)).capitalize()}.')
+
+
+def research_plan(gaps: dict, universe: str | None, vintage: str = 'as_reported') -> tuple[bool, str]:
+    """Whether Evaluate can run from what is stored, and the sentence saying so."""
+    if not _gap_reasons(gaps):
+        return True, (f'Scores {len(FACTORS)} factors over {_scope_words(universe, gaps["n_tickers"])} '
+                      'from the stored panel.')
+    return False, _needs_sentence(gaps, universe, vintage)
+
+
+def _cadence_note(gaps: dict) -> str:
+    """What a rebalance finer than the panel's own cadence actually trades on.
+
+    Not a fault: a session between panel dates reads the most recent one before it, which is what a
+    reader could have known. Worth saying, because the signal then updates on the panel's schedule
+    rather than the one the card asks to rebalance on.
+    """
+    panel, asked = gaps.get('panel_frequency'), gaps.get('requested_frequency')
+    if not panel or not asked or panel == asked:
+        return ''
+    return (f' The panel updates {FREQUENCY_WORDS.get(panel, panel)}, so rebalances between its '
+            'dates repeat the last scores.')
+
+
+def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
+                  vintage: str = 'as_reported') -> tuple[bool, str]:
+    """Whether Run can go straight to the engine, and the sentence saying so."""
+    if kind != CROSS_SECTIONAL:
+        return True, f'{signal} reads prices only. Nothing to build.'
+    if not _gap_reasons(gaps):
+        return True, (f'Runs {signal} over {_scope_words(universe, gaps["n_tickers"])} from the '
+                      f'stored panel.{_cadence_note(gaps)}')
+    return False, _needs_sentence(gaps, universe, vintage)
+
+
+def build_prompt(gaps: dict, universe: str | None, vintage: str) -> str:
+    """The dialog body shown before anything is built: what, why, and how long."""
+    timing = (f'Time: {_estimate_words(gaps["seconds_estimate"]).lstrip(", ")}.'
+              if gaps['seconds_estimate'] else 'Time: no earlier build to estimate from.')
+    lines = [f'This builds {_build_words(gaps, universe, vintage)}.', '']
+    lines += [f'  {reason}' for reason in _gap_reasons(gaps)]
+    lines += ['', timing]
+    return '\n'.join(lines)
+
 
 def _universe_argv(universe: str | None, n_top: int | None, rank_by: str | None) -> list[str]:
-    """The flags that narrow a command to one universe, left out where the card said nothing."""
+    """The flags that narrow a run to one universe, left out where the card said nothing."""
     argv = []
     if universe:
         argv += ['--universe', universe]
@@ -146,27 +241,78 @@ def _universe_argv(universe: str | None, n_top: int | None, rank_by: str | None)
     return argv
 
 
-def factors_argv(start: str, end: str, freq: str, vintage: str,
-                                universe: str | None = None, n_top: int | None = None,
-                                rank_by: str | None = None) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.backtest factors` over one date range."""
-    argv = (['-m', 'investalyze.backtest', 'factors', '--start', start, '--end', end,
-             '--freq', freq, '--vintage', vintage] + _universe_argv(universe, n_top, rank_by))
+def factors_argv(start: str, end: str, freq: str, vintage: str, universe: str | None = None,
+                 n_top: int | None = None, rank_by: str | None = None) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest factors` over one date range.
+
+    A named universe is built whole, so Top N and Ranked by are left out rather than passed and
+    ignored: the command line should say what the build will actually do.
+    """
+    argv = ['-m', 'investalyze.backtest', 'factors', '--start', start, '--end', end,
+            '--freq', freq, '--vintage', vintage]
+    argv += ['--universe', universe] if universe else _universe_argv(None, n_top, rank_by)
     scope = universe or 'whole database'
     return f'backtest factors ({vintage}, {freq}, {scope}, {start} to {end})', argv
 
 
-def evaluate_argv(horizon: int, vintage: str) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.backtest evaluate` across every factor."""
+def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
+                  start: str | None = None, end: str | None = None,
+                  build_panel: bool = False) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest evaluate` across every factor.
+
+    The dates narrow which stored panel rows are scored, so the range on the form means the same
+    thing here as it does for the other two buttons.
+    """
     argv = ['-m', 'investalyze.backtest', 'evaluate', '--horizon', str(horizon), '--vintage', vintage]
-    return f'backtest evaluate ({vintage}, horizon {horizon})', argv
-
-
-def run_argv(signal: str, start: str, end: str, freq: str,
-                            universe: str | None = None, n_top: int | None = None,
-                            rank_by: str | None = None) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.backtest run` on one signal."""
-    argv = (['-m', 'investalyze.backtest', 'run', '--signal', signal, '--start', start, '--end', end,
-             '--freq', freq] + _universe_argv(universe, n_top, rank_by))
+    if start:
+        argv += ['--start', start]
+    if end:
+        argv += ['--end', end]
+    if universe:
+        argv += ['--universe', universe]
+    if build_panel:
+        argv += ['--build-panel']
     scope = universe or 'whole database'
-    return f'backtest run ({signal}, {scope}, {start} to {end})', argv
+    prefix = 'build panel, then evaluate' if build_panel else 'evaluate'
+    return f'backtest {prefix} ({vintage}, {scope}, horizon {horizon})', argv
+
+
+def delete_argv(run_ids: list[str]) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest delete` on one or more stored runs."""
+    argv = ['-m', 'investalyze.backtest', 'delete', '--run-id', *run_ids]
+    scope = run_ids[0] if len(run_ids) == 1 else f'{len(run_ids)} runs'
+    return f'backtest delete ({scope})', argv
+
+
+def delete_prompt(runs: list[dict]) -> str:
+    """The confirmation text for deleting the selected runs, naming each one and what it holds."""
+    total_fills = 0
+    lines = []
+    for run in runs:
+        fills = int(run['NTrades'] or 0)
+        total_fills += fills
+        lines.append(f'{run["Created"]}  {run["Signal"]}, {run["StartDate"]} to {run["EndDate"]}, '
+                     f'{fills:,} fills, run {run["RunId"]}')
+    if len(runs) == 1:
+        head = 'Delete this run? Its equity curve, fills and written report go with it.'
+    else:
+        head = (f'Delete these {len(runs)} runs? Their equity curves, {total_fills:,} fills in total '
+                'and written reports go with them.')
+    return '\n'.join([head, ''] + lines)
+
+
+def run_argv(signal: str, start: str, end: str, freq: str, universe: str | None = None,
+             n_top: int | None = None, rank_by: str | None = None,
+             vintage: str = 'as_reported', build_panel: bool = False) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest run` on one signal.
+
+    The vintage travels with the run because it decides which panel a cross-sectional signal ranks;
+    without it the choice on the form went nowhere and every run scored as-reported values.
+    """
+    argv = (['-m', 'investalyze.backtest', 'run', '--signal', signal, '--start', start, '--end', end,
+             '--freq', freq, '--vintage', vintage] + _universe_argv(universe, n_top, rank_by))
+    if build_panel:
+        argv += ['--build-panel']
+    scope = universe or 'whole database'
+    prefix = 'build panel, then run' if build_panel else 'run'
+    return f'backtest {prefix} ({signal}, {scope}, {start} to {end})', argv
