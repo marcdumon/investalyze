@@ -42,7 +42,7 @@ Start with the UI. Every CLI below is also a button in its Control Panel.
 | `src/investalyze/apps/` | The Dash UI: control panel, screener (with the factor editor), data quality, stock, backtest. |
 | `notebooks/` | Exploration, plus `9999_data_quirks.ipynb`, the running findings-and-decisions log. |
 | `experiments/` | Model work over saved universes (classification, ranking, forecasting). |
-| `tests/` | `pytest`, 852 tests. |
+| `tests/` | `pytest`, 872 tests. |
 | `factors.toml` | Your own factor definitions, merged into the factor library at import. |
 | `docs/manual.md` | The user guide: how to actually run all of the above. |
 | `docs/ingest_data.md` | Data reference: every table, column and provider decision. |

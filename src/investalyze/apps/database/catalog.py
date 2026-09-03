@@ -1,12 +1,15 @@
-"""What each table in the database is for, written down because nothing can derive it.
+"""What each table in the database is for, in words no schema can supply.
 
-A schema says a column is called `Vintage` and holds VARCHAR. It cannot say that the row is one
-ticker's factor values as they were knowable on one past date, which is the thing a reader needs.
-So the descriptions are written by hand, and a test fails when a table exists in the database
-without an entry here, so the two cannot drift apart in silence.
+A column list says a table has a `Date` and a `Ticker`. It cannot say that a factor panel row holds
+every factor as it was knowable on that date, or that `market_data` is indices and currencies while
+`prices` is equities. That is what this file holds: one sentence per table, and the command that
+writes it, so a reader can go from "what is this" to "how do I fill it" without leaving the page.
+
+Pure data. Nothing here imports Dash or DuckDB, so the page and the manual can both read it and a
+test can check it against the live database without starting an app.
 """
 
-from dataclasses import dataclass
+from typing import NamedTuple
 
 MARKET = 'Market data'
 FUNDAMENTALS = 'Fundamentals'
@@ -17,146 +20,148 @@ BACKTEST = 'Backtest'
 AREAS = (MARKET, FUNDAMENTALS, REFERENCE, QUALITY, BACKTEST)
 
 
-@dataclass(frozen=True)
-class TableInfo:
-    """One table's purpose, the command that fills it, and how a row is identified."""
+class Table(NamedTuple):
+    """One table's purpose, the command that fills it, and what makes a row unique."""
 
     area: str
     purpose: str
     written_by: str
-    key: tuple[str, ...] = ()
+    key: str
     internal: bool = False
 
 
-TABLES: dict[str, TableInfo] = {
-    'prices': TableInfo(
+TABLES: dict[str, Table] = {
+    'prices': Table(
         MARKET,
-        'Daily equity bars: open, high, low, close, volume, and a dividend-adjusted close. '
-        'Split-adjusted, so O/H/L/C are comparable through time but exclude dividends; AC includes them.',
-        'python -m investalyze.ingest ingest -p yahoo',
-        ('Ticker', 'Date')),
-    'market_data': TableInfo(
+        'Daily equity bars. O/H/L/C/V are split-adjusted; AC is adjusted for dividends too, which is '
+        'why a total-return calculation uses AC and a share count does not.',
+        'python -m investalyze.ingest yahoo',
+        'Ticker, Date'),
+    'market_data': Table(
         MARKET,
-        'Daily bars for everything that is not an equity: indices, bonds, commodities, currencies. '
-        'No volume, and AssetClass says which kind of series a row belongs to.',
-        'python -m investalyze.ingest ingest -p stooq',
-        ('Ticker', 'Date')),
-    'dividends': TableInfo(
+        'Daily bars for everything that is not an equity: indices, currencies, commodities. The '
+        'benchmark a backtest measures against is read from here.',
+        'python -m investalyze.ingest stooq',
+        'Ticker, Date'),
+    'market_instruments': Table(
         MARKET,
-        'Cash dividends per share, dated on the ex-date. The engine credits these to cash rather than '
-        'assuming they are reinvested.',
-        'python -m investalyze.ingest ingest -p yahoo',
-        ('Ticker', 'Date')),
-    'splits': TableInfo(
+        'What each non-equity ticker in market_data is, by name, country and asset class.',
+        'python -m investalyze.ingest stooq',
+        'Ticker'),
+    'dividends': Table(
         MARKET,
-        'Share splits and their ratios, dated on the effective date. A 4:1 split reads as 4.',
-        'python -m investalyze.ingest ingest -p yahoo',
-        ('Ticker', 'Date')),
-    'income': TableInfo(
+        'Cash dividends per share, dated on the ex-date. A backtest credits these to cash rather '
+        'than assuming they are reinvested.',
+        'python -m investalyze.ingest yahoo',
+        'Ticker, Date'),
+    'splits': Table(
+        MARKET,
+        'Share splits, as the ratio applied on that date. Used when checking that a price series '
+        'moves for a reason.',
+        'python -m investalyze.ingest yahoo',
+        'Ticker, Date'),
+
+    'income': Table(
         FUNDAMENTALS,
-        'Income statements, one row per ticker per fiscal period. Both vintages live here: IsRestated '
-        'FALSE is the figure as first published, TRUE is the figure as it reads today.',
-        'python -m investalyze.ingest ingest -p simfin',
-        ('Ticker', 'Fiscal Year', 'Fiscal Period', 'IsRestated')),
-    'balance': TableInfo(
+        'Income statements, quarterly and annual, in both vintages: as first published and as later '
+        'restated. `IsRestated` separates them, and `Publish Date` is what makes point-in-time work.',
+        'python -m investalyze.ingest simfin',
+        'Ticker, Report Date, Period, IsRestated'),
+    'balance': Table(
         FUNDAMENTALS,
-        'Balance sheets, same shape and vintages as income. Point-in-time balance items come from the '
-        'latest period published by a given date.',
-        'python -m investalyze.ingest ingest -p simfin',
-        ('Ticker', 'Fiscal Year', 'Fiscal Period', 'IsRestated')),
-    'cashflow': TableInfo(
+        'Balance sheets, same shape and same two vintages as the income statements.',
+        'python -m investalyze.ingest simfin',
+        'Ticker, Report Date, Period, IsRestated'),
+    'cashflow': Table(
         FUNDAMENTALS,
-        'Cash flow statements, same shape and vintages as income. Capex is stored negative, which is '
-        'why free cash flow adds it rather than subtracting it.',
-        'python -m investalyze.ingest ingest -p simfin',
-        ('Ticker', 'Fiscal Year', 'Fiscal Period', 'IsRestated')),
-    'companies': TableInfo(
+        'Cash flow statements, same shape and same two vintages as the income statements.',
+        'python -m investalyze.ingest simfin',
+        'Ticker, Report Date, Period, IsRestated'),
+
+    'companies': Table(
         REFERENCE,
-        'One row per ticker: name, sector, industry, country, CIK, business summary. Built by merging '
-        'the two provider tables, with Yahoo winning where both carry a field.',
-        'python -m investalyze.ingest housekeeping -t companies',
-        ('Ticker',)),
-    'company_officers': TableInfo(
+        'One row per ticker: sector, industry, name, exchange, employee count. The sector a screener '
+        'filters on and a universe is built from comes from here.',
+        'python -m investalyze.ingest housekeeping',
+        'Ticker'),
+    'company_officers': Table(
         REFERENCE,
-        'Named officers per company with title, age and compensation, as far as the provider reports it.',
-        'python -m investalyze.ingest ingest -p yahoo_info',
-        ('Ticker', 'Src', 'Name')),
-    'market_instruments': TableInfo(
+        'Named officers and their reported pay, one row per person per company.',
+        'python -m investalyze.ingest yahoo-profile',
+        'Ticker, Name'),
+    '_yahoo_companies': Table(
         REFERENCE,
-        'What each non-equity ticker in market_data actually is: its name, country and asset class.',
-        'python -m investalyze.ingest ingest -p stooq',
-        ('Ticker',)),
-    '_yahoo_companies': TableInfo(
+        'What Yahoo said about each company, kept as landed. Merged into companies rather than read '
+        'directly, so a provider changing its mind does not silently change a result.',
+        'python -m investalyze.ingest yahoo-profile',
+        'Ticker', internal=True),
+    '_simfin_companies': Table(
         REFERENCE,
-        'Yahoo profile fields exactly as fetched. Staging only: read companies instead.',
-        'python -m investalyze.ingest ingest -p yahoo_info',
-        ('Ticker',), internal=True),
-    '_simfin_companies': TableInfo(
-        REFERENCE,
-        'SimFin company fields exactly as fetched. Staging only: read companies instead.',
-        'python -m investalyze.ingest ingest -p simfin',
-        ('Ticker',), internal=True),
-    'anomalies': TableInfo(
+        'The same for SimFin. Merged into companies alongside the Yahoo rows.',
+        'python -m investalyze.ingest simfin',
+        'Ticker', internal=True),
+
+    'anomalies': Table(
         QUALITY,
-        'Every finding the quality checks raised: which check, how severe, which table and row. '
-        'The Data Quality page reads this, and logging a finding drops it off that list.',
+        'Every finding the quality checks have raised, with the check that raised it and enough of '
+        'the row to go and look. A finding stays here until it is logged or fixed.',
         'python -m investalyze.quality',
-        ('CheckName', 'SrcTable', 'Ticker', 'Date', 'Key')),
-    'factor_panel': TableInfo(
+        'CheckName, SrcTable, Ticker, Date, Key'),
+
+    'factor_panel': Table(
         BACKTEST,
-        'The precomputed factor table. One row per ticker per as-of date, holding every factor value '
-        'as it was knowable on that date. This is what cross-sectional signals rank and what Evaluate '
-        'scores; it exists because recomputing factors from prices and filings on every rebalance '
-        'would be far too slow.',
-        'Backtest page, or python -m investalyze.backtest factors',
-        ('Ticker', 'Date', 'Vintage')),
-    'factor_panel_builds': TableInfo(
+        'The precomputed factor table: one row per ticker per as-of date, holding each factor as it '
+        'was knowable on that date. This is what a cross-sectional signal ranks. Rank-based factors '
+        'are absent on purpose, since their value depends on which names were in the cross-section.',
+        'python -m investalyze.backtest factors',
+        'Ticker, Date, Vintage'),
+    'factor_panel_builds': Table(
         BACKTEST,
-        'One row per factor panel build: what was asked for, how long it took, and a fingerprint of '
-        'the factor formulas used. The fingerprint is how a redefined factor is noticed, since the '
-        'panel rows hold the number and not the formula behind it.',
-        'Backtest page, or python -m investalyze.backtest factors',
-        ()),
-    'factor_ic': TableInfo(
+        'One row per build of the factor panel: what was asked for, how long it took, and a '
+        'fingerprint of the factor formulas in force, which is how a redefined factor is noticed.',
+        'python -m investalyze.backtest factors',
+        'append-only'),
+    'factor_ic': Table(
         BACKTEST,
-        'Information coefficient per factor and date: the rank correlation between a factor\'s scores '
-        'and the returns that followed over Horizon sessions. +1 is a perfect ordering, 0 is none. '
-        'Kept per universe, so the same factor scored over two sets of names gives two readings.',
-        'Backtest page, or python -m investalyze.backtest evaluate',
-        ('Vintage', 'Universe', 'Factor', 'Date', 'Horizon')),
-    'factor_quantiles': TableInfo(
+        'Information coefficient per date: the rank correlation between a factor and the return that '
+        'followed it. Averaged, this is the Mean IC column on the Factors tab.',
+        'python -m investalyze.backtest evaluate',
+        'Vintage, Universe, Factor, Date, Horizon'),
+    'factor_quantiles': Table(
         BACKTEST,
-        'Forward return of each score bucket per factor and date, as a mean and as a median. The two '
-        'part company on an unfiltered universe, where a few sub-dollar names carry the mean.',
-        'Backtest page, or python -m investalyze.backtest evaluate',
-        ('Vintage', 'Universe', 'Factor', 'Date', 'Horizon', 'Quantile')),
-    'backtest_runs': TableInfo(
+        'Forward return of each score bucket per date, as a mean and as a median. The two part '
+        'company on a universe that was never filtered for price.',
+        'python -m investalyze.backtest evaluate',
+        'Vintage, Universe, Factor, Date, Horizon, Quantile'),
+    'backtest_runs': Table(
         BACKTEST,
-        'One row per stored backtest: its settings, its headline statistics, and the survivorship note '
-        'that travels with them. RunId is derived from the configuration, so the same run overwrites '
-        'itself rather than accumulating.',
-        'Backtest page, or python -m investalyze.backtest run',
-        ('RunId',)),
-    'backtest_equity': TableInfo(
+        'One row per stored run: the settings behind it, its headline statistics, and the '
+        'survivorship note that belongs with any number read off it.',
+        'python -m investalyze.backtest run',
+        'RunId'),
+    'backtest_equity': Table(
         BACKTEST,
-        'A stored run\'s equity curve, one row per session: equity, gross and net exposure, cash, and '
-        'the benchmark rebased alongside it.',
-        'Backtest page, or python -m investalyze.backtest run',
-        ('RunId', 'Date')),
-    'backtest_trades': TableInfo(
+        'A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it.',
+        'python -m investalyze.backtest run',
+        'RunId, Date'),
+    'backtest_trades': Table(
         BACKTEST,
-        'Every fill a stored run made: side, shares, price, notional and the cost charged for it.',
-        'Backtest page, or python -m investalyze.backtest run',
-        ()),
+        'Every fill a stored run made, with the price it paid and what the trade cost.',
+        'python -m investalyze.backtest run',
+        'RunId, Date, Ticker'),
 }
 
 
-def area_of(table: str) -> str:
-    """Which group a table belongs to, or Reference for one nothing has been written about yet."""
-    entry = TABLES.get(table)
-    return entry.area if entry else REFERENCE
+def described(name: str) -> Table | None:
+    """The catalogue entry for a table, or None when it has none."""
+    return TABLES.get(name)
 
 
-def undocumented(tables: list[str]) -> list[str]:
-    """Tables present in the database that nothing here describes."""
-    return sorted(table for table in tables if table not in TABLES)
+def by_area() -> dict[str, list[str]]:
+    """Table names grouped by area, in the order the areas are meant to be read."""
+    grouped = {}
+    for area in AREAS:
+        members = [name for name, table in TABLES.items() if table.area == area]
+        if members:
+            grouped[area] = members
+    return grouped

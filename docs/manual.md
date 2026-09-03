@@ -508,6 +508,61 @@ that went to zero, which makes a long-short result the most misleading output av
 
 ---
 
+## Database: what is in each table
+
+The **Database** page at `/database` shows this live, with columns, how empty each one is, and
+the first rows. Both it and this list read `apps/database/catalog.py`, so they cannot disagree,
+and a test fails when a table exists in the database without a line here.
+
+### Market data
+
+| Table | Holds | Written by |
+|---|---|---|
+| `prices` | Daily equity bars. O/H/L/C/V are split-adjusted; AC is adjusted for dividends too, which is why a total-return calculation uses AC and a share count does not. | `python -m investalyze.ingest yahoo` |
+| `market_data` | Daily bars for everything that is not an equity: indices, currencies, commodities. The benchmark a backtest measures against is read from here. | `python -m investalyze.ingest stooq` |
+| `market_instruments` | What each non-equity ticker in market_data is, by name, country and asset class. | `python -m investalyze.ingest stooq` |
+| `dividends` | Cash dividends per share, dated on the ex-date. A backtest credits these to cash rather than assuming they are reinvested. | `python -m investalyze.ingest yahoo` |
+| `splits` | Share splits, as the ratio applied on that date. Used when checking that a price series moves for a reason. | `python -m investalyze.ingest yahoo` |
+
+### Fundamentals
+
+| Table | Holds | Written by |
+|---|---|---|
+| `income` | Income statements, quarterly and annual, in both vintages: as first published and as later restated. `IsRestated` separates them, and `Publish Date` is what makes point-in-time work. | `python -m investalyze.ingest simfin` |
+| `balance` | Balance sheets, same shape and same two vintages as the income statements. | `python -m investalyze.ingest simfin` |
+| `cashflow` | Cash flow statements, same shape and same two vintages as the income statements. | `python -m investalyze.ingest simfin` |
+
+### Reference
+
+| Table | Holds | Written by |
+|---|---|---|
+| `companies` | One row per ticker: sector, industry, name, exchange, employee count. The sector a screener filters on and a universe is built from comes from here. | `python -m investalyze.ingest housekeeping` |
+| `company_officers` | Named officers and their reported pay, one row per person per company. | `python -m investalyze.ingest yahoo-profile` |
+| `_yahoo_companies` (staging) | What Yahoo said about each company, kept as landed. Merged into companies rather than read directly, so a provider changing its mind does not silently change a result. | `python -m investalyze.ingest yahoo-profile` |
+| `_simfin_companies` (staging) | The same for SimFin. Merged into companies alongside the Yahoo rows. | `python -m investalyze.ingest simfin` |
+
+### Quality
+
+| Table | Holds | Written by |
+|---|---|---|
+| `anomalies` | Every finding the quality checks have raised, with the check that raised it and enough of the row to go and look. A finding stays here until it is logged or fixed. | `python -m investalyze.quality` |
+
+### Backtest
+
+| Table | Holds | Written by |
+|---|---|---|
+| `factor_panel` | The precomputed factor table: one row per ticker per as-of date, holding each factor as it was knowable on that date. This is what a cross-sectional signal ranks. Rank-based factors are absent on purpose, since their value depends on which names were in the cross-section. | `python -m investalyze.backtest factors` |
+| `factor_panel_builds` | One row per build of the factor panel: what was asked for, how long it took, and a fingerprint of the factor formulas in force, which is how a redefined factor is noticed. | `python -m investalyze.backtest factors` |
+| `factor_ic` | Information coefficient per date: the rank correlation between a factor and the return that followed it. Averaged, this is the Mean IC column on the Factors tab. | `python -m investalyze.backtest evaluate` |
+| `factor_quantiles` | Forward return of each score bucket per date, as a mean and as a median. The two part company on a universe that was never filtered for price. | `python -m investalyze.backtest evaluate` |
+| `backtest_runs` | One row per stored run: the settings behind it, its headline statistics, and the survivorship note that belongs with any number read off it. | `python -m investalyze.backtest run` |
+| `backtest_equity` | A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it. | `python -m investalyze.backtest run` |
+| `backtest_trades` | Every fill a stored run made, with the price it paid and what the trade cost. | `python -m investalyze.backtest run` |
+
+The query box runs on a read-only connection, so DuckDB itself refuses anything that writes:
+`DELETE FROM prices` comes back as *Cannot execute statement of type "DELETE" ... attached in
+read-only mode*. Results stop at 500 rows and a query is interrupted after 20 seconds.
+
 ## Apps: the Dash UI
 
 ```bash
@@ -528,6 +583,7 @@ jobs started from the UI. Close them first.
 | Data Quality | `/quality` | Triage anomalies into the quality log or a staged cleaning fix. |
 | Stock | `/ticker` | One ticker in depth: performance, fundamentals, statements, peers, risk. |
 | Backtest | `/backtest` | Research the factor library or backtest one signal, then read what they stored. |
+| Database | `/database` | What every table holds, its columns and first rows, and a read-only query box. |
 
 ---
 
