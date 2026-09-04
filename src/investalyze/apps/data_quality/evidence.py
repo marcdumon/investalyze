@@ -149,8 +149,8 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
         if label == flagged_label:
             used_columns.append(True)
         elif check == 'quarters_vs_fy' and parsed is not None:
-            same_vintage = srow['Period'] == 'Q' and str(srow['IsRestated']).lower() == parsed['is_restated']
-            used_columns.append(same_vintage and srow['Fiscal Year'] == parsed['fiscal_year'])
+            same_version = srow['Period'] == 'Q' and str(srow['IsRestated']).lower() == parsed['is_restated']
+            used_columns.append(same_version and srow['Fiscal Year'] == parsed['fiscal_year'])
         else:
             used_columns.append(False)
 

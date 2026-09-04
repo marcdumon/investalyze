@@ -11,7 +11,7 @@ The join is a validity-interval table rather than a loop over dates: each quarte
 computed once and stamped with the span over which it was the current one, then a range join attaches
 it to every as-of date inside that span.
 
-`vintage='restated'` reads the same rows `factors.py` reads, which is what makes the two comparable
+`version='restated'` reads the same rows `factors.py` reads, which is what makes the two comparable
 on the latest date.
 """
 
@@ -34,10 +34,10 @@ from investalyze.ingest import storage
 
 AS_REPORTED = 'as_reported'
 RESTATED = 'restated'
-VINTAGES = (AS_REPORTED, RESTATED)
+DATA_VERSIONS = (AS_REPORTED, RESTATED)
 
 IDENTITY_COLS = ['name', 'sector', 'industry', 'last_close', 'mcap', 'mcap_bn']
-PANEL_KEY = ['Ticker', 'Date', 'Vintage']
+PANEL_KEY = ['Ticker', 'Date', 'Version']
 
 # a rank-based factor is a property of a ticker, a date and the names it was ranked against,
 # so it cannot be stored per ticker and date. Everything else is an absolute quantity.
@@ -61,13 +61,13 @@ _INCOME_EXTRAS = {
 }
 
 
-def _restated_clause(vintage: str) -> str:
-    """SQL predicate selecting one fundamentals vintage."""
-    if vintage == AS_REPORTED:
+def _restated_clause(version: str) -> str:
+    """SQL predicate selecting one fundamentals version."""
+    if version == AS_REPORTED:
         return 'NOT IsRestated'
-    if vintage == RESTATED:
+    if version == RESTATED:
         return 'IsRestated'
-    raise ValueError(f'vintage must be one of {VINTAGES}, got {vintage!r}')
+    raise ValueError(f'version must be one of {DATA_VERSIONS}, got {version!r}')
 
 
 def _ticker_clause(tickers: list[str] | None) -> str:
@@ -98,7 +98,7 @@ def _to_float(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
 
 
 def quarterly_ttm(con: duckdb.DuckDBPyConnection, table: str, columns: dict[str, str], *,
-                  as_of: pd.DatetimeIndex, vintage: str = AS_REPORTED,
+                  as_of: pd.DatetimeIndex, version: str = AS_REPORTED,
                   tickers: list[str] | None = None, extras: dict[str, str] | None = None) -> pd.DataFrame:
     """Per (as-of date, ticker): TTM and prior-year sums from the quarters published by that date.
 
@@ -119,7 +119,7 @@ def quarterly_ttm(con: duckdb.DuckDBPyConnection, table: str, columns: dict[str,
         WITH q AS (
             SELECT "Report Date"::DATE AS report_date, "Publish Date"::DATE AS publish_date, *
             FROM {table}
-            WHERE Period = 'Q' AND {_restated_clause(vintage)} AND {_ticker_clause(tickers)}
+            WHERE Period = 'Q' AND {_restated_clause(version)} AND {_ticker_clause(tickers)}
         ),
         w AS (
             SELECT Ticker, report_date,
@@ -157,7 +157,7 @@ def quarterly_ttm(con: duckdb.DuckDBPyConnection, table: str, columns: dict[str,
     return df.drop(columns=['n_recent', 'n_prior'])
 
 
-def balance_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, vintage: str = AS_REPORTED,
+def balance_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, version: str = AS_REPORTED,
                   tickers: list[str] | None = None, extras: dict[str, str] | None = None) -> pd.DataFrame:
     """Per (as-of date, ticker): equity, assets, total debt and cash from the latest published quarter.
 
@@ -174,7 +174,7 @@ def balance_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, vi
                    COALESCE("Short Term Debt", 0) + COALESCE("Long Term Debt", 0) AS debt,
                    COALESCE("Cash & Cash Equivalents", 0) AS cash{extra_selects}
             FROM balance
-            WHERE Period = 'Q' AND {_restated_clause(vintage)} AND {_ticker_clause(tickers)}
+            WHERE Period = 'Q' AND {_restated_clause(version)} AND {_ticker_clause(tickers)}
         ),
         v AS (
             SELECT *, max(publish_date) OVER (PARTITION BY Ticker ORDER BY report_date, publish_date
@@ -193,7 +193,7 @@ def balance_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, vi
     return _to_float(df, ['equity', 'assets', 'debt', 'cash'] + list(extras.values()))
 
 
-def annual_revenue_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, vintage: str = AS_REPORTED,
+def annual_revenue_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex, version: str = AS_REPORTED,
                          tickers: list[str] | None = None) -> pd.DataFrame:
     """Per (as-of date, ticker): the 3-year revenue CAGR from published fiscal-year rows."""
     df = con.execute(f"""
@@ -201,7 +201,7 @@ def annual_revenue_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIn
             SELECT Ticker, "Report Date"::DATE AS report_date, "Publish Date"::DATE AS publish_date, Revenue,
                    lag(Revenue, 3) OVER (PARTITION BY Ticker ORDER BY "Report Date", "Publish Date") AS rev_fy3
             FROM income
-            WHERE Period = 'A' AND {_restated_clause(vintage)} AND Revenue IS NOT NULL
+            WHERE Period = 'A' AND {_restated_clause(version)} AND Revenue IS NOT NULL
               AND {_ticker_clause(tickers)}
         ),
         v AS (
@@ -312,15 +312,15 @@ def rebalance_dates(con: duckdb.DuckDBPyConnection, *, start: str, end: str, fre
 
 
 def build_factor_panel(con: duckdb.DuckDBPyConnection, as_of: pd.DatetimeIndex, *,
-                       tickers: list[str] | None = None, vintage: str = AS_REPORTED,
+                       tickers: list[str] | None = None, version: str = AS_REPORTED,
                        benchmark: str = panels.MARKET_TICKER) -> pd.DataFrame:
     """One row per (Ticker, as-of date) with every factor in FACTORS, from data published by that date.
 
     Rows come from the price panel, so a ticker appears on a date once it has a close there; the
     fundamentals join is left, so a name with no filings yet carries NaN factors rather than dropping
-    out. The `Vintage` column records which fundamentals vintage produced the row.
+    out. The `Version` column records which fundamentals version produced the row.
     """
-    _restated_clause(vintage)
+    _restated_clause(version)
     grid = pd.DatetimeIndex(as_of)
     if grid.empty:
         raise ValueError('as_of is empty')
@@ -337,13 +337,13 @@ def build_factor_panel(con: duckdb.DuckDBPyConnection, as_of: pd.DatetimeIndex, 
 
     df = identity.merge(price_factor_panel(con, as_of=grid, tickers=universe, benchmark=benchmark),
                         on=['Date', 'Ticker'], how='left')
-    df = df.merge(quarterly_ttm(con, 'income', INCOME_TTM | needed['income'], as_of=grid, vintage=vintage,
+    df = df.merge(quarterly_ttm(con, 'income', INCOME_TTM | needed['income'], as_of=grid, version=version,
                                 tickers=universe, extras=_INCOME_EXTRAS), on=['Date', 'Ticker'], how='left')
     df = df.merge(quarterly_ttm(con, 'cashflow', CASHFLOW_TTM | needed['cashflow'], as_of=grid,
-                                vintage=vintage, tickers=universe), on=['Date', 'Ticker'], how='left')
-    df = df.merge(balance_panel(con, as_of=grid, vintage=vintage, tickers=universe,
+                                version=version, tickers=universe), on=['Date', 'Ticker'], how='left')
+    df = df.merge(balance_panel(con, as_of=grid, version=version, tickers=universe,
                                 extras=needed['balance']), on=['Date', 'Ticker'], how='left')
-    df = df.merge(annual_revenue_panel(con, as_of=grid, vintage=vintage, tickers=universe),
+    df = df.merge(annual_revenue_panel(con, as_of=grid, version=version, tickers=universe),
                   on=['Date', 'Ticker'], how='left')
     df = df.merge(dividend_panel(con, as_of=grid, tickers=universe), on=['Date', 'Ticker'], how='left')
 
@@ -352,7 +352,7 @@ def build_factor_panel(con: duckdb.DuckDBPyConnection, as_of: pd.DatetimeIndex, 
     df = _derive_factors(df)
     df = custom_factors.apply_ratios(df, CUSTOM, resolved, aliases)
     df = apply_derived(df)
-    df['Vintage'] = vintage
+    df['Version'] = version
     return df[PANEL_KEY + IDENTITY_COLS + STORED_FACTORS].sort_values(['Date', 'Ticker'],
                                                                      ignore_index=True)
 
@@ -420,7 +420,7 @@ def infer_frequency(dates: pd.DatetimeIndex) -> str | None:
     return min(FREQUENCY_DAYS, key=lambda freq: abs(FREQUENCY_DAYS[freq] - gap))
 
 
-def stored_dates(con: duckdb.DuckDBPyConnection, vintage: str,
+def stored_dates(con: duckdb.DuckDBPyConnection, version: str,
                  tickers: list[str] | None = None) -> set[pd.Timestamp]:
     """The as-of dates the panel already holds, narrowed to a ticker list when one is given.
 
@@ -429,7 +429,7 @@ def stored_dates(con: duckdb.DuckDBPyConnection, vintage: str,
     """
     if not storage.table_exists(con, 'factor_panel'):
         return set()
-    clauses, params = ['Vintage = ?'], [vintage]
+    clauses, params = ['Version = ?'], [version]
     if tickers is not None:
         clauses.append('Ticker IN (SELECT unnest(?::VARCHAR[]))')
         params.append(sorted(tickers))
@@ -456,9 +456,9 @@ def buildable_dates(con: duckdb.DuckDBPyConnection, grid: pd.DatetimeIndex,
     return grid[grid >= pd.Timestamp(first)]
 
 
-def empty_factors(con: duckdb.DuckDBPyConnection, vintage: str,
+def empty_factors(con: duckdb.DuckDBPyConnection, version: str,
                   tickers: list[str] | None = None) -> list[str]:
-    """Stored factors with no value at all in the rows this vintage holds for these names.
+    """Stored factors with no value at all in the rows this version holds for these names.
 
     Scoped to the tickers asked about, because a factor can be well populated across the database
     and empty for one corner of it: none of a handful of solar companies has ever paid a dividend,
@@ -470,7 +470,7 @@ def empty_factors(con: duckdb.DuckDBPyConnection, vintage: str,
     present = [factor for factor in STORED_FACTORS if factor in stored]
     if not present:
         return []
-    clauses, params = ['Vintage = ?'], [vintage]
+    clauses, params = ['Version = ?'], [version]
     if tickers is not None:
         clauses.append('Ticker IN (SELECT unnest(?::VARCHAR[]))')
         params.append(sorted(tickers))
@@ -480,8 +480,8 @@ def empty_factors(con: duckdb.DuckDBPyConnection, vintage: str,
     return [factor for factor, filled in zip(present, row) if not filled]
 
 
-def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -> dict | None:
-    """What the stored panel actually holds for one vintage, or None when it holds nothing.
+def panel_coverage(con: duckdb.DuckDBPyConnection, version: str = AS_REPORTED) -> dict | None:
+    """What the stored panel actually holds for one version, or None when it holds nothing.
 
     Read from the rows rather than from any record of what was asked for, so a panel built in two
     passes reports the span of both, and a factor added to the library after the last build reports
@@ -492,22 +492,22 @@ def panel_coverage(con: duckdb.DuckDBPyConnection, vintage: str = AS_REPORTED) -
     stored = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
     rows = con.execute("""
         SELECT count(DISTINCT Date), count(DISTINCT Ticker), min(Date), max(Date)
-        FROM factor_panel WHERE Vintage = ?
-    """, [vintage]).fetchone()
+        FROM factor_panel WHERE Version = ?
+    """, [version]).fetchone()
     if not rows[0]:
         return None
-    dates = con.execute('SELECT DISTINCT Date FROM factor_panel WHERE Vintage = ? ORDER BY Date',
-                        [vintage]).df()['Date']
+    dates = con.execute('SELECT DISTINCT Date FROM factor_panel WHERE Version = ? ORDER BY Date',
+                        [version]).df()['Date']
 
     populated = []
     for factor in STORED_FACTORS:
         if factor not in stored:
             continue
-        filled = con.execute(f'SELECT count("{factor}") FROM factor_panel WHERE Vintage = ?',
-                             [vintage]).fetchone()[0]
+        filled = con.execute(f'SELECT count("{factor}") FROM factor_panel WHERE Version = ?',
+                             [version]).fetchone()[0]
         if filled:
             populated.append(factor)
-    return {'vintage': vintage, 'n_dates': rows[0], 'n_tickers': rows[1],
+    return {'version': version, 'n_dates': rows[0], 'n_tickers': rows[1],
             'start': pd.Timestamp(rows[2]), 'end': pd.Timestamp(rows[3]),
             'frequency': infer_frequency(pd.DatetimeIndex(dates)),
             'factors': populated,
@@ -527,11 +527,19 @@ def _widen_stored_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> 
 
     The table is described rather than looked up by name, since a session with another database
     attached can see a `factor_panel` that the write target does not hold.
+
+    A stored table may also still carry the column under its old name, `Vintage`: it read as
+    unexplained finance jargon and was renamed to `Version`, so a column present under either name
+    is renamed rather than treated as missing.
     """
     try:
         existing = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
     except duckdb.CatalogException:
         return
+    if 'Vintage' in existing and 'Version' not in existing:
+        con.execute('ALTER TABLE factor_panel RENAME COLUMN Vintage TO Version')
+        existing.discard('Vintage')
+        existing.add('Version')
     for column in panel.columns:
         if column not in existing:
             con.execute(f'ALTER TABLE factor_panel ADD COLUMN "{column}" DOUBLE')
@@ -541,7 +549,7 @@ def _widen_stored_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> 
 
 
 def store_factor_panel(con: duckdb.DuckDBPyConnection, panel: pd.DataFrame) -> int:
-    """Merge the panel into `factor_panel`, keyed on ticker, date and vintage. Returns the table's row count."""
+    """Merge the panel into `factor_panel`, keyed on ticker, date and version. Returns the table's row count."""
     if list(panel.columns) != PANEL_KEY + IDENTITY_COLS + STORED_FACTORS:
         raise ValueError('panel columns must be PANEL_KEY + IDENTITY_COLS + STORED_FACTORS')
     _widen_stored_panel(con, panel)

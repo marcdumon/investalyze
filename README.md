@@ -46,6 +46,7 @@ Start with the UI. Every CLI below is also a button in its Control Panel.
 | `factors.toml` | Your own factor definitions, merged into the factor library at import. |
 | `docs/manual.md` | The user guide: how to actually run all of the above. |
 | `docs/ingest_data.md` | Data reference: every table, column and provider decision. |
+| `docs/backtest_metrics.md` | Every backtest formula (IC, Sharpe, fill price, ...), traced to its function. |
 | `docs/backlog.md` | Running list of what is worth coming back to, most valuable first. |
 
 Config lives at the repo root: `ingest.toml` (paths, providers, blacklist policy), `cleaning.toml`

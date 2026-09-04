@@ -1,7 +1,7 @@
 """Tests for the point-in-time factor panel.
 
 The fixture plants the cases point-in-time exists to get right: a quarter published months after the
-one that follows it, a ticker with too few quarters to form a window, and two fundamentals vintages
+one that follows it, a ticker with too few quarters to form a window, and two fundamentals versions
 that disagree. `OK` and `LATE` carry identical revenue and differ only in when one filing was
 published, so any test comparing the two isolates publication timing from the numbers themselves.
 """
@@ -179,28 +179,28 @@ def test_a_date_before_any_filing_yields_no_rows(fundamentals):
     assert df.empty
 
 
-# --- vintages ---
+# --- versions ---
 
-def test_as_reported_vintage_never_reads_a_restated_row(fundamentals):
-    ttm = _ttm(fundamentals, ['2021-02-15'], vintage=factors_pit.AS_REPORTED)
+def test_as_reported_version_never_reads_a_restated_row(fundamentals):
+    ttm = _ttm(fundamentals, ['2021-02-15'], version=factors_pit.AS_REPORTED)
     assert ttm.loc[(pd.Timestamp('2021-02-15'), 'VINT'), 'revenue_ttm'] == pytest.approx(180 + 190 + 200 + 210)
 
 
-def test_the_restated_vintage_reads_the_restated_numbers(fundamentals):
-    ttm = _ttm(fundamentals, ['2021-02-15'], vintage=factors_pit.RESTATED)
+def test_the_restated_version_reads_the_restated_numbers(fundamentals):
+    ttm = _ttm(fundamentals, ['2021-02-15'], version=factors_pit.RESTATED)
     assert ttm.loc[(pd.Timestamp('2021-02-15'), 'VINT'), 'revenue_ttm'] == pytest.approx(2 * (180 + 190 + 200 + 210))
 
 
-def test_the_restated_vintage_holds_only_the_tickers_that_have_restated_rows(fundamentals):
+def test_the_restated_version_holds_only_the_tickers_that_have_restated_rows(fundamentals):
     df = factors_pit.quarterly_ttm(fundamentals, 'income', {'Revenue': 'revenue'},
-                                   as_of=pd.DatetimeIndex(['2021-02-15']), vintage=factors_pit.RESTATED)
+                                   as_of=pd.DatetimeIndex(['2021-02-15']), version=factors_pit.RESTATED)
     assert sorted(df['Ticker'].unique()) == ['VINT']
 
 
-def test_an_unknown_vintage_is_rejected(fundamentals):
-    with pytest.raises(ValueError, match='vintage must be one of'):
+def test_an_unknown_version_is_rejected(fundamentals):
+    with pytest.raises(ValueError, match='version must be one of'):
         factors_pit.quarterly_ttm(fundamentals, 'income', {'Revenue': 'revenue'},
-                                  as_of=pd.DatetimeIndex(['2021-02-15']), vintage='whatever')
+                                  as_of=pd.DatetimeIndex(['2021-02-15']), version='whatever')
 
 
 # --- dtypes and filtering ---
@@ -321,10 +321,10 @@ def test_dividend_growth_compares_the_trailing_year_with_the_one_before(priced):
     assert panel.loc['OK', 'div_growth'] == pytest.approx(1.0 / 0.5 - 1)
 
 
-def test_build_factor_panel_returns_the_declared_columns_and_vintage(priced):
+def test_build_factor_panel_returns_the_declared_columns_and_version(priced):
     panel = factors_pit.build_factor_panel(priced, pd.DatetimeIndex([_LAST_SESSION]), tickers=['OK'])
     assert list(panel.columns) == factors_pit.PANEL_KEY + factors_pit.IDENTITY_COLS + factors_pit.FACTORS
-    assert set(panel['Vintage']) == {factors_pit.AS_REPORTED}
+    assert set(panel['Version']) == {factors_pit.AS_REPORTED}
 
 
 def test_build_factor_panel_rejects_an_empty_grid(priced):
@@ -506,7 +506,7 @@ def test_dropping_a_rank_column_leaves_the_absolute_ones_alone():
     import duckdb
 
     con = duckdb.connect()
-    con.execute('CREATE TABLE factor_panel (Ticker VARCHAR, Date DATE, Vintage VARCHAR, '
+    con.execute('CREATE TABLE factor_panel (Ticker VARCHAR, Date DATE, Version VARCHAR, '
                 'roe DOUBLE, quality_blend DOUBLE)')
     con.execute("INSERT INTO factor_panel VALUES ('AAA', DATE '2020-01-31', 'as_reported', 0.2, 37.5)")
 
@@ -514,7 +514,7 @@ def test_dropping_a_rank_column_leaves_the_absolute_ones_alone():
     original = factors_pit.POPULATION_DEPENDENT
     factors_pit.POPULATION_DEPENDENT = monkeypatch_dependent
     try:
-        factors_pit._widen_stored_panel(con, pd.DataFrame(columns=['Ticker', 'Date', 'Vintage', 'roe']))
+        factors_pit._widen_stored_panel(con, pd.DataFrame(columns=['Ticker', 'Date', 'Version', 'roe']))
     finally:
         factors_pit.POPULATION_DEPENDENT = original
 

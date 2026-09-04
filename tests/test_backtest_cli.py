@@ -21,7 +21,7 @@ def _args(**overrides) -> argparse.Namespace:
     """A parsed-argument namespace with every flag defaulted, then the overrides applied."""
     defaults = dict(command='factors', signal=None, factor=None, horizon=21, start=None, end=None,
                     freq='M', panel_freq='M', rebuild=False, universe=None, n_top=None,
-                    rank_by=None, vintage='as_reported', run_id=None, build_panel=False)
+                    rank_by=None, version='as_reported', run_id=None, build_panel=False)
     return argparse.Namespace(**(defaults | overrides))
 
 
@@ -154,7 +154,7 @@ def test_reporting_prints_what_the_run_wrote(tmp_path: Path, capsys):
 
 def _coverage(start: str, end: str) -> dict:
     """A stored panel spanning the two dates, shaped as `panel_coverage` returns it."""
-    return {'vintage': 'as_reported', 'n_dates': 120, 'n_tickers': 500,
+    return {'version': 'as_reported', 'n_dates': 120, 'n_tickers': 500,
             'start': pd.Timestamp(start), 'end': pd.Timestamp(end), 'frequency': 'M',
             'factors': ['roe'], 'missing_factors': []}
 
@@ -173,7 +173,7 @@ def test_a_run_builds_nothing_unless_the_flag_is_set(monkeypatch):
 
 def test_a_run_inside_the_stored_panel_builds_nothing(monkeypatch):
     built = []
-    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, vintage: _coverage('2015-01-31', '2024-12-31'))
+    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, version: _coverage('2015-01-31', '2024-12-31'))
     monkeypatch.setattr(cli, '_build_factors', lambda *args: built.append(args))
 
     cli._ensure_panel(None, _args(start='2016-01-01', end='2024-01-01'), backtest_config.read())
@@ -183,7 +183,7 @@ def test_a_run_inside_the_stored_panel_builds_nothing(monkeypatch):
 
 def test_a_run_reaching_past_the_stored_panel_builds_it_first(monkeypatch):
     built = []
-    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, vintage: _coverage('2015-01-31', '2020-12-31'))
+    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, version: _coverage('2015-01-31', '2020-12-31'))
     monkeypatch.setattr(cli, '_build_factors', lambda *args: built.append(args))
 
     cli._ensure_panel(None, _args(start='2016-01-01', end='2024-01-01'), backtest_config.read())
@@ -193,7 +193,7 @@ def test_a_run_reaching_past_the_stored_panel_builds_it_first(monkeypatch):
 
 def test_a_run_with_no_panel_at_all_builds_one(monkeypatch):
     built = []
-    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, vintage: None)
+    monkeypatch.setattr(cli.factors_pit, 'panel_coverage', lambda con, version: None)
     monkeypatch.setattr(cli, '_build_factors', lambda *args: built.append(args))
 
     cli._ensure_panel(None, _args(start='2016-01-01', end='2024-01-01'), backtest_config.read())
@@ -283,7 +283,7 @@ def test_deleting_an_evaluation_leaves_the_other_universes_alone():
     con = duckdb.connect()
     writer.ensure_tables(con)
     for universe in ('all', 'unrecorded'):
-        rows = pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': 'roe',
+        rows = pd.DataFrame([{'Version': 'as_reported', 'Universe': universe, 'Factor': 'roe',
                               'Date': pd.Timestamp('2020-01-31'), 'Horizon': 21, 'Ic': 0.1,
                               'NNames': 50}])
         writer.replace_evaluation(con, 'as_reported', universe, 'roe', rows,
@@ -300,7 +300,7 @@ def test_deleting_an_evaluation_leaves_the_other_universes_alone():
 def test_a_build_asks_for_the_dates_the_panel_does_not_hold(monkeypatch):
     grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28', '2020-03-31'])
     monkeypatch.setattr(cli.factors_pit, 'stored_dates',
-                        lambda con, vintage, tickers: {pd.Timestamp('2020-01-31')})
+                        lambda con, version, tickers: {pd.Timestamp('2020-01-31')})
     monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: False)
 
     building, why = cli._dates_to_build(None, _args(), grid, None)
@@ -311,7 +311,7 @@ def test_a_build_asks_for_the_dates_the_panel_does_not_hold(monkeypatch):
 
 def test_rebuild_asks_for_every_date_in_the_range(monkeypatch):
     grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
-    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, version, tickers: set(grid))
 
     building, why = cli._dates_to_build(None, _args(rebuild=True), grid, None)
 
@@ -322,10 +322,10 @@ def test_rebuild_asks_for_every_date_in_the_range(monkeypatch):
 def test_a_redefined_factor_forces_a_full_rebuild(monkeypatch):
     """The stored values came from a formula that no longer exists, so the dates are not reusable."""
     grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
-    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, version, tickers: set(grid))
     monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: True)
     monkeypatch.setattr(cli.writer, 'latest_panel_build',
-                        lambda con, vintage: {'definitions': 'blend=old_formula:high'})
+                        lambda con, version: {'definitions': 'blend=old_formula:high'})
     monkeypatch.setattr(cli.custom_factors, 'changed_since', lambda recorded, customs: ['blend'])
 
     building, why = cli._dates_to_build(None, _args(), grid, None)
@@ -336,7 +336,7 @@ def test_a_redefined_factor_forces_a_full_rebuild(monkeypatch):
 
 def test_a_range_already_stored_builds_nothing(monkeypatch):
     grid = pd.DatetimeIndex(['2020-01-31', '2020-02-28'])
-    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, vintage, tickers: set(grid))
+    monkeypatch.setattr(cli.factors_pit, 'stored_dates', lambda con, version, tickers: set(grid))
     monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: False)
 
     building, _why = cli._dates_to_build(None, _args(), grid, None)

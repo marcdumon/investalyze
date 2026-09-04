@@ -1,6 +1,6 @@
 """SimFin provider: fundamentals (income/balance/cashflow) + company metadata.
 
-US market only. Both vintages (as-reported + restated) fold into an `IsRestated`
+US market only. Both versions (as-reported + restated) fold into an `IsRestated`
 column, annual + quarterly into a `Period` column. Bulk REST download (api-key ->
 S3 redirect), refreshed by file age; no incremental feed. Owns its whole flow:
 acquire zips into raw/ -> extract + union via DuckDB -> merge-upsert via storage.

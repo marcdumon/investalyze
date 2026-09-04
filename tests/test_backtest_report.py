@@ -144,13 +144,13 @@ def test_deleting_a_report_that_was_never_written_says_so(tmp_path: Path):
 
 def _ic_rows(universe: str, factor: str = 'roe') -> pd.DataFrame:
     """One IC row for a universe, in the stored column order."""
-    return pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': factor,
+    return pd.DataFrame([{'Version': 'as_reported', 'Universe': universe, 'Factor': factor,
                           'Date': DATES[0], 'Horizon': 21, 'Ic': 0.05, 'NNames': 100}])
 
 
 def _quantile_rows(universe: str, factor: str = 'roe') -> pd.DataFrame:
     """One quantile row for a universe, in the stored column order."""
-    return pd.DataFrame([{'Vintage': 'as_reported', 'Universe': universe, 'Factor': factor,
+    return pd.DataFrame([{'Version': 'as_reported', 'Universe': universe, 'Factor': factor,
                           'Date': DATES[0], 'Horizon': 21, 'Quantile': 4, 'Return': 0.02,
                           'MedianReturn': 0.01, 'NNames': 20}])
 
@@ -190,7 +190,7 @@ def test_a_table_written_before_the_universe_column_gains_it_without_losing_its_
     import duckdb
 
     con = duckdb.connect()
-    con.execute("""CREATE TABLE factor_ic (Vintage VARCHAR, Factor VARCHAR, Date DATE,
+    con.execute("""CREATE TABLE factor_ic (Version VARCHAR, Factor VARCHAR, Date DATE,
                    Horizon BIGINT, Ic DOUBLE, NNames BIGINT)""")
     con.execute("INSERT INTO factor_ic VALUES ('as_reported', 'roe', DATE '2020-01-01', 21, 0.03, 50)")
 

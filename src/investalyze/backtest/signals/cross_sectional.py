@@ -35,8 +35,8 @@ def rebalance_sessions(dates: pd.DatetimeIndex, freq: str) -> list[int]:
 
 
 def read_panel(con: duckdb.DuckDBPyConnection, tickers: np.ndarray, dates: pd.DatetimeIndex,
-               *, vintage: str = DEFAULT_VINTAGE) -> pd.DataFrame:
-    """The stored factor panel for one vintage, from the last row on or before the run's first session.
+               *, version: str = DEFAULT_VINTAGE) -> pd.DataFrame:
+    """The stored factor panel for one version, from the last row on or before the run's first session.
 
     The lower bound reaches back past the run's start rather than sitting on it, so the first
     rebalance reads the most recent row that existed by then instead of finding nothing because the
@@ -45,15 +45,15 @@ def read_panel(con: duckdb.DuckDBPyConnection, tickers: np.ndarray, dates: pd.Da
     if not storage.table_exists(con, 'factor_panel'):
         raise ValueError('factor_panel does not exist; build it with `python -m investalyze.backtest factors`')
     start, end = dates[0].date().isoformat(), dates[-1].date().isoformat()
-    earlier = con.execute('SELECT max(Date) FROM factor_panel WHERE Vintage = ? AND Date <= ?',
-                          [vintage, start]).fetchone()[0]
+    earlier = con.execute('SELECT max(Date) FROM factor_panel WHERE Version = ? AND Date <= ?',
+                          [version, start]).fetchone()[0]
     lower = earlier.isoformat() if earlier is not None else start
     panel = con.execute("""
         SELECT * FROM factor_panel
-        WHERE Vintage = ? AND Ticker IN (SELECT unnest(?::VARCHAR[])) AND Date BETWEEN ? AND ?
-    """, [vintage, sorted(tickers.tolist()), lower, end]).df()
+        WHERE Version = ? AND Ticker IN (SELECT unnest(?::VARCHAR[])) AND Date BETWEEN ? AND ?
+    """, [version, sorted(tickers.tolist()), lower, end]).df()
     if panel.empty:
-        raise ValueError(f'factor_panel holds no {vintage} rows for this universe and date range')
+        raise ValueError(f'factor_panel holds no {version} rows for this universe and date range')
     panel['Date'] = pd.to_datetime(panel['Date'])
     # rank-based factors are ranked here, over this run's names, since that is the
     # cross-section the signal actually chooses from
@@ -114,10 +114,10 @@ def factor_composite(con: duckdb.DuckDBPyConnection, market: MarketData, params:
     factors = list(params.get('factors', DEFAULT_FACTORS))
     n_quantiles = int(params.get('n_quantiles', DEFAULT_QUANTILES))
     max_weight = float(params.get('max_weight', 1.0))
-    vintage = params.get('vintage', DEFAULT_VINTAGE)
+    version = params.get('version', DEFAULT_VINTAGE)
     sessions = rebalance_sessions(market.dates, params.get('rebalance', DEFAULT_REBALANCE))
 
-    panel = read_panel(con, market.tickers, market.dates, vintage=vintage)
+    panel = read_panel(con, market.tickers, market.dates, version=version)
     scores = composite_scores(panel, factors, market.tickers, market.dates)
 
     covered = covered_sessions(scores, sessions)

@@ -69,8 +69,8 @@ others. More providers expected later.
 - **Scope:** `us` market only (de excluded: re-addable, the `Market` column + keys already carry it).
   Statements `income`, `balance`, `cashflow`. `derived` (SimFin's pre-computed ratios) **excluded**:
   recomputable downstream.
-- **Vintages** ✅: as-reported (original) + restated (latest revised), folded into one boolean
-  `IsRestated` column (`False`/`True`), NOT separate `_restated` tables. Verified the two vintages are
+- **Versions** ✅: as-reported (original) + restated (latest revised), folded into one boolean
+  `IsRestated` column (`False`/`True`), NOT separate `_restated` tables. Verified the two versions are
   schema-identical per statement (income 68 / balance 95 / cashflow 62 cols), so the union folds with
   no NULL columns.
 - **Granularity:** Annual (`A`) + Quarterly (`Q`), in one `Period` column.
@@ -200,7 +200,7 @@ data/
   - `market_data` has **no volume** (always 0 for these instruments).
   - **`AssetClass`** ∈ {bonds, currencies, indices}, derived from the Stooq source category dir.
   - **Bonds = two tickers**: yield (`10YUSY`) + price (`10YUSP`), both `AssetClass='bonds'`.
-- **Fundamentals** ✅: one table per statement, both vintages in a boolean `IsRestated` column (the old
+- **Fundamentals** ✅: one table per statement, both versions in a boolean `IsRestated` column (the old
   `_restated` shadow tables are retired). Point-in-time via `Publish Date`/`Restated Date` + `IsRestated`.
 - **Still to design:**
   - Per-dataset **column contract** (no silently drifting wide SimFin tables).

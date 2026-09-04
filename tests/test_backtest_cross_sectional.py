@@ -46,7 +46,7 @@ def _panel_on(dates: list[str], *, factors: list[str] | None = None) -> duckdb.D
         for position, ticker in enumerate(TICKERS):
             row = {column: np.nan for column in columns}
             row |= {'Ticker': ticker, 'Date': pd.Timestamp(date).date(),
-                    'Vintage': factors_pit.AS_REPORTED, 'name': ticker, 'sector': 'tech',
+                    'Version': factors_pit.AS_REPORTED, 'name': ticker, 'sector': 'tech',
                     'industry': 'software', 'last_close': 100.0, 'mcap': 1e9, 'mcap_bn': 1.0}
             for factor in filled:
                 row[factor] = float(position + 1)

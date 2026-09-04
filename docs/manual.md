@@ -10,7 +10,9 @@ manual fixes for bad vendor data) and **quality** (anomaly detection over the in
 Part 1.
 
 **Part 3, the backtest**: point-in-time factors, factor evaluation and an event-driven engine.
-See [Backtest](#backtest-signals-evaluation-and-simulated-portfolios).
+See [Backtest](#backtest-signals-evaluation-and-simulated-portfolios). For the actual formula
+behind a number (IC, Sharpe, fill price, ...), see
+[`docs/backtest_metrics.md`](backtest_metrics.md) instead of this file.
 
 ---
 
@@ -412,7 +414,7 @@ Measured on a 6,465-name database: about 4.5 seconds fixed, plus 0.13 seconds pe
 fixed part is six SQL joins over the whole fundamentals history, paid once whatever comes out of
 them, which is why building only the factors a signal uses would save nothing worth having.
 
-So a build computes only the dates not already stored for that vintage and those names. Refreshing
+So a build computes only the dates not already stored for that version and those names. Refreshing
 2000 to 2026 after a month passes builds one date in about 5 seconds instead of 321 in 46. Two
 things override that: `--rebuild`, and a factor definition edited since the last build, whose stored
 values came from a formula that no longer exists.
@@ -427,8 +429,8 @@ python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --pan
 
 The page has two cards because there are two jobs, and the factor panel is not one of them:
 
-- **Research factors** scores the library against forward returns. From, To, Universe, Vintage, IC horizon.
-- **Backtest a strategy** walks one signal through the engine. Signal, From, To, Rebalance, Universe, Top N, Ranked by, Vintage.
+- **Research factors** scores the library against forward returns. From, To, Universe, Version, IC horizon.
+- **Backtest a strategy** walks one signal through the engine. Signal, From, To, Rebalance, Universe, Top N, Ranked by, Version.
 
 Each card owns its own copy of the fields it shares with the other. Editing the research range
 cannot stale a backtest, and nothing on the page depends on the order you press things in.
@@ -446,7 +448,7 @@ When the panel cannot answer, the line names what would be built and why:
 
 ```
 Builds the restated panel: 321 monthly dates for 7 names in solar_small_mid_large.
-The panel holds nothing for this vintage and these names yet.
+The panel holds nothing for this version and these names yet.
 ```
 
 Pressing then does exactly that, in one job and one press. There is no confirmation, because the
@@ -487,6 +489,10 @@ ran on, so evaluating on the S&P 500 and then on everything leaves two readings 
 overwriting the other. The picker on the Factors tab chooses which to read; leaving it blank pools
 them all, which is only meaningful when there is one.
 
+**IC horizon** is how far forward that scoring looks, in trading sessions: 21 asks "did this factor
+predict the next month," 63 asks about the next quarter. The exact formula behind IC and Mean IC is
+in [`docs/backtest_metrics.md`](backtest_metrics.md#factor-evaluation).
+
 Two figures are stored per score bucket: the mean forward return and the median. They part company
 badly on an unfiltered universe, where a handful of sub-dollar names carry a bucket's mean far from
 what its typical member did. Measured on the whole database, `ret_12_1`'s bottom bucket averaged
@@ -496,7 +502,7 @@ you want the mean to mean anything. The Mean IC and t columns are rank-based and
 
 ### Throwing an evaluation away
 
-Re-running Evaluate replaces every factor for that vintage and universe, so a scope is rebuilt by
+Re-running Evaluate replaces every factor for that version and universe, so a scope is rebuilt by
 running it again. Removing one is the Factors tab: pick the universe, press **Delete evaluation**.
 The confirmation names what goes:
 
@@ -511,7 +517,7 @@ This is what clears a scope that should not be there any more, such as `unrecord
 to rows written before evaluations recorded the universe they covered.
 
 ```bash
-python -m investalyze.backtest delete-evaluation --vintage as_reported --universe unrecorded
+python -m investalyze.backtest delete-evaluation --data-version as_reported --universe unrecorded
 ```
 
 
@@ -546,7 +552,7 @@ visible only once its newest filing was published. Publish lag runs a median 43 
 percentile of 397, so quarters do arrive out of order; each window carries the publish date of
 its latest member, which is what holds a window back until all of it was knowable.
 
-`--vintage restated` reads the same rows the screener reads. That is look-ahead for any
+`--data-version restated` reads the same rows the screener reads. That is look-ahead for any
 historical date and exists so the two can be compared on the latest one.
 
 ### Two rules the engine holds to
@@ -582,9 +588,9 @@ and a test fails when a table exists in the database without a line here.
 
 | Table | Holds | Written by |
 |---|---|---|
-| `income` | Income statements, quarterly and annual, in both vintages: as first published and as later restated. `IsRestated` separates them, and `Publish Date` is what makes point-in-time work. | `python -m investalyze.ingest simfin` |
-| `balance` | Balance sheets, same shape and same two vintages as the income statements. | `python -m investalyze.ingest simfin` |
-| `cashflow` | Cash flow statements, same shape and same two vintages as the income statements. | `python -m investalyze.ingest simfin` |
+| `income` | Income statements, quarterly and annual, in both versions: as first published and as later restated. `IsRestated` separates them, and `Publish Date` is what makes point-in-time work. | `python -m investalyze.ingest simfin` |
+| `balance` | Balance sheets, same shape and same two versions as the income statements. | `python -m investalyze.ingest simfin` |
+| `cashflow` | Cash flow statements, same shape and same two versions as the income statements. | `python -m investalyze.ingest simfin` |
 
 ### Reference
 

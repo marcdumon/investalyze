@@ -53,7 +53,7 @@ def panelled(market: MarketData) -> duckdb.DuckDBPyConnection:
     for date in market.dates:
         for position, ticker in enumerate(market.tickers):
             row = {column: np.nan for column in columns}
-            row |= {'Ticker': ticker, 'Date': date.date(), 'Vintage': factors_pit.AS_REPORTED,
+            row |= {'Ticker': ticker, 'Date': date.date(), 'Version': factors_pit.AS_REPORTED,
                     'name': ticker, 'sector': 'tech', 'industry': 'software',
                     'last_close': 100.0, 'mcap': 1e9, 'mcap_bn': 1.0}
             for factor in factors_pit.FACTORS:
@@ -213,7 +213,7 @@ def test_rerunning_over_a_shorter_range_leaves_no_orphan_equity_rows(con: duckdb
 # --- what a panel build recorded ---
 
 def test_a_recorded_build_reads_back_with_what_it_was_asked_for(con):
-    writer.record_panel_build(con, vintage='as_reported', universe='sp500', start='2015-01-01',
+    writer.record_panel_build(con, version='as_reported', universe='sp500', start='2015-01-01',
                               end='2024-12-31', frequency='M', n_tickers=500, n_dates=120, n_rows=60_000)
     build = writer.latest_panel_build(con, 'as_reported')
     assert build['universe'] == 'sp500'
@@ -222,19 +222,19 @@ def test_a_recorded_build_reads_back_with_what_it_was_asked_for(con):
 
 
 def test_the_latest_build_is_the_one_that_reads_back(con):
-    writer.record_panel_build(con, vintage='as_reported', universe='first', start='2015-01-01',
+    writer.record_panel_build(con, version='as_reported', universe='first', start='2015-01-01',
                               end='2020-12-31', frequency='M', n_tickers=100, n_dates=72, n_rows=7_200)
-    writer.record_panel_build(con, vintage='as_reported', universe='second', start='2015-01-01',
+    writer.record_panel_build(con, version='as_reported', universe='second', start='2015-01-01',
                               end='2024-12-31', frequency='W', n_tickers=500, n_dates=520, n_rows=260_000)
     assert writer.latest_panel_build(con, 'as_reported')['universe'] == 'second'
 
 
-def test_a_vintage_never_built_has_no_record(con):
+def test_a_version_never_built_has_no_record(con):
     assert writer.latest_panel_build(con, 'restated') is None
 
 
 def test_a_build_records_how_long_it_took_and_the_formulas_it_used(con):
-    writer.record_panel_build(con, vintage='as_reported', universe='solar', start='2015-01-01',
+    writer.record_panel_build(con, version='as_reported', universe='solar', start='2015-01-01',
                               end='2024-12-31', frequency='M', n_tickers=7, n_dates=120, n_rows=840,
                               seconds=1.4, definitions='blend=rank_roe:high')
     build = writer.latest_panel_build(con, 'as_reported')
@@ -245,7 +245,7 @@ def test_a_build_records_how_long_it_took_and_the_formulas_it_used(con):
 def test_a_build_record_written_before_those_columns_reads_back_without_them():
     """The page reads read-only, so it meets the old shape until a write command widens it."""
     connection = duckdb.connect()
-    connection.execute("""CREATE TABLE factor_panel_builds (Vintage VARCHAR, Universe VARCHAR,
+    connection.execute("""CREATE TABLE factor_panel_builds (Version VARCHAR, Universe VARCHAR,
                           StartDate DATE, EndDate DATE, Frequency VARCHAR, NTickers BIGINT,
                           NDates BIGINT, NRows BIGINT, BuiltAt TIMESTAMP)""")
     connection.execute("""INSERT INTO factor_panel_builds VALUES ('as_reported', 'solar',

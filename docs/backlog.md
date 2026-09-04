@@ -55,7 +55,7 @@ broken yet, only stopped moving.
 
 ## 3. Evaluations are not keyed by the period they cover
 
-`factor_ic` and `factor_quantiles` are keyed by vintage, universe and factor. Evaluate 2000 to 2010,
+`factor_ic` and `factor_quantiles` are keyed by version, universe and factor. Evaluate 2000 to 2010,
 then 2015 alone, and the second silently replaces the first: verified. The Factors tab shows a
 smaller period count with nothing saying why.
 

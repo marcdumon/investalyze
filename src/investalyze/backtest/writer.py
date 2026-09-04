@@ -2,7 +2,7 @@
 
 Each run owns its rows wholesale, so writing replaces them by `RunId` (delete-then-insert), keeping
 re-runs idempotent even when a re-run covers a shorter date range than the one before it. Evaluation
-rows work the same way, keyed by vintage, universe and factor, so evaluating the same factor over a
+rows work the same way, keyed by version, universe and factor, so evaluating the same factor over a
 different set of names sits alongside the earlier reading rather than replacing it. `factor_panel` is
 the exception: it is update-shaped, so `ingest.storage.store` merge-upserts it.
 """
@@ -22,8 +22,8 @@ EQUITY_COLS = ['RunId', 'Date', 'Equity', 'Gross', 'Net', 'Cash', 'BenchmarkEqui
 TRADE_COLS = ['RunId', 'Date', 'Ticker', 'Side', 'Shares', 'Price', 'Notional', 'Cost', 'Kind']
 RUN_TABLES = ('backtest_runs', 'backtest_equity', 'backtest_trades')
 
-IC_COLS = ['Vintage', 'Universe', 'Factor', 'Date', 'Horizon', 'Ic', 'NNames']
-QUANTILE_COLS = ['Vintage', 'Universe', 'Factor', 'Date', 'Horizon', 'Quantile', 'Return',
+IC_COLS = ['Version', 'Universe', 'Factor', 'Date', 'Horizon', 'Ic', 'NNames']
+QUANTILE_COLS = ['Version', 'Universe', 'Factor', 'Date', 'Horizon', 'Quantile', 'Return',
                  'MedianReturn', 'NNames']
 WHOLE_DATABASE = 'all'          # the Universe label for an evaluation that named no universe
 UNRECORDED_UNIVERSE = 'unrecorded'   # rows written before the Universe column existed
@@ -79,7 +79,7 @@ _DDL = [
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_panel_builds (
-        Vintage   VARCHAR NOT NULL,
+        Version   VARCHAR NOT NULL,
         Universe  VARCHAR NOT NULL,
         StartDate DATE NOT NULL,
         EndDate   DATE NOT NULL,
@@ -94,7 +94,7 @@ _DDL = [
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_ic (
-        Vintage  VARCHAR NOT NULL,
+        Version  VARCHAR NOT NULL,
         Universe VARCHAR NOT NULL,
         Factor   VARCHAR NOT NULL,
         Date     DATE NOT NULL,
@@ -105,7 +105,7 @@ _DDL = [
     """,
     """
     CREATE TABLE IF NOT EXISTS factor_quantiles (
-        Vintage      VARCHAR NOT NULL,
+        Version      VARCHAR NOT NULL,
         Universe     VARCHAR NOT NULL,
         Factor       VARCHAR NOT NULL,
         Date         DATE NOT NULL,
@@ -133,11 +133,30 @@ _DROPPED_COLUMNS = {
     'backtest_runs': ['SurvivorshipNote'],
 }
 
+# a column kept but renamed: 'vintage' read as unexplained finance jargon. factor_panel is
+# included even though it has no fixed DDL (its schema comes from whatever DataFrame first
+# wrote it): it is otherwise touched only by a build, so a command that only reads it, like
+# evaluate, would never trigger the rename and would fail looking for the new column name.
+_RENAMED_COLUMNS = {
+    'factor_panel': [('Vintage', 'Version')],
+    'factor_ic': [('Vintage', 'Version')],
+    'factor_quantiles': [('Vintage', 'Version')],
+    'factor_panel_builds': [('Vintage', 'Version')],
+}
+
 
 def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
     """Create every backtest output table that does not exist yet, and bring the older ones in line."""
     for statement in _DDL:
         con.execute(statement)
+    for table, renames in _RENAMED_COLUMNS.items():
+        try:
+            existing = {row[0] for row in con.execute(f'DESCRIBE {table}').fetchall()}
+        except duckdb.CatalogException:
+            continue   # factor_panel has no fixed DDL; a fresh DB may not have it yet
+        for old, new in renames:
+            if old in existing and new not in existing:
+                con.execute(f'ALTER TABLE {table} RENAME COLUMN {old} TO {new}')
     for table, columns in _ADDED_COLUMNS.items():
         existing = {row[0] for row in con.execute(f'DESCRIBE {table}').fetchall()}
         for column, definition in columns:
@@ -187,7 +206,7 @@ def replace_run(con: duckdb.DuckDBPyConnection, identifier: str, summary: pd.Dat
     return _replace(con, 'backtest_equity', EQUITY_COLS, equity, 'RunId = ?', [identifier])
 
 
-def record_panel_build(con: duckdb.DuckDBPyConnection, *, vintage: str, universe: str,
+def record_panel_build(con: duckdb.DuckDBPyConnection, *, version: str, universe: str,
                        start: str, end: str, frequency: str, n_tickers: int, n_dates: int,
                        n_rows: int, seconds: float | None = None,
                        definitions: str | None = None) -> None:
@@ -199,16 +218,16 @@ def record_panel_build(con: duckdb.DuckDBPyConnection, *, vintage: str, universe
     way to notice that a redefined factor left the panel holding values computed from the old one.
     """
     con.execute("""
-        INSERT INTO factor_panel_builds (Vintage, Universe, StartDate, EndDate, Frequency,
+        INSERT INTO factor_panel_builds (Version, Universe, StartDate, EndDate, Frequency,
                                          NTickers, NDates, NRows, Seconds, Definitions, BuiltAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now())
-    """, [vintage, universe, start, end, frequency, n_tickers, n_dates, n_rows, seconds, definitions])
+    """, [version, universe, start, end, frequency, n_tickers, n_dates, n_rows, seconds, definitions])
 
 
-def latest_panel_build(con: duckdb.DuckDBPyConnection, vintage: str) -> dict | None:
-    """The most recent build recorded for a vintage, or None when none was."""
-    cursor = con.execute('SELECT * FROM factor_panel_builds WHERE Vintage = ? ORDER BY BuiltAt DESC LIMIT 1',
-                         [vintage])
+def latest_panel_build(con: duckdb.DuckDBPyConnection, version: str) -> dict | None:
+    """The most recent build recorded for a version, or None when none was."""
+    cursor = con.execute('SELECT * FROM factor_panel_builds WHERE Version = ? ORDER BY BuiltAt DESC LIMIT 1',
+                         [version])
     row = cursor.fetchone()
     if row is None:
         return None
@@ -237,8 +256,8 @@ def delete_run(con: duckdb.DuckDBPyConnection, identifier: str) -> dict[str, int
 EVALUATION_TABLES = ('factor_ic', 'factor_quantiles')
 
 
-def delete_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: str) -> dict[str, int]:
-    """Delete one vintage and universe's evaluation, returning how many rows went per table.
+def delete_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: str) -> dict[str, int]:
+    """Delete one version and universe's evaluation, returning how many rows went per table.
 
     Re-running an evaluation replaces the factors it covers; this is how a scope stops existing,
     which is what a universe that was renamed or never recorded needs.
@@ -246,15 +265,15 @@ def delete_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: st
     removed = {}
     for table in EVALUATION_TABLES:
         removed[table] = con.execute(
-            f'SELECT count(*) FROM {table} WHERE Vintage = ? AND Universe = ?',
-            [vintage, universe]).fetchone()[0]
-        con.execute(f'DELETE FROM {table} WHERE Vintage = ? AND Universe = ?', [vintage, universe])
+            f'SELECT count(*) FROM {table} WHERE Version = ? AND Universe = ?',
+            [version, universe]).fetchone()[0]
+        con.execute(f'DELETE FROM {table} WHERE Version = ? AND Universe = ?', [version, universe])
     return removed
 
 
-def replace_evaluation(con: duckdb.DuckDBPyConnection, vintage: str, universe: str, factor: str,
+def replace_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: str, factor: str,
                        ic: pd.DataFrame, quantiles: pd.DataFrame) -> int:
-    """Replace one factor's IC and quantile rows for a vintage and universe, returning the IC row count."""
-    where, params = 'Vintage = ? AND Universe = ? AND Factor = ?', [vintage, universe, factor]
+    """Replace one factor's IC and quantile rows for a version and universe, returning the IC row count."""
+    where, params = 'Version = ? AND Universe = ? AND Factor = ?', [version, universe, factor]
     _replace(con, 'factor_quantiles', QUANTILE_COLS, quantiles, where, params)
     return _replace(con, 'factor_ic', IC_COLS, ic, where, params)

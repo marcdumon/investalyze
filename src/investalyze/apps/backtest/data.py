@@ -78,22 +78,22 @@ def get_trades(run_id: str, limit: int = 500) -> pd.DataFrame:
         con.close()
 
 
-def get_evaluated_universes(vintage: str | None = None) -> list[str]:
+def get_evaluated_universes(version: str | None = None) -> list[str]:
     """The distinct universes an evaluation has been stored for, so one can be chosen to read.
 
-    Distinct because a scope is a vintage and a universe together: evaluating the same universe on
-    both vintages gives two scopes and one name, and a picker offered the same name twice is a
+    Distinct because a scope is a version and a universe together: evaluating the same universe on
+    both versions gives two scopes and one name, and a picker offered the same name twice is a
     picker that cannot say which it means.
     """
     seen = []
-    for scope in get_evaluation_scopes(vintage):
+    for scope in get_evaluation_scopes(version):
         if scope['universe'] not in seen:
             seen.append(scope['universe'])
     return seen
 
 
-def get_evaluation_scopes(vintage: str | None = None) -> list[dict]:
-    """Every stored evaluation, one row per vintage and universe, with what it holds.
+def get_evaluation_scopes(version: str | None = None) -> list[dict]:
+    """Every stored evaluation, one row per version and universe, with what it holds.
 
     The counts are what a delete would remove, so the same read answers both the picker and the
     confirmation it leads to.
@@ -102,34 +102,34 @@ def get_evaluation_scopes(vintage: str | None = None) -> list[dict]:
     try:
         if not storage.table_exists(con, 'factor_ic') or not _has_column(con, 'factor_ic', 'Universe'):
             return []
-        clause, params = ('WHERE Vintage = ?', [vintage]) if vintage else ('', [])
+        clause, params = ('WHERE Version = ?', [version]) if version else ('', [])
         rows = con.execute(f"""
-            SELECT ic.Vintage, ic.Universe, count(DISTINCT ic.Factor) AS factors, count(*) AS ic_rows,
+            SELECT ic.Version, ic.Universe, count(DISTINCT ic.Factor) AS factors, count(*) AS ic_rows,
                    min(ic.Date)::VARCHAR AS first_date, max(ic.Date)::VARCHAR AS last_date
             FROM factor_ic ic {clause}
-            GROUP BY ic.Vintage, ic.Universe ORDER BY ic.Vintage, ic.Universe
+            GROUP BY ic.Version, ic.Universe ORDER BY ic.Version, ic.Universe
         """, params).df()
         quantiles = dict(con.execute(
-            'SELECT Vintage || \'|\' || Universe, count(*) FROM factor_quantiles GROUP BY 1').fetchall())
+            'SELECT Version || \'|\' || Universe, count(*) FROM factor_quantiles GROUP BY 1').fetchall())
     finally:
         con.close()
 
     scopes = []
     for row in rows.itertuples():
-        scopes.append({'vintage': row.Vintage, 'universe': row.Universe, 'factors': int(row.factors),
+        scopes.append({'version': row.Version, 'universe': row.Universe, 'factors': int(row.factors),
                        'ic_rows': int(row.ic_rows), 'first': row.first_date, 'last': row.last_date,
-                       'quantile_rows': int(quantiles.get(f'{row.Vintage}|{row.Universe}', 0))})
+                       'quantile_rows': int(quantiles.get(f'{row.Version}|{row.Universe}', 0))})
     return scopes
 
 
-def get_factor_ic(vintage: str = 'as_reported', universe: str | None = None) -> pd.DataFrame:
+def get_factor_ic(version: str = 'as_reported', universe: str | None = None) -> pd.DataFrame:
     """Mean information coefficient and its t-statistic per factor and horizon, for one universe."""
     con = _connect()
     try:
         if not storage.table_exists(con, 'factor_ic'):
             return pd.DataFrame()
-        clauses = ['Vintage = ?', 'Ic IS NOT NULL']
-        params: list = [vintage]
+        clauses = ['Version = ?', 'Ic IS NOT NULL']
+        params: list = [version]
         if universe and _has_column(con, 'factor_ic', 'Universe'):
             clauses.append('Universe = ?')
             params.append(universe)
@@ -143,7 +143,7 @@ def get_factor_ic(vintage: str = 'as_reported', universe: str | None = None) -> 
         con.close()
 
 
-def get_quantile_profile(factor: str, vintage: str = 'as_reported',
+def get_quantile_profile(factor: str, version: str = 'as_reported',
                          universe: str | None = None) -> pd.DataFrame:
     """Forward return of each score bucket for one factor, as a mean and as a median.
 
@@ -154,8 +154,8 @@ def get_quantile_profile(factor: str, vintage: str = 'as_reported',
     try:
         if not storage.table_exists(con, 'factor_quantiles'):
             return pd.DataFrame()
-        clauses = ['Vintage = ?', 'Factor = ?']
-        params: list = [vintage, factor]
+        clauses = ['Version = ?', 'Factor = ?']
+        params: list = [version, factor]
         if universe and _has_column(con, 'factor_quantiles', 'Universe'):
             clauses.append('Universe = ?')
             params.append(universe)
@@ -171,18 +171,18 @@ def get_quantile_profile(factor: str, vintage: str = 'as_reported',
         con.close()
 
 
-def get_panel_coverage(vintage: str = 'as_reported') -> tuple[dict | None, dict | None]:
-    """What the stored factor panel holds for a vintage, and the request behind its last build.
+def get_panel_coverage(version: str = 'as_reported') -> tuple[dict | None, dict | None]:
+    """What the stored factor panel holds for a version, and the request behind its last build.
 
     Coverage is read from the rows, so it is true whatever produced them; the build record adds the
     universe and the time, which the rows do not carry.
     """
     con = _connect()
     try:
-        coverage = factors_pit.panel_coverage(con, vintage)
+        coverage = factors_pit.panel_coverage(con, version)
         build = None
         if storage.table_exists(con, 'factor_panel_builds'):
-            build = writer.latest_panel_build(con, vintage)
+            build = writer.latest_panel_build(con, version)
         return coverage, build
     finally:
         con.close()
@@ -200,7 +200,7 @@ def get_last_session() -> pd.Timestamp | None:
         con.close()
 
 
-def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_freq: str,
+def panel_gaps(version: str, universe: str | None, start: str, end: str, panel_freq: str,
                rebalance: str | None = None) -> dict:
     """Everything about the stored panel that stands between a request and a result.
 
@@ -222,13 +222,13 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
     tickers = universes.load_universe(universe) if universe else None
     con = _connect()
     try:
-        coverage = factors_pit.panel_coverage(con, vintage)
+        coverage = factors_pit.panel_coverage(con, version)
         grid = factors_pit.buildable_dates(
             con, factors_pit.rebalance_dates(con, start=start, end=end, freq=panel_freq), tickers)
-        build = writer.latest_panel_build(con, vintage) \
+        build = writer.latest_panel_build(con, version) \
             if storage.table_exists(con, 'factor_panel_builds') else None
-        held = factors_pit.stored_dates(con, vintage, tickers)
-        empty = factors_pit.empty_factors(con, vintage, tickers)
+        held = factors_pit.stored_dates(con, version, tickers)
+        empty = factors_pit.empty_factors(con, version, tickers)
         n_tickers = len(tickers) if tickers is not None else _priced_tickers(con)
     finally:
         con.close()
@@ -251,7 +251,7 @@ def panel_gaps(vintage: str, universe: str | None, start: str, end: str, panel_f
 def _priced_tickers(con: duckdb.DuckDBPyConnection) -> int | None:
     """How many names a build over the whole database would cover.
 
-    Counted from the prices rather than from the stored panel: a vintage with no panel yet would
+    Counted from the prices rather than from the stored panel: a version with no panel yet would
     otherwise report no names, when what it means is that nothing has been built for it.
     """
     if not storage.table_exists(con, 'prices'):

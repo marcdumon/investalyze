@@ -165,7 +165,7 @@ def _gap_reasons(gaps: dict) -> list[str]:
     cadence = FREQUENCY_WORDS.get(gaps.get('build_frequency'), '')
     reasons = []
     if gaps['missing_dates'] and gaps['missing_dates'] == gaps['requested_dates']:
-        reasons.append('the panel holds nothing for this vintage and these names yet')
+        reasons.append('the panel holds nothing for this version and these names yet')
     elif gaps['missing_dates']:
         reasons.append(f'{gaps["missing_dates"]} of the {gaps["requested_dates"]} {cadence} dates '
                        'it needs do not exist yet')
@@ -185,10 +185,10 @@ def _scope_words(universe: str | None, n_tickers: int | None) -> str:
     return f'{n_tickers:,} names in {universe}' if universe else f'{n_tickers:,} names'
 
 
-def _build_words(gaps: dict, universe: str | None, vintage: str) -> str:
+def _build_words(gaps: dict, universe: str | None, version: str) -> str:
     """What a build would actually produce, in the terms the fields on the card are set in."""
     cadence = FREQUENCY_WORDS.get(gaps.get('build_frequency'), '')
-    return (f'the {vintage.replace("_", " ")} panel: {gaps["missing_dates"]} {cadence} dates for '
+    return (f'the {version.replace("_", " ")} panel: {gaps["missing_dates"]} {cadence} dates for '
             f'{_scope_words(universe, gaps["n_tickers"])}')
 
 
@@ -207,20 +207,20 @@ def _empty_note(gaps: dict) -> str:
             'the inputs do not exist.')
 
 
-def _needs_sentence(gaps: dict, universe: str | None, vintage: str) -> str:
+def _needs_sentence(gaps: dict, universe: str | None, version: str) -> str:
     """The amber line: what pressing builds, why it has to, and what it still will not fix."""
-    return (f'Builds {_build_words(gaps, universe, vintage)}'
+    return (f'Builds {_build_words(gaps, universe, version)}'
             f'{_estimate_words(gaps["seconds_estimate"])}. '
             f'{"; ".join(_gap_reasons(gaps)).capitalize()}, and pressing this is what builds them.'
             f'{_empty_note(gaps)}')
 
 
-def research_plan(gaps: dict, universe: str | None, vintage: str = 'as_reported') -> tuple[bool, str]:
+def research_plan(gaps: dict, universe: str | None, version: str = 'as_reported') -> tuple[bool, str]:
     """Whether Evaluate can run from what is stored, and the sentence saying so."""
     if not _gap_reasons(gaps):
         return True, (f'Scores {len(FACTORS)} factors over {_scope_words(universe, gaps["n_tickers"])} '
                       f'from the stored panel.{_empty_note(gaps)}')
-    return False, _needs_sentence(gaps, universe, vintage)
+    return False, _needs_sentence(gaps, universe, version)
 
 
 def _cadence_note(gaps: dict) -> str:
@@ -259,7 +259,7 @@ def _tradable_note(tradable: tuple[int, int | None] | None, universe: str | None
 
 
 def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
-                  vintage: str = 'as_reported',
+                  version: str = 'as_reported',
                   tradable: tuple[int, int | None] | None = None) -> tuple[bool, str]:
     """Whether Run can go straight to the engine, and the sentence saying so."""
     if kind != CROSS_SECTIONAL:
@@ -268,7 +268,7 @@ def backtest_plan(gaps: dict, kind: str, signal: str, universe: str | None,
         return True, (f'Runs {signal} over {_scope_words(universe, gaps["n_tickers"])} from the '
                       f'stored panel.{_tradable_note(tradable, universe)}{_cadence_note(gaps)}'
                       f'{_empty_note(gaps)}')
-    return False, _needs_sentence(gaps, universe, vintage)
+    return False, _needs_sentence(gaps, universe, version)
 
 
 def _universe_argv(universe: str | None, n_top: int | None, rank_by: str | None) -> list[str]:
@@ -283,7 +283,7 @@ def _universe_argv(universe: str | None, n_top: int | None, rank_by: str | None)
     return argv
 
 
-def factors_argv(start: str, end: str, freq: str, vintage: str, universe: str | None = None,
+def factors_argv(start: str, end: str, freq: str, version: str, universe: str | None = None,
                  n_top: int | None = None, rank_by: str | None = None) -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest factors` over one date range.
 
@@ -291,13 +291,13 @@ def factors_argv(start: str, end: str, freq: str, vintage: str, universe: str | 
     ignored: the command line should say what the build will actually do.
     """
     argv = ['-m', 'investalyze.backtest', 'factors', '--start', start, '--end', end,
-            '--freq', freq, '--vintage', vintage]
+            '--freq', freq, '--data-version', version]
     argv += ['--universe', universe] if universe else _universe_argv(None, n_top, rank_by)
     scope = universe or 'whole database'
-    return f'backtest factors ({vintage}, {freq}, {scope}, {start} to {end})', argv
+    return f'backtest factors ({version}, {freq}, {scope}, {start} to {end})', argv
 
 
-def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
+def evaluate_argv(horizon: int, version: str, universe: str | None = None,
                   start: str | None = None, end: str | None = None,
                   build_panel: bool = False, panel_freq: str = 'M') -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest evaluate` across every factor.
@@ -305,7 +305,7 @@ def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
     The dates narrow which stored panel rows are scored, so the range on the form means the same
     thing here as it does for the other two buttons.
     """
-    argv = ['-m', 'investalyze.backtest', 'evaluate', '--horizon', str(horizon), '--vintage', vintage,
+    argv = ['-m', 'investalyze.backtest', 'evaluate', '--horizon', str(horizon), '--data-version', version,
             '--panel-freq', panel_freq]
     if start:
         argv += ['--start', start]
@@ -317,20 +317,20 @@ def evaluate_argv(horizon: int, vintage: str, universe: str | None = None,
         argv += ['--build-panel']
     scope = universe or 'whole database'
     prefix = 'build panel, then evaluate' if build_panel else 'evaluate'
-    return f'backtest {prefix} ({vintage}, {scope}, horizon {horizon})', argv
+    return f'backtest {prefix} ({version}, {scope}, horizon {horizon})', argv
 
 
-def delete_evaluation_argv(vintage: str, universe: str) -> tuple[str, list[str]]:
+def delete_evaluation_argv(version: str, universe: str) -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest delete-evaluation` on one stored evaluation."""
-    argv = ['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage', vintage,
+    argv = ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', version,
             '--universe', universe]
-    return f'backtest delete-evaluation ({vintage}, {universe})', argv
+    return f'backtest delete-evaluation ({version}, {universe})', argv
 
 
 def delete_evaluation_prompt(scope: dict) -> str:
     """The confirmation text for deleting one stored evaluation, naming what goes with it."""
     return '\n'.join([
-        f'Delete the {scope["vintage"].replace("_", " ")} evaluation stored under '
+        f'Delete the {scope["version"].replace("_", " ")} evaluation stored under '
         f'{scope["universe"]}?',
         '',
         f'  {scope["factors"]} factors, {scope["first"]} to {scope["last"]}',
@@ -365,17 +365,17 @@ def delete_prompt(runs: list[dict]) -> str:
 
 
 def run_argv(signal: str, start: str, end: str, freq: str, universe: str | None = None,
-             n_top: int | None = None, rank_by: str | None = None, vintage: str = 'as_reported',
+             n_top: int | None = None, rank_by: str | None = None, version: str = 'as_reported',
              build_panel: bool = False, panel_freq: str = 'M') -> tuple[str, list[str]]:
     """Argv for `python -m investalyze.backtest run` on one signal.
 
-    The vintage travels with the run because it decides which panel a cross-sectional signal ranks;
+    The version travels with the run because it decides which panel a cross-sectional signal ranks;
     without it the choice on the form went nowhere and every run scored as-reported values. The two
     frequencies travel separately: `--freq` is how often the portfolio trades, `--panel-freq` how
     often the factor values behind it are recomputed.
     """
     argv = (['-m', 'investalyze.backtest', 'run', '--signal', signal, '--start', start, '--end', end,
-             '--freq', freq, '--vintage', vintage, '--panel-freq', panel_freq]
+             '--freq', freq, '--data-version', version, '--panel-freq', panel_freq]
             + _universe_argv(universe, n_top, rank_by))
     if build_panel:
         argv += ['--build-panel']

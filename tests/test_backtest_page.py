@@ -130,7 +130,7 @@ def test_each_card_owns_its_own_fields():
     from investalyze.apps.backtest import page
 
     research, backtest = str(page._research_panel()), str(page._backtest_panel())
-    for field in ('start', 'end', 'universe', 'vintage'):
+    for field in ('start', 'end', 'universe', 'version'):
         assert f'bt-res-{field}' in research
         assert f'bt-run-{field}' in backtest
         assert f'bt-run-{field}' not in research
@@ -536,10 +536,10 @@ def test_an_evaluation_missing_dates_says_what_it_builds_and_how_long():
     assert '42 of the 120 monthly dates it needs do not exist yet' in sentence
 
 
-def test_a_vintage_with_no_panel_says_so_rather_than_counting_to_itself():
+def test_a_version_with_no_panel_says_so_rather_than_counting_to_itself():
     _ready, sentence = logic.research_plan(_gaps(missing_dates=120), 'solar', 'restated')
     assert 'Builds the restated panel: 120 monthly dates' in sentence
-    assert 'holds nothing for this vintage' in sentence
+    assert 'holds nothing for this version' in sentence
     assert '120 of the 120' not in sentence
 
 
@@ -692,14 +692,14 @@ def test_a_cancel_button_that_reports_no_click_stops_nothing(monkeypatch):
 
 def _scope(**overrides) -> dict:
     """One stored evaluation, shaped as `get_evaluation_scopes` returns it."""
-    base = {'vintage': 'as_reported', 'universe': 'unrecorded', 'factors': 29, 'ic_rows': 9128,
+    base = {'version': 'as_reported', 'universe': 'unrecorded', 'factors': 29, 'ic_rows': 9128,
             'quantile_rows': 43895, 'first': '2000-01-31', 'last': '2026-09-02'}
     return base | overrides
 
 
 def test_deleting_an_evaluation_builds_the_cli_argv():
     title, argv = logic.delete_evaluation_argv('as_reported', 'unrecorded')
-    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage', 'as_reported',
+    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', 'as_reported',
                     '--universe', 'unrecorded']
     assert 'unrecorded' in title
 
@@ -725,10 +725,10 @@ def test_confirming_starts_the_evaluation_delete(monkeypatch):
     started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    pending = {'kind': 'evaluation', 'vintage': 'as_reported', 'universe': 'unrecorded'}
+    pending = {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded'}
 
     assert page.resolve_delete(1, None, pending) == (False, None)
-    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--vintage',
+    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version',
                         'as_reported', '--universe', 'unrecorded']]
 
 
@@ -740,7 +740,7 @@ def test_one_dialog_tells_the_two_kinds_of_delete_apart(monkeypatch):
     monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv[2]))
 
     page.resolve_delete(1, None, {'kind': 'runs', 'ids': ['abc']})
-    page.resolve_delete(1, None, {'kind': 'evaluation', 'vintage': 'as_reported', 'universe': 'x'})
+    page.resolve_delete(1, None, {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'x'})
 
     assert started == ['delete', 'delete-evaluation']
 
@@ -780,8 +780,8 @@ def test_the_build_wording_uses_the_cadence_being_built_not_the_one_stored():
     assert '42 weekly dates' in sentence
 
 
-def test_a_vintage_with_no_panel_still_counts_the_names_a_build_would_cover():
-    """The count used to come from the panel, so a vintage with none reported no names at all."""
+def test_a_version_with_no_panel_still_counts_the_names_a_build_would_cover():
+    """The count used to come from the panel, so a version with none reported no names at all."""
     _ready, sentence = logic.research_plan(_gaps(missing_dates=120, n_tickers=6470), None, 'restated')
     assert 'for 6,470 names' in sentence
     assert 'for 0 names' not in sentence
@@ -823,38 +823,38 @@ def test_the_whole_database_needs_no_such_note():
     assert 'Trades' not in sentence
 
 
-# --- a scope is a vintage and a universe together ---
+# --- a scope is a version and a universe together ---
 
 def test_the_universe_picker_never_offers_the_same_name_twice(monkeypatch):
-    """Evaluating one universe on both vintages gives two scopes and one name."""
+    """Evaluating one universe on both versions gives two scopes and one name."""
     from investalyze.apps.backtest import data as backtest_data
 
-    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes', lambda vintage=None: [
-        {'vintage': 'as_reported', 'universe': 'solar'},
-        {'vintage': 'restated', 'universe': 'solar'},
-        {'vintage': 'as_reported', 'universe': 'all'},
+    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes', lambda version=None: [
+        {'version': 'as_reported', 'universe': 'solar'},
+        {'version': 'restated', 'universe': 'solar'},
+        {'version': 'as_reported', 'universe': 'all'},
     ])
     offered = backtest_data.get_evaluated_universes()
     assert offered == ['solar', 'all']
 
 
-def test_the_picker_is_scoped_to_one_vintage(monkeypatch):
+def test_the_picker_is_scoped_to_one_version(monkeypatch):
     from investalyze.apps.backtest import data as backtest_data
 
     asked = []
     monkeypatch.setattr(backtest_data, 'get_evaluation_scopes',
-                        lambda vintage=None: asked.append(vintage) or [])
+                        lambda version=None: asked.append(version) or [])
     backtest_data.get_evaluated_universes('restated')
     assert asked == ['restated']
 
 
-def test_the_factor_table_reads_the_vintage_from_the_research_card():
-    """Reading a universe without its vintage pools two measurements of different things."""
+def test_the_factor_table_reads_the_version_from_the_research_card():
+    """Reading a universe without its version pools two measurements of different things."""
     from dash._callback import GLOBAL_CALLBACK_MAP
 
     from investalyze.apps.backtest import page  # noqa: F401  registers the callback
 
     key = next(name for name in GLOBAL_CALLBACK_MAP if 'bt-factors.rowData' in name)
     inputs = [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
-    assert 'bt-res-vintage' in inputs
+    assert 'bt-res-version' in inputs
     assert 'bt-factors-universe' in inputs

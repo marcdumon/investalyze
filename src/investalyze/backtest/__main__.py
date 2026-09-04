@@ -73,8 +73,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--n-top', type=int, help='how many names to keep (default: the config value)')
     parser.add_argument('--rank-by', choices=('liquidity', 'mcap', 'ticker'),
                         help='how the universe is cut to size (default: the config value)')
-    parser.add_argument('--vintage', choices=('as_reported', 'restated'), default='as_reported',
-                        help='fundamentals vintage the factor panel is built from (default: as_reported)')
+    # --version is argparse's own convention for the tool's version number, so this flag is
+    # spelled --data-version; dest='version' keeps every args.version reference unchanged
+    parser.add_argument('--data-version', dest='version', choices=('as_reported', 'restated'),
+                        default='as_reported',
+                        help='fundamentals version the factor panel is built from (default: as_reported)')
     parser.add_argument('--build-panel', action='store_true',
                         help='build the factor panel first when the stored one does not cover the request')
     parser.add_argument('--run-id', nargs='+', metavar='run_id',
@@ -134,16 +137,16 @@ def _build_factors(con, args: argparse.Namespace, run_cfg: backtest_config.Confi
     scope = f'{len(tickers):,} tickers' if tickers is not None else 'every priced ticker'
 
     building, why = _dates_to_build(con, args, grid, tickers)
-    log.info(f'{args.vintage} panel, {args.start} to {args.end}, {scope}: '
+    log.info(f'{args.version} panel, {args.start} to {args.end}, {scope}: '
              f'{len(grid)} {FREQUENCY_WORDS[freq]} dates requested, {len(building)} to build ({why})')
     if not len(building):
         return
 
     began = time.monotonic()
-    panel = factors_pit.build_factor_panel(con, building, tickers=tickers, vintage=args.vintage,
+    panel = factors_pit.build_factor_panel(con, building, tickers=tickers, version=args.version,
                                            benchmark=run_cfg.benchmark)
     stored = factors_pit.store_factor_panel(con, panel)
-    writer.record_panel_build(con, vintage=args.vintage,
+    writer.record_panel_build(con, version=args.version,
                               universe=args.universe or run_cfg.universe.name or writer.WHOLE_DATABASE,
                               start=args.start, end=args.end, frequency=freq,
                               n_tickers=int(panel['Ticker'].nunique()), n_dates=len(building),
@@ -164,20 +167,20 @@ def _dates_to_build(con, args: argparse.Namespace, grid: pd.DatetimeIndex,
     """
     if args.rebuild:
         return grid, 'rebuilding every one'
-    build = writer.latest_panel_build(con, args.vintage) \
+    build = writer.latest_panel_build(con, args.version) \
         if storage.table_exists(con, 'factor_panel_builds') else None
     changed = custom_factors.changed_since(build['definitions'] if build else None, CUSTOM)
     if changed:
         return grid, f'rebuilding every one, {", ".join(changed)} was redefined'
-    held = factors_pit.stored_dates(con, args.vintage, tickers)
+    held = factors_pit.stored_dates(con, args.version, tickers)
     missing = pd.DatetimeIndex([date for date in grid if date not in held])
     return missing, 'the ones not stored yet'
 
 
 def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
-    """The stored factor panel for one vintage, narrowed to the requested date range."""
-    clauses = ['Vintage = ?']
-    params: list = [args.vintage]
+    """The stored factor panel for one version, narrowed to the requested date range."""
+    clauses = ['Version = ?']
+    params: list = [args.version]
     if args.start is not None:
         clauses.append('Date >= ?')
         params.append(args.start)
@@ -186,7 +189,7 @@ def _read_factor_panel(con, args: argparse.Namespace) -> pd.DataFrame:
         params.append(args.end)
     panel = con.execute(f'SELECT * FROM factor_panel WHERE {" AND ".join(clauses)}', params).df()
     if panel.empty:
-        raise SystemExit(f'factor_panel holds no {args.vintage} rows for this range; run the factors command first')
+        raise SystemExit(f'factor_panel holds no {args.version} rows for this range; run the factors command first')
     panel['Date'] = pd.to_datetime(panel['Date'])
     # ranked over the names being evaluated, which is the population the reading is about
     return factors_pit.apply_derived(panel)
@@ -239,13 +242,13 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
         counts = evaluation.names_per_date(scores, forwards)
         quantiles = evaluation.quantile_frame(scores, forwards)
 
-        ic_rows = pd.DataFrame({'Vintage': args.vintage, 'Universe': universe, 'Factor': factor,
+        ic_rows = pd.DataFrame({'Version': args.version, 'Universe': universe, 'Factor': factor,
                                 'Date': ic.index, 'Horizon': horizon, 'Ic': ic.to_numpy(),
                                 'NNames': counts.to_numpy()})
-        quantile_rows = quantiles.assign(Vintage=args.vintage, Universe=universe, Factor=factor,
+        quantile_rows = quantiles.assign(Version=args.version, Universe=universe, Factor=factor,
                                          Horizon=horizon)
         quantile_rows = quantile_rows[writer.QUANTILE_COLS]
-        writer.replace_evaluation(con, args.vintage, universe, factor, ic_rows[writer.IC_COLS],
+        writer.replace_evaluation(con, args.version, universe, factor, ic_rows[writer.IC_COLS],
                                   quantile_rows)
 
         summary = evaluation.ic_summary(ic)
@@ -303,7 +306,7 @@ def _ensure_panel(con, args: argparse.Namespace, run_cfg: backtest_config.Config
     needs is a command whose cost and effect the caller cannot predict, so the decision is the
     caller's and this is what carries it out once they have made it.
     """
-    coverage = factors_pit.panel_coverage(con, args.vintage)
+    coverage = factors_pit.panel_coverage(con, args.version)
     start, end = pd.Timestamp(args.start), pd.Timestamp(args.end)
     if coverage is not None and coverage['start'] <= start and coverage['end'] >= end:
         log.info(f'factor panel covers {coverage["start"].date()} to {coverage["end"].date()}, '
@@ -346,7 +349,7 @@ def _run(con, args: argparse.Namespace, run_cfg: backtest_config.Config, data_ro
     market = market_data.build_market(con, tickers, start=args.start, end=args.end,
                                       exclude_checks=run_cfg.exclude_checks)
     params = run_cfg.signal(args.signal) | {'rebalance': args.freq,
-                                            'vintage': args.vintage,
+                                            'version': args.version,
                                             'max_weight': run_cfg.limits.max_weight}
     step = factory(con, market, params)
     book = engine.run_backtest(market, step, starting_cash=run_cfg.starting_cash,
@@ -394,14 +397,14 @@ def _report(args: argparse.Namespace, data_root: Path) -> None:
 
 
 def _delete_evaluation(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
-    """Remove one vintage and universe's stored evaluation."""
+    """Remove one version and universe's stored evaluation."""
     universe = args.universe or run_cfg.universe.name
     if not universe:
         raise SystemExit('delete-evaluation needs --universe, the scope the rows were stored under')
-    removed = writer.delete_evaluation(con, args.vintage, universe)
+    removed = writer.delete_evaluation(con, args.version, universe)
     if not any(removed.values()):
-        raise SystemExit(f'no {args.vintage} evaluation stored for {universe}')
-    log.info(f'deleted the {args.vintage} evaluation for {universe}: '
+        raise SystemExit(f'no {args.version} evaluation stored for {universe}')
+    log.info(f'deleted the {args.version} evaluation for {universe}: '
              f'{removed["factor_ic"]:,} IC rows, {removed["factor_quantiles"]:,} quantile rows')
 
 
@@ -442,7 +445,7 @@ def _walk_forward(con, args: argparse.Namespace, run_cfg: backtest_config.Config
              f'embargo {args.embargo}')
 
     params = run_cfg.signal(args.signal) | {'rebalance': args.freq,
-                                            'vintage': args.vintage,
+                                            'version': args.version,
                                             'max_weight': run_cfg.limits.max_weight}
     result = walkforward.run_walk_forward(con, factory, windows, run_cfg, params)
 

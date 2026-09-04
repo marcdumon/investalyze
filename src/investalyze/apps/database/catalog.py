@@ -63,18 +63,18 @@ TABLES: dict[str, Table] = {
 
     'income': Table(
         FUNDAMENTALS,
-        'Income statements, quarterly and annual, in both vintages: as first published and as later '
+        'Income statements, quarterly and annual, in both versions: as first published and as later '
         'restated. `IsRestated` separates them, and `Publish Date` is what makes point-in-time work.',
         'python -m investalyze.ingest simfin',
         'Ticker, Report Date, Period, IsRestated'),
     'balance': Table(
         FUNDAMENTALS,
-        'Balance sheets, same shape and same two vintages as the income statements.',
+        'Balance sheets, same shape and same two versions as the income statements.',
         'python -m investalyze.ingest simfin',
         'Ticker, Report Date, Period, IsRestated'),
     'cashflow': Table(
         FUNDAMENTALS,
-        'Cash flow statements, same shape and same two vintages as the income statements.',
+        'Cash flow statements, same shape and same two versions as the income statements.',
         'python -m investalyze.ingest simfin',
         'Ticker, Report Date, Period, IsRestated'),
 
@@ -114,7 +114,7 @@ TABLES: dict[str, Table] = {
         'was knowable on that date. This is what a cross-sectional signal ranks. Rank-based factors '
         'are absent on purpose, since their value depends on which names were in the cross-section.',
         'python -m investalyze.backtest factors',
-        'Ticker, Date, Vintage'),
+        'Ticker, Date, Version'),
     'factor_panel_builds': Table(
         BACKTEST,
         'One row per build of the factor panel: what was asked for, how long it took, and a '
@@ -126,13 +126,13 @@ TABLES: dict[str, Table] = {
         'Information coefficient per date: the rank correlation between a factor and the return that '
         'followed it. Averaged, this is the Mean IC column on the Factors tab.',
         'python -m investalyze.backtest evaluate',
-        'Vintage, Universe, Factor, Date, Horizon'),
+        'Version, Universe, Factor, Date, Horizon'),
     'factor_quantiles': Table(
         BACKTEST,
         'Forward return of each score bucket per date, as a mean and as a median. The two part '
         'company on a universe that was never filtered for price.',
         'python -m investalyze.backtest evaluate',
-        'Vintage, Universe, Factor, Date, Horizon, Quantile'),
+        'Version, Universe, Factor, Date, Horizon, Quantile'),
     'backtest_runs': Table(
         BACKTEST,
         'One row per stored run: the settings behind it and its headline statistics.',
