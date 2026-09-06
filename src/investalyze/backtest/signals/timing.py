@@ -22,6 +22,9 @@ DEFAULT_SLOW = 200
 DEFAULT_LOOKBACK = 252
 DEFAULT_STOP_FRACTION = 0.15
 DEFAULT_MAX_POSITIONS = 20
+DEFAULT_BAND_WINDOW = 25
+DEFAULT_BAND_MULT = 2.25
+DEFAULT_IBS_THRESHOLD = 0.6
 
 
 def _equal_weights(held: np.ndarray, max_positions: int) -> np.ndarray:
@@ -106,5 +109,44 @@ def breakout_52w(con: duckdb.DuckDBPyConnection, market: MarketData, params: dic
         if targets is None and orders is None:
             return HOLD
         return Decision(targets=targets, orders=orders)
+
+    return step
+
+
+def ibs_band_reversion(con: duckdb.DuckDBPyConnection, market: MarketData, params: dict) -> SignalStep:
+    """Buy a close that falls through a volatility band on weak intraday strength, sell it on a rally.
+
+    The band sits `band_mult` average ranges below the rolling high; a close under it, paired with a
+    low internal bar strength (IBS, the close's place between the low and the high), is the entry.
+    Position stays open until the close beats the prior session's high.
+
+    `con` is accepted to match the signal factory shape and is unused.
+    """
+    window = int(params.get('window', DEFAULT_BAND_WINDOW))
+    band_mult = float(params.get('band_mult', DEFAULT_BAND_MULT))
+    ibs_threshold = float(params.get('ibs_threshold', DEFAULT_IBS_THRESHOLD))
+    max_positions = int(params.get('max_positions', DEFAULT_MAX_POSITIONS))
+    if not 0 < ibs_threshold < 1:
+        raise ValueError(f'ibs_threshold must be in (0, 1), got {ibs_threshold}')
+
+    high = pd.DataFrame(market.high)
+    low = pd.DataFrame(market.low)
+    close = pd.DataFrame(market.close)
+    day_range = high - low
+    avg_range = day_range.rolling(window, min_periods=window).mean()
+    band = high.rolling(window, min_periods=window).max() - band_mult * avg_range
+    ibs = (close - low) / day_range.replace(0.0, np.nan)
+
+    entry = ((close < band) & (ibs < ibs_threshold)).to_numpy()
+    beats_prior_high = (close.to_numpy() > high.shift(1).to_numpy())
+    previous = {'held': np.zeros(len(market.tickers), dtype=bool)}
+
+    def step(session: int, book: Book) -> Decision:
+        """Rebalance to the names either newly entered or still held and not yet exited."""
+        held = (entry[session] | (book.shares > 0)) & ~beats_prior_high[session]
+        if np.array_equal(held, previous['held']):
+            return HOLD
+        previous['held'] = held.copy()
+        return Decision(targets=_equal_weights(held, max_positions), orders=None)
 
     return step

@@ -16,7 +16,8 @@ from investalyze.backtest.book import Book
 from investalyze.backtest.market import MarketData
 from investalyze.backtest.orders import OrderBatch
 
-EXPECTED_SIGNALS = ['breakout_52w', 'factor_composite', 'hold_cash', 'single_factor', 'sma_cross']
+EXPECTED_SIGNALS = ['breakout_52w', 'factor_composite', 'hold_cash', 'ibs_band_reversion', 'single_factor',
+                    'sma_cross']
 
 
 @pytest.fixture

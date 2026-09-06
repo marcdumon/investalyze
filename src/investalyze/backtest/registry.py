@@ -47,6 +47,7 @@ SIGNALS: dict[str, tuple[str, SignalFactory]] = {
     'single_factor': (CROSS_SECTIONAL, cross_sectional.single_factor),
     'sma_cross': (TIMING, timing.sma_cross),
     'breakout_52w': (TIMING, timing.breakout_52w),
+    'ibs_band_reversion': (TIMING, timing.ibs_band_reversion),
 }
 
 # name -> one-line description, shown in `--help`; keys must match SIGNALS exactly
@@ -56,4 +57,5 @@ SIGNAL_DESCRIPTIONS: dict[str, str] = {
     'single_factor': 'top bucket of one factor, ranked across the universe',
     'sma_cross': 'hold a name while its fast moving average is above its slow one',
     'breakout_52w': 'buy a name at a new high over the lookback, exit on a trailing stop',
+    'ibs_band_reversion': 'buy a close under a volatility band on weak intraday strength, exit on a rally',
 }

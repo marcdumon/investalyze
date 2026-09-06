@@ -36,6 +36,22 @@ def _market(closes: np.ndarray, tickers: list[str] | None = None) -> MarketData:
     )
 
 
+def _ohlc_market(highs: list[float], lows: list[float], closes: list[float]) -> MarketData:
+    """A single-name synthetic market with distinct high, low and close, for the band/IBS rule."""
+    sessions = len(closes)
+    high = np.array(highs, dtype=float).reshape(sessions, 1)
+    low = np.array(lows, dtype=float).reshape(sessions, 1)
+    close = np.array(closes, dtype=float).reshape(sessions, 1)
+    return MarketData(
+        dates=pd.bdate_range('2020-01-01', periods=sessions),
+        tickers=np.array(['T0']),
+        open_=close, high=high, low=low, close=close,
+        volume=np.full((sessions, 1), 1e9, dtype=np.float32),
+        dividend=np.zeros((sessions, 1)), adv=np.full((sessions, 1), 1e12, dtype=np.float32),
+        tradable=np.ones((sessions, 1), dtype=bool), adjusted_close=close,
+    )
+
+
 # --- moving-average crossover ---
 
 def test_sma_cross_holds_nothing_until_the_slow_window_fills():
@@ -106,6 +122,61 @@ def test_a_stop_fraction_outside_zero_to_one_is_rejected():
     market = _market(np.linspace(100, 200, 30))
     with pytest.raises(ValueError, match='stop_fraction must be in'):
         timing.breakout_52w(None, market, {'stop_fraction': 1.5})
+
+
+# --- mean reversion off a volatility band and the intraday-strength ratio ---
+
+def test_ibs_band_reversion_holds_nothing_until_the_window_fills():
+    market = _ohlc_market([110, 110, 110], [90, 90, 90], [100, 100, 100])
+    step = timing.ibs_band_reversion(None, market, {'window': 5})
+    book = Book.start(10_000.0, 1, 3)
+    assert step(0, book) is engine.HOLD
+
+
+def test_ibs_band_reversion_enters_on_a_low_band_low_ibs_close():
+    highs = [110, 110, 110, 105]
+    lows = [90, 90, 90, 70]
+    closes = [100, 100, 100, 72]
+    market = _ohlc_market(highs, lows, closes)
+    params = {'window': 3, 'band_mult': 1.0, 'ibs_threshold': 0.6, 'max_positions': 1}
+    step = timing.ibs_band_reversion(None, market, params)
+    book = Book.start(10_000.0, 1, 4)
+    decision = step(3, book)
+    assert decision.targets is not None
+    assert decision.targets[0] > 0
+
+
+def test_ibs_band_reversion_stays_quiet_when_the_band_is_not_breached():
+    highs = [110, 110, 110, 108]
+    lows = [90, 90, 90, 95]
+    closes = [100, 100, 100, 106]
+    market = _ohlc_market(highs, lows, closes)
+    params = {'window': 3, 'band_mult': 1.0, 'ibs_threshold': 0.6, 'max_positions': 1}
+    step = timing.ibs_band_reversion(None, market, params)
+    book = Book.start(10_000.0, 1, 4)
+    assert step(3, book) is engine.HOLD
+
+
+def test_ibs_band_reversion_enters_and_exits_through_the_engine():
+    """A sharp drop should trip the entry, and a rally back past a prior high should close it out."""
+    highs = [110, 110, 110, 105, 80, 82, 108, 108]
+    lows = [90, 90, 90, 70, 65, 68, 100, 100]
+    closes = [100, 100, 100, 72, 70, 75, 110, 108]
+    market = _ohlc_market(highs, lows, closes)
+    params = {'window': 3, 'band_mult': 1.0, 'ibs_threshold': 0.6, 'max_positions': 1}
+    step = timing.ibs_band_reversion(None, market, params)
+    book = engine.run_backtest(market, step, starting_cash=10_000.0, costs=FREE, limits=LIMITS,
+                               check_accounting=True)
+    blotter = book.blotter()
+    assert len(blotter) == 2
+    assert list(blotter['Side']) == ['buy', 'sell']
+    assert book.shares[0] == pytest.approx(0.0)
+
+
+def test_an_ibs_threshold_outside_zero_to_one_is_rejected():
+    market = _ohlc_market([110, 110, 110], [90, 90, 90], [100, 100, 100])
+    with pytest.raises(ValueError, match='ibs_threshold must be in'):
+        timing.ibs_band_reversion(None, market, {'ibs_threshold': 1.5})
 
 
 # --- how the restated stop reaches the engine ---
