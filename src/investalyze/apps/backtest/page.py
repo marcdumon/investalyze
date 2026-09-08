@@ -31,14 +31,18 @@ BENCHMARK_COLOR = '#8C8C8C'
 DRAWDOWN_COLOR = '#C44E52'
 
 TRADE_COLUMNS = [
-    {'field': 'Date', 'width': 110},
-    {'field': 'Ticker', 'width': 100},
-    {'field': 'Side', 'width': 80},
-    {'field': 'Shares', 'width': 110, 'valueFormatter': {'function': 'd3.format(",.1f")(params.value)'}},
-    {'field': 'Price', 'width': 100, 'valueFormatter': {'function': 'd3.format(",.2f")(params.value)'}},
-    {'field': 'Notional', 'width': 120, 'valueFormatter': {'function': 'd3.format(",.0f")(params.value)'}},
-    {'field': 'Cost', 'width': 90, 'valueFormatter': {'function': 'd3.format(",.2f")(params.value)'}},
-    {'field': 'Kind', 'width': 90},
+    {'field': 'Date', 'width': 96},
+    {'field': 'Ticker', 'width': 64},
+    {'field': 'Side', 'width': 60},
+    {'field': 'Shares', 'width': 100, 'type': 'rightAligned',
+     'valueFormatter': {'function': 'd3.format(",.1f")(params.value)'}},
+    {'field': 'Price', 'width': 80, 'type': 'rightAligned',
+     'valueFormatter': {'function': 'd3.format(",.2f")(params.value)'}},
+    {'field': 'Notional', 'width': 100, 'type': 'rightAligned',
+     'valueFormatter': {'function': 'd3.format(",.0f")(params.value)'}},
+    {'field': 'Cost', 'width': 80, 'type': 'rightAligned',
+     'valueFormatter': {'function': 'd3.format(",.2f")(params.value)'}},
+    {'field': 'Kind', 'width': 84},
 ]
 
 
@@ -46,25 +50,38 @@ TRADE_COLUMNS = [
 _MULTI_SELECT = {'mode': 'multiRow', 'checkboxes': True, 'headerCheckbox': True, 'enableClickSelection': True}
 
 
-def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = False) -> dag.AgGrid:
+def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = False, fixed: bool = False,
+          dense: bool = False) -> dag.AgGrid:
     """One AG Grid with the page's shared styling.
 
     A selectable grid sizes its columns to their contents rather than stretching them to the width
-    available, so a long signal name or a six-figure fill count is never cut short.
+    available, so a long signal name or a six-figure fill count is never cut short. `fixed` skips both
+    of those resize passes and uses each column's own `width` as given: for a column set whose content
+    shape is known ahead of time (a date, a ticker, a formatted number), that measures more reliably
+    than AG Grid's canvas-based autosize, which has been seen to under-measure a column's real
+    rendered width and truncate it. `dense` shrinks the row and header height so more rows fit the
+    same box.
     """
     options = {'theme': 'legacy'}   # without this the className theme below is ignored
     if selectable:
         options['rowSelection'] = _MULTI_SELECT
+    if dense:
+        options['rowHeight'] = 26
+        options['headerHeight'] = 28
+    grid_kwargs = {}
+    if selectable:
+        grid_kwargs['columnSize'] = 'autoSize'
+        grid_kwargs['columnSizeOptions'] = {'skipHeader': False}
+    elif not fixed:
+        grid_kwargs['columnSize'] = 'sizeToFit'
     return dag.AgGrid(
         id=grid_id, columnDefs=columns, rowData=[],
-        # minWidth is the floor under autoSize/sizeToFit: seen to under-size a column when
-        # browser zoom or DPI scaling changes rendered text width independently of the
-        # canvas autoSize measures with, which otherwise reads as truncated data
+        # minWidth is the floor under autoSize/sizeToFit: see `fixed` above for the case
+        # where a column's own width is used verbatim instead
         defaultColDef={'sortable': True, 'resizable': True, 'minWidth': 70},
         dashGridOptions=options,
-        columnSize='autoSize' if selectable else 'sizeToFit',
-        columnSizeOptions={'skipHeader': False},
         style={'height': height}, className='ag-theme-alpine-dark',
+        **grid_kwargs,
     )
 
 
@@ -171,7 +188,7 @@ def layout() -> html.Div:
         html.Div(id='bt-caveats', style={'marginBottom': '8px'}),
         dcc.Graph(id='bt-curve', config={'displayModeBar': False}, style={'height': '380px'}),
         dmc.Text('Fills', fw=600, size='sm', mt=8, mb=4),
-        _grid('bt-trades', TRADE_COLUMNS, 240),
+        _grid('bt-trades', TRADE_COLUMNS, 360, fixed=True, dense=True),
     ])
 
     factors_panel = html.Div([

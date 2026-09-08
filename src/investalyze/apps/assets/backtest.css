@@ -1,0 +1,7 @@
+/* the fills grid's default cell padding (17px each side) reads as dead space between
+   narrow columns like Side or Kind; tighten it so a column's width tracks its content. */
+[id="bt-trades"] .ag-cell,
+[id="bt-trades"] .ag-header-cell {
+    padding-left: 6px;
+    padding-right: 6px;
+}
