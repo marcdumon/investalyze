@@ -162,7 +162,7 @@ def test_evaluating_the_same_factor_on_two_universes_keeps_both():
     writer.ensure_tables(con)
     for universe in ('all', 'sp500'):
         writer.replace_evaluation(con, 'as_reported', universe, 'roe',
-                                  _ic_rows(universe), _quantile_rows(universe))
+                                  _ic_rows(universe), _quantile_rows(universe), DATES[0], DATES[0])
     stored = con.execute('SELECT Universe FROM factor_ic ORDER BY Universe').fetchall()
     assert stored == [('all',), ('sp500',)]
 
@@ -174,10 +174,11 @@ def test_re_evaluating_one_universe_replaces_only_its_own_rows():
     writer.ensure_tables(con)
     for universe in ('all', 'sp500'):
         writer.replace_evaluation(con, 'as_reported', universe, 'roe',
-                                  _ic_rows(universe), _quantile_rows(universe))
+                                  _ic_rows(universe), _quantile_rows(universe), DATES[0], DATES[0])
     again = _ic_rows('sp500')
     again['Ic'] = 0.99
-    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', again, _quantile_rows('sp500'))
+    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', again, _quantile_rows('sp500'),
+                              DATES[0], DATES[0])
     stored = dict(con.execute('SELECT Universe, Ic FROM factor_ic').fetchall())
     assert stored == {'all': 0.05, 'sp500': 0.99}
 
@@ -197,6 +198,7 @@ def test_a_table_written_before_the_universe_column_gains_it_without_losing_its_
     writer.ensure_tables(con)
 
     assert con.execute('SELECT Universe FROM factor_ic').fetchall() == [(writer.UNRECORDED_UNIVERSE,)]
-    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', _ic_rows('sp500'), _quantile_rows('sp500'))
+    writer.replace_evaluation(con, 'as_reported', 'sp500', 'roe', _ic_rows('sp500'), _quantile_rows('sp500'),
+                              DATES[0], DATES[0])
     landed = con.execute("SELECT Factor, Ic, NNames FROM factor_ic WHERE Universe = 'sp500'").fetchone()
     assert landed == ('roe', 0.05, 100)

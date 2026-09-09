@@ -484,14 +484,27 @@ python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 
 
 ### Reading a factor evaluation
 
-Button 2 scores every factor against forward returns and stores the result under the universe it
-ran on, so evaluating on the S&P 500 and then on everything leaves two readings rather than one
-overwriting the other. The picker on the Factors tab chooses which to read; leaving it blank pools
-them all, which is only meaningful when there is one.
+Button 2 scores every factor against forward returns and stores the result under the version,
+universe, horizon and period it ran over, so evaluating on the S&P 500 and then on everything
+leaves two readings rather than one overwriting the other, and so does evaluating the same scope a
+second time over a different date range or `--horizon`. The period stored is the range the panel
+actually had rows for, which can differ from what `--start`/`--end` asked for.
+
+Two pickers on the Factors tab choose what to read: universe, and period. The period picker
+defaults to the newest one stored; clearing it pools every period of that scope together, which is
+worth doing deliberately rather than by default, since two periods that do not even cover the same
+names being averaged into one row says less than either alone. A factor with no dates paired with a
+forward return over the chosen range (too few names, or every value missing) is skipped rather than
+stored; the evaluate log says so per factor.
 
 **IC horizon** is how far forward that scoring looks, in trading sessions: 21 asks "did this factor
 predict the next month," 63 asks about the next quarter. The exact formula behind IC and Mean IC is
 in [`docs/backtest_metrics.md`](backtest_metrics.md#factor-evaluation).
+
+The **IC 5d/21d/63d/126d** columns are the same measurement at four fixed horizons regardless of
+the one Evaluate factors was run at, computed and stored automatically on every run. They answer how
+quickly a factor's edge decays, which is the question behind choosing a **Rebalance** frequency: a
+factor whose IC peaks at 21 days is an argument against rebalancing weekly.
 
 Two figures are stored per score bucket: the mean forward return and the median. They part company
 badly on an unfiltered universe, where a handful of sub-dollar names carry a bucket's mean far from
@@ -502,9 +515,11 @@ you want the mean to mean anything. The Mean IC and t columns are rank-based and
 
 ### Throwing an evaluation away
 
-Re-running Evaluate replaces every factor for that version and universe, so a scope is rebuilt by
-running it again. Removing one is the Factors tab: pick the universe, press **Delete evaluation**.
-The confirmation names what goes:
+Re-running Evaluate replaces the horizon and period it ran over for that version and universe,
+leaving every other stored period of that same scope untouched. Deleting is coarser: it clears a
+whole version-and-universe scope, every period and horizon it holds, not one period at a time.
+Removing one is the Factors tab: pick the universe, press **Delete evaluation**. The confirmation
+names what goes:
 
 ```
 Delete the as reported evaluation stored under unrecorded?
@@ -615,6 +630,7 @@ and a test fails when a table exists in the database without a line here.
 | `factor_panel_builds` | One row per build of the factor panel: what was asked for, how long it took, and a fingerprint of the factor formulas in force, which is how a redefined factor is noticed. | `python -m investalyze.backtest factors` |
 | `factor_ic` | Information coefficient per date: the rank correlation between a factor and the return that followed it. Averaged, this is the Mean IC column on the Factors tab. | `python -m investalyze.backtest evaluate` |
 | `factor_quantiles` | Forward return of each score bucket per date, as a mean and as a median. The two part company on a universe that was never filtered for price. | `python -m investalyze.backtest evaluate` |
+| `factor_ic_decay` | Mean IC and its t-statistic at a fixed set of forward horizons, one row per horizon: how quickly a factor loses its edge, shown as the Factors tab's IC 5d/21d/63d/126d columns. | `python -m investalyze.backtest evaluate` |
 | `backtest_runs` | One row per stored run: the settings behind it and its headline statistics. | `python -m investalyze.backtest run` |
 | `backtest_equity` | A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it. | `python -m investalyze.backtest run` |
 | `backtest_trades` | Every fill a stored run made, with the price it paid and what the trade cost. | `python -m investalyze.backtest run` |

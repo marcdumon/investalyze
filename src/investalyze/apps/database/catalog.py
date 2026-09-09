@@ -133,6 +133,13 @@ TABLES: dict[str, Table] = {
         'company on a universe that was never filtered for price.',
         'python -m investalyze.backtest evaluate',
         'Version, Universe, Factor, Date, Horizon, Quantile'),
+    'factor_ic_decay': Table(
+        BACKTEST,
+        'Mean IC and its t-statistic at each of a fixed set of forward horizons, one row per horizon: '
+        "how quickly a factor loses its edge, which is what the Factors tab's IC 5d/21d/63d/126d "
+        'columns show.',
+        'python -m investalyze.backtest evaluate',
+        'Version, Universe, Factor, StartDate, EndDate, Horizon'),
     'backtest_runs': Table(
         BACKTEST,
         'One row per stored run: the settings behind it and its headline statistics.',

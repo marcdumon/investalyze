@@ -122,8 +122,39 @@ def get_evaluation_scopes(version: str | None = None) -> list[dict]:
     return scopes
 
 
-def get_factor_ic(version: str = 'as_reported', universe: str | None = None) -> pd.DataFrame:
-    """Mean information coefficient and its t-statistic per factor and horizon, for one universe."""
+def get_evaluation_periods(version: str = 'as_reported', universe: str | None = None) -> list[dict]:
+    """Every distinct period stored for a version and universe, newest first.
+
+    Feeds the Factors tab's period picker: a version and universe can hold more than one evaluation
+    once they were scored over different date ranges, and this is how one is chosen to read. A period
+    can still hold more than one horizon; the Horizon column on the grid is what tells those apart.
+    """
+    con = _connect()
+    try:
+        if not storage.table_exists(con, 'factor_ic') or not _has_column(con, 'factor_ic', 'StartDate'):
+            return []
+        clauses = ['Version = ?']
+        params: list = [version]
+        if universe and _has_column(con, 'factor_ic', 'Universe'):
+            clauses.append('Universe = ?')
+            params.append(universe)
+        rows = con.execute(f"""
+            SELECT DISTINCT StartDate::VARCHAR AS start, EndDate::VARCHAR AS end
+            FROM factor_ic WHERE {' AND '.join(clauses)} AND StartDate IS NOT NULL
+            ORDER BY StartDate DESC, EndDate DESC
+        """, params).df()
+    finally:
+        con.close()
+    return rows.to_dict('records')
+
+
+def get_factor_ic(version: str = 'as_reported', universe: str | None = None,
+                  start_date: str | None = None, end_date: str | None = None) -> pd.DataFrame:
+    """Mean information coefficient and its t-statistic per factor and horizon, for one universe and period.
+
+    Leaving the period out pools every stored evaluation of this version and universe together, which
+    is how a scope evaluated only once still reads without asking the caller to name a period.
+    """
     con = _connect()
     try:
         if not storage.table_exists(con, 'factor_ic'):
@@ -133,11 +164,45 @@ def get_factor_ic(version: str = 'as_reported', universe: str | None = None) -> 
         if universe and _has_column(con, 'factor_ic', 'Universe'):
             clauses.append('Universe = ?')
             params.append(universe)
+        if start_date and end_date and _has_column(con, 'factor_ic', 'StartDate'):
+            clauses.append('StartDate = ? AND EndDate = ?')
+            params += [start_date, end_date]
         return con.execute(f"""
             SELECT Factor, Horizon, count(*) AS Periods, avg(Ic) AS MeanIc, stddev_samp(Ic) AS StdIc,
                    avg(CASE WHEN Ic > 0 THEN 1.0 ELSE 0.0 END) AS HitRate, avg(NNames) AS MeanNames
             FROM factor_ic WHERE {' AND '.join(clauses)}
             GROUP BY Factor, Horizon ORDER BY Factor, Horizon
+        """, params).df()
+    finally:
+        con.close()
+
+
+def get_ic_decay(version: str = 'as_reported', universe: str | None = None,
+                 start_date: str | None = None, end_date: str | None = None) -> pd.DataFrame:
+    """Mean IC at each stored decay horizon, one row per factor, for one universe and period.
+
+    Wide rather than long: the Factors grid joins this onto its per-factor rows, one column per
+    horizon in `writer.DECAY_HORIZONS`, so a factor with no decay stored yet just reads blank there.
+    """
+    con = _connect()
+    try:
+        if not storage.table_exists(con, 'factor_ic_decay'):
+            return pd.DataFrame()
+        clauses = ['Version = ?']
+        params: list = [version]
+        if universe:
+            clauses.append('Universe = ?')
+            params.append(universe)
+        if start_date and end_date:
+            clauses.append('StartDate = ? AND EndDate = ?')
+            params += [start_date, end_date]
+        columns = ',\n                   '.join(
+            f'max(CASE WHEN Horizon = {horizon} THEN MeanIc END) AS "Ic{horizon}d"'
+            for horizon in writer.DECAY_HORIZONS)
+        return con.execute(f"""
+            SELECT Factor, {columns}
+            FROM factor_ic_decay WHERE {' AND '.join(clauses)}
+            GROUP BY Factor
         """, params).df()
     finally:
         con.close()

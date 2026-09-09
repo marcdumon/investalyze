@@ -242,6 +242,10 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
         counts = evaluation.names_per_date(scores, forwards)
         quantiles = evaluation.quantile_frame(scores, forwards)
 
+        if ic.empty:
+            log.info(f'{factor:<18} no dates paired with a forward return over this range; skipped')
+            continue
+
         ic_rows = pd.DataFrame({'Version': args.version, 'Universe': universe, 'Factor': factor,
                                 'Date': ic.index, 'Horizon': horizon, 'Ic': ic.to_numpy(),
                                 'NNames': counts.to_numpy()})
@@ -249,7 +253,9 @@ def _evaluate(con, args: argparse.Namespace, run_cfg: backtest_config.Config) ->
                                          Horizon=horizon)
         quantile_rows = quantile_rows[writer.QUANTILE_COLS]
         writer.replace_evaluation(con, args.version, universe, factor, ic_rows[writer.IC_COLS],
-                                  quantile_rows)
+                                  quantile_rows, first.date(), last.date())
+        decay = evaluation.ic_decay(scores, closes, horizons=writer.DECAY_HORIZONS)
+        writer.replace_ic_decay(con, args.version, universe, factor, first.date(), last.date(), decay)
 
         summary = evaluation.ic_summary(ic)
         spread = evaluation.quantile_spread(evaluation.quantile_returns(scores, forwards))

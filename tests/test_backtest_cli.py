@@ -9,6 +9,7 @@ import argparse
 from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -266,6 +267,30 @@ def test_an_evaluation_builds_only_when_the_flag_is_set(monkeypatch):
     assert len(called) == 1
 
 
+def test_evaluate_skips_a_factor_with_no_valid_dates(monkeypatch):
+    """A factor entirely NaN over the requested names pairs with nothing; evaluate skips it rather
+
+    than crashing trying to derive a period from zero rows.
+    """
+    dates = pd.to_datetime(['2020-01-31', '2020-02-29'])
+    panel = pd.DataFrame({'Ticker': ['AAA', 'BBB', 'AAA', 'BBB'],
+                          'Date': [dates[0], dates[0], dates[1], dates[1]],
+                          'roe': [np.nan, np.nan, np.nan, np.nan]})
+    closes = pd.DataFrame({'AAA': [10.0, 11.0], 'BBB': [20.0, 21.0]}, index=dates)
+    monkeypatch.setattr(cli, '_read_factor_panel', lambda con, args: panel)
+    monkeypatch.setattr(cli.storage, 'table_exists', lambda con, table: True)
+    monkeypatch.setattr(cli, '_resolve_universe', lambda args, cfg: None)
+    monkeypatch.setattr(cli.panels, 'trading_calendar', lambda con, start, end: dates)
+    monkeypatch.setattr(cli.panels, 'close_panel', lambda con, tickers, calendar, **kwargs: closes)
+    written = []
+    monkeypatch.setattr(cli.writer, 'replace_evaluation', lambda *a, **k: written.append(a))
+    monkeypatch.setattr(cli.writer, 'replace_ic_decay', lambda *a, **k: written.append(a))
+
+    cli._evaluate(None, _args(command='evaluate', factor='roe'), backtest_config.read())
+
+    assert written == []
+
+
 def test_deleting_an_evaluation_without_a_universe_is_refused():
     with pytest.raises(SystemExit, match='delete-evaluation needs --universe'):
         cli._delete_evaluation(None, _args(command='delete-evaluation'), backtest_config.read())
@@ -287,7 +312,8 @@ def test_deleting_an_evaluation_leaves_the_other_universes_alone():
                               'Date': pd.Timestamp('2020-01-31'), 'Horizon': 21, 'Ic': 0.1,
                               'NNames': 50}])
         writer.replace_evaluation(con, 'as_reported', universe, 'roe', rows,
-                                  pd.DataFrame(columns=writer.QUANTILE_COLS))
+                                  pd.DataFrame(columns=writer.QUANTILE_COLS),
+                                  pd.Timestamp('2020-01-31'), pd.Timestamp('2020-01-31'))
 
     cli._delete_evaluation(con, _args(command='delete-evaluation', universe='unrecorded'),
                            backtest_config.read())

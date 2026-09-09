@@ -55,6 +55,20 @@ def test_orienting_an_empty_table_returns_it_unchanged():
     assert logic.orient_ic(pd.DataFrame()).empty
 
 
+def test_orienting_flips_a_joined_decay_column_the_same_way():
+    table = _ic_table()
+    table['Ic5d'] = [0.03, -0.03, -0.02]   # same sign convention as the raw MeanIc column
+    oriented = logic.orient_ic(table).set_index('Factor')
+    assert oriented.loc['roe', 'Ic5d'] == pytest.approx(0.03)
+    assert oriented.loc['vol_252', 'Ic5d'] == pytest.approx(0.03)   # raw -0.03, lower is better
+    assert oriented.loc['accruals', 'Ic5d'] == pytest.approx(0.02)
+
+
+def test_orienting_adds_no_decay_column_when_none_was_joined():
+    oriented = logic.orient_ic(_ic_table())
+    assert 'Ic5d' not in oriented.columns
+
+
 # --- curve shaping ---
 
 def test_rebasing_starts_every_named_column_at_one_hundred():

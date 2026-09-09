@@ -53,37 +53,26 @@ key expired or rotated rather than the request being wrong.
 Fundamentals cannot be refreshed until it is replaced. The stored zips are from July, so nothing has
 broken yet, only stopped moving.
 
-## 3. Evaluations are not keyed by the period they cover
+## 3. Old evaluations have their periods fragmented, one per factor's warm-up boundary
 
-`factor_ic` and `factor_quantiles` are keyed by version, universe and factor. Evaluate 2000 to 2010,
-then 2015 alone, and the second silently replaces the first: verified. The Factors tab shows a
-smaller period count with nothing saying why.
+**Fixed 2026-09-09** for evaluations run from now on: `factor_ic`, `factor_quantiles` and the new
+`factor_ic_decay` are keyed by version, universe, factor, horizon and period, and the Factors tab
+carries a period picker (defaulting to the newest, poolable by clearing it).
 
-Universes sit side by side correctly; periods do not. Doing it means adding the range to the key and
-a period picker on the Factors tab, which is why it has not been done casually.
+What is still open: every evaluation stored before that date has its period backfilled from its own
+rows, and different factors within the same historical evaluate run often cover slightly different
+date ranges (a growth ratio needing warm-up data starts later than the rest). That reads today as
+several near-duplicate periods per old scope instead of one. Verified on `all`: the blank-universe
+picker lists nine periods from 2001 to 2026 for what was really a handful of evaluate runs.
 
-## 4. Factor IC decay is computed but never shown
+What "done" looks like: re-running `evaluate` over each affected scope's original range, which
+consolidates it back to one period per run, the way a fresh evaluation already does. The heaviest is
+`all`, a long run over the full universe, not something to do casually.
 
-`evaluation.ic_decay` exists and nothing on the page calls it. It is the measurement that says what
-rebalance frequency a factor deserves, and answering that question currently means writing a script.
+## 4. `delete-evaluation` still clears a whole version-and-universe scope
 
-Measured by hand on the top 100 liquid names, 2020 to 2024, mean IC by horizon:
-
-| factor | 5d | 21d | 63d | 126d |
-|---|---|---|---|---|
-| ret_12_1 | +0.019 | **+0.040** | +0.032 | +0.015 |
-| earnings_yield | -0.046 | -0.028 | **-0.068** | -0.066 |
-
-`ret_12_1` peaking at 21 days is the argument against rebalancing weekly, and it belongs on screen
-next to the Rebalance field rather than in a chat log.
-
-## 5. The Screener and the factor panel compute factors separately
-
-The Screener computes factors live from `analysis/factors.py`; a backtest reads them from
-`factor_panel`. The values differ slightly, because one is a snapshot and the other is
-point-in-time. Nobody has reconciled them, and a reader comparing a Screener column against a
-backtest factor will find numbers that do not match.
-
-Deliberately not converged: making the Screener read `factor_panel` would give a live page a hard
-dependency on a table that must be built first, which is a regression in robustness for a page that
-currently always works.
+`replace_evaluation` now keys a re-run by period and horizon, so a scope can hold several readings
+side by side. `delete-evaluation` did not follow: it still removes every period and horizon a scope
+holds in one action, which is a coarser tool than the picker that reads them apart. Not urgent, and
+not decided: whether deleting should narrow to the period showing on the Factors tab, or stay
+scope-wide, is a design question nobody has picked up yet.

@@ -2,9 +2,10 @@
 
 Each run owns its rows wholesale, so writing replaces them by `RunId` (delete-then-insert), keeping
 re-runs idempotent even when a re-run covers a shorter date range than the one before it. Evaluation
-rows work the same way, keyed by version, universe and factor, so evaluating the same factor over a
-different set of names sits alongside the earlier reading rather than replacing it. `factor_panel` is
-the exception: it is update-shaped, so `ingest.storage.store` merge-upserts it.
+rows work the same way, keyed by version, universe, factor, horizon and period, so evaluating the same
+factor over a different universe, horizon or date range sits alongside the earlier reading rather than
+replacing it, while evaluating the same one again is what replaces it. `factor_panel` is the exception:
+it is update-shaped, so `ingest.storage.store` merge-upserts it.
 """
 
 import hashlib
@@ -116,17 +117,38 @@ _DDL = [
         NNames       BIGINT NOT NULL
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS factor_ic_decay (
+        Version   VARCHAR NOT NULL,
+        Universe  VARCHAR NOT NULL,
+        Factor    VARCHAR NOT NULL,
+        StartDate DATE NOT NULL,
+        EndDate   DATE NOT NULL,
+        Horizon   BIGINT NOT NULL,
+        MeanIc    DOUBLE,
+        TStat     DOUBLE,
+        NPeriods  BIGINT NOT NULL
+    )
+    """,
 ]
+
+DECAY_HORIZONS = (5, 21, 63, 126)  # the rebalance-relevant horizons the backlog's own analysis used
+DECAY_COLS = ['Version', 'Universe', 'Factor', 'StartDate', 'EndDate', 'Horizon', 'MeanIc', 'TStat', 'NPeriods']
 
 
 # columns added after the tables were first written. Rows already there are labelled
 # unrecorded rather than all: what they were measured over was never stored.
 _ADDED_COLUMNS = {
-    'factor_ic': [('Universe', f"VARCHAR DEFAULT '{UNRECORDED_UNIVERSE}'")],
+    'factor_ic': [('Universe', f"VARCHAR DEFAULT '{UNRECORDED_UNIVERSE}'"),
+                 ('StartDate', 'DATE'), ('EndDate', 'DATE')],
     'factor_quantiles': [('Universe', f"VARCHAR DEFAULT '{UNRECORDED_UNIVERSE}'"),
-                         ('MedianReturn', 'DOUBLE')],
+                         ('MedianReturn', 'DOUBLE'), ('StartDate', 'DATE'), ('EndDate', 'DATE')],
     'factor_panel_builds': [('Seconds', 'DOUBLE'), ('Definitions', 'VARCHAR')],
 }
+
+# tables whose StartDate/EndDate a row written before those columns existed can recover from
+# its own Date column: the period a reading covered was always implied by which dates it has
+_PERIOD_BACKFILL_TABLES = ('factor_ic', 'factor_quantiles')
 
 # columns a table used to carry that no longer belong: an older database still has them
 _DROPPED_COLUMNS = {
@@ -167,6 +189,14 @@ def ensure_tables(con: duckdb.DuckDBPyConnection) -> None:
         for column in columns:
             if column in existing:
                 con.execute(f'ALTER TABLE {table} DROP COLUMN {column}')
+    for table in _PERIOD_BACKFILL_TABLES:
+        con.execute(f"""
+            UPDATE {table} t SET StartDate = g.min_date, EndDate = g.max_date
+            FROM (SELECT Version, Universe, Factor, Horizon, min(Date) AS min_date, max(Date) AS max_date
+                  FROM {table} GROUP BY Version, Universe, Factor, Horizon) g
+            WHERE t.Version = g.Version AND t.Universe = g.Universe AND t.Factor = g.Factor
+              AND t.Horizon = g.Horizon AND t.StartDate IS NULL
+        """)
 
 
 def run_id(cfg: dict) -> str:
@@ -271,9 +301,38 @@ def delete_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: st
     return removed
 
 
+_STORED_IC_COLS = IC_COLS + ['StartDate', 'EndDate']
+_STORED_QUANTILE_COLS = QUANTILE_COLS + ['StartDate', 'EndDate']
+
+
 def replace_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: str, factor: str,
-                       ic: pd.DataFrame, quantiles: pd.DataFrame) -> int:
-    """Replace one factor's IC and quantile rows for a version and universe, returning the IC row count."""
-    where, params = 'Version = ? AND Universe = ? AND Factor = ?', [version, universe, factor]
-    _replace(con, 'factor_quantiles', QUANTILE_COLS, quantiles, where, params)
-    return _replace(con, 'factor_ic', IC_COLS, ic, where, params)
+                       ic: pd.DataFrame, quantiles: pd.DataFrame, start, end) -> int:
+    """Replace one factor's IC and quantile rows for a version, universe, horizon and period.
+
+    `start` and `end` are what the whole evaluate run covered, not derived from this factor's own
+    rows: a factor needing warm-up data reads over a narrower span than the rest of the run, and
+    stamping from its own rows would fragment one run into several near-duplicate periods instead of
+    the one it actually was.
+    """
+    horizon = int(ic['Horizon'].iloc[0])
+    stamped_ic = ic.assign(StartDate=start, EndDate=end)[_STORED_IC_COLS]
+    stamped_quantiles = quantiles.assign(StartDate=start, EndDate=end)[_STORED_QUANTILE_COLS]
+    where = 'Version = ? AND Universe = ? AND Factor = ? AND Horizon = ? AND StartDate = ? AND EndDate = ?'
+    params = [version, universe, factor, horizon, start, end]
+    _replace(con, 'factor_quantiles', _STORED_QUANTILE_COLS, stamped_quantiles, where, params)
+    return _replace(con, 'factor_ic', _STORED_IC_COLS, stamped_ic, where, params)
+
+
+def replace_ic_decay(con: duckdb.DuckDBPyConnection, version: str, universe: str, factor: str,
+                     start, end, decay: pd.DataFrame) -> int:
+    """Replace one factor's IC-decay row set for a version, universe and period.
+
+    `decay` is `evaluation.ic_decay`'s own frame (`horizon, mean_ic, t_stat, n_periods`), one row per
+    horizon it was asked for; the period is not read off `decay` itself, since it carries no dates, so
+    the caller passes the same start and end the headline evaluation for this run was stamped with.
+    """
+    stamped = decay.rename(columns={'horizon': 'Horizon', 'mean_ic': 'MeanIc', 't_stat': 'TStat',
+                                    'n_periods': 'NPeriods'}).assign(
+        Version=version, Universe=universe, Factor=factor, StartDate=start, EndDate=end)[DECAY_COLS]
+    where = 'Version = ? AND Universe = ? AND Factor = ? AND StartDate = ? AND EndDate = ?'
+    return _replace(con, 'factor_ic_decay', DECAY_COLS, stamped, where, [version, universe, factor, start, end])

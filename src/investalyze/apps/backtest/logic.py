@@ -34,6 +34,12 @@ RUN_COLUMNS = [
     {'field': 'RunId', 'headerName': 'Run id', 'minWidth': 130},
 ]
 
+DECAY_COLUMNS = [
+    {'field': f'Ic{horizon}d', 'headerName': f'IC {horizon}d', 'width': 100,
+     'valueFormatter': {'function': 'd3.format("+.4f")(params.value)'}}
+    for horizon in (5, 21, 63, 126)
+]
+
 FACTOR_COLUMNS = [
     {'field': 'Factor', 'headerName': 'Factor', 'width': 170},
     {'field': 'Horizon', 'headerName': 'Horizon', 'width': 100},
@@ -43,7 +49,7 @@ FACTOR_COLUMNS = [
     {'field': 'TStat', 'headerName': 't', 'width': 90, 'valueFormatter': {'function': 'd3.format("+.2f")(params.value)'}},
     {'field': 'HitRate', 'headerName': 'Hit rate', 'width': 100, 'valueFormatter': {'function': 'd3.format(".0%")(params.value)'}},
     {'field': 'Periods', 'headerName': 'Periods', 'width': 100},
-]
+] + DECAY_COLUMNS
 
 
 def orient_ic(table: pd.DataFrame) -> pd.DataFrame:
@@ -51,7 +57,8 @@ def orient_ic(table: pd.DataFrame) -> pd.DataFrame:
 
     The stored coefficient is on raw factor values, where a negative reading is the expected one for
     a factor whose lower values are the better ones. Flipping those makes one column comparable
-    across the whole library.
+    across the whole library. Any decay column already joined on (`Ic5d`, `Ic21d`, ...) is oriented
+    the same way, so a row's IC-by-horizon reads on the same scale as its headline Oriented IC.
     """
     if table.empty:
         return table
@@ -60,6 +67,10 @@ def orient_ic(table: pd.DataFrame) -> pd.DataFrame:
     out['OrientedIc'] = out['MeanIc'] * orientation
     standard_error = out['StdIc'] / np.sqrt(out['Periods'].clip(lower=1))
     out['TStat'] = (out['OrientedIc'] / standard_error).replace([np.inf, -np.inf], np.nan)
+    for column in DECAY_COLUMNS:
+        field = column['field']
+        if field in out.columns:
+            out[field] = out[field] * orientation
     return out.sort_values('TStat', ascending=False, ignore_index=True)
 
 

@@ -195,6 +195,8 @@ def layout() -> html.Div:
         dmc.Group([
             dmc.Text('Factor evaluation', fw=600, size='sm'),
             dmc.Group([
+                dmc.Select(id='bt-factors-period', label=None, placeholder='every period', data=[],
+                           clearable=True, size='xs', w=220),
                 dmc.Select(id='bt-factors-universe', label=None, placeholder='every universe', data=[],
                            clearable=True, searchable=True, size='xs', w=280),
                 dmc.Button('Delete evaluation', id='bt-btn-delete-evaluation', size='xs', color='red',
@@ -202,9 +204,12 @@ def layout() -> html.Div:
             ], gap='xs'),
         ], justify='space-between', mb=4),
         dmc.Text('IC is measured on raw values; the oriented column flips the factors whose lower '
-                 'values are the better ones, so the column ranks the library on one scale. Each '
-                 'evaluation belongs to a version and a universe together, so this reads the '
-                 "version chosen on the research card above and the universe picked here.",
+                 'values are the better ones, so the column ranks the library on one scale. The '
+                 'IC 5d/21d/63d/126d columns say how quickly a factor loses its edge, which horizon '
+                 'a rebalance frequency should be picked around. Each evaluation belongs to a '
+                 'version and a universe together, so this reads the version chosen on the research '
+                 'card above and the universe picked here. Leaving the period blank pools every '
+                 'period stored for this scope together.',
                  size='xs', c='dimmed', mb=6),
         html.Div(id='bt-factors-notice'),
         _grid('bt-factors', logic.FACTOR_COLUMNS, 420),
@@ -259,17 +264,40 @@ def load_runs(_tick):
     return runs.to_dict('records'), None
 
 
-@callback(Output('bt-factors', 'rowData'), Output('bt-factors-notice', 'children'),
+@callback(Output('bt-factors-period', 'data'), Output('bt-factors-period', 'value'),
           Input('bt-runs-tick', 'data'), Input('bt-factors-universe', 'value'),
           Input('bt-res-version', 'value'))
-def load_factors(_tick, universe, version):
-    """Fill the factor evaluation table for the chosen universe on the research card's version.
+def load_evaluation_periods(_tick, universe, version):
+    """Offer the periods a stored evaluation covers, defaulting to the newest.
 
-    A stored evaluation belongs to a version and a universe together, so reading one without the
-    other pools two measurements of different things into one table.
+    Pooling every period by default would average readings that may not even overlap in the names
+    they cover; the newest period is the one a reader most likely means, and every other period
+    stays one click away rather than silently blended into it.
     """
     try:
-        table = logic.orient_ic(data.get_factor_ic(version or 'as_reported', universe))
+        periods = data.get_evaluation_periods(version or 'as_reported', universe)
+    except duckdb.IOException:
+        return [], None
+    options = [{'value': f"{p['start']}|{p['end']}", 'label': f"{p['start']} to {p['end']}"} for p in periods]
+    return options, options[0]['value'] if options else None
+
+
+@callback(Output('bt-factors', 'rowData'), Output('bt-factors-notice', 'children'),
+          Input('bt-runs-tick', 'data'), Input('bt-factors-universe', 'value'),
+          Input('bt-res-version', 'value'), Input('bt-factors-period', 'value'))
+def load_factors(_tick, universe, version, period):
+    """Fill the factor evaluation table for the chosen universe, version and period.
+
+    A stored evaluation belongs to a version and a universe together, so reading one without the
+    other pools two measurements of different things into one table. Leaving the period blank pools
+    every period stored for that scope, which is the only choice once just one has ever been stored.
+    """
+    start_date, end_date = period.split('|') if period else (None, None)
+    version = version or 'as_reported'
+    try:
+        ic = data.get_factor_ic(version, universe, start_date, end_date)
+        decay = data.get_ic_decay(version, universe, start_date, end_date)
+        table = logic.orient_ic(ic.merge(decay, on='Factor', how='left') if not decay.empty else ic)
     except duckdb.IOException:
         return [], _note(BUSY)
     if table.empty:
