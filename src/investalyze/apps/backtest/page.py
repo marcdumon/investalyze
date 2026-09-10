@@ -326,17 +326,29 @@ def toggle_delete_evaluation(universe):
           Output('bt-pending-delete', 'data', allow_duplicate=True),
           Input('bt-btn-delete-evaluation', 'n_clicks'),
           State('bt-factors-universe', 'value'), State('bt-res-version', 'value'),
+          State('bt-factors-period', 'value'),
           prevent_initial_call=True)
-def ask_delete_evaluation(_n, universe, version):
-    """Name the evaluation and what it holds, since deleting it means scoring it all again."""
+def ask_delete_evaluation(_n, universe, version, period):
+    """Name the evaluation and what it holds, since deleting it means scoring it all again.
+
+    The period picked on the Factors tab is what the delete narrows to; leaving it blank, the same
+    'every period' pooling `load_factors` reads, deletes the whole version-and-universe scope.
+    """
     if not universe:
         raise PreventUpdate
     version = version or 'as_reported'
-    scopes = [scope for scope in data.get_evaluation_scopes(version) if scope['universe'] == universe]
+    start, end = period.split('|') if period else (None, None)
+    scopes = data.get_evaluation_scopes(version, universe, start, end)
     if not scopes:
         raise PreventUpdate
-    return True, logic.delete_evaluation_prompt(scopes[0]), {'kind': 'evaluation', 'version': version,
-                                                             'universe': universe}
+    scope = scopes[0]
+    pending = {'kind': 'evaluation', 'version': version, 'universe': universe}
+    if start and end:
+        # the picker's stamped period, not scope['first']/['last']: a factor with a warm-up
+        # lag reads over a narrower span than the run it belongs to, so the two can differ
+        scope = scope | {'first': start, 'last': end}
+        pending['start'], pending['end'] = start, end
+    return True, logic.delete_evaluation_prompt(scope, narrowed=bool(start and end)), pending
 
 
 @callback(Output('bt-curve', 'figure'), Output('bt-trades', 'rowData'), Output('bt-caveats', 'children'),
@@ -587,7 +599,8 @@ def resolve_delete(yes_clicks, _no, pending):
         if pending['kind'] == 'runs':
             MANAGER.start(*logic.delete_argv(pending['ids']))
         else:
-            MANAGER.start(*logic.delete_evaluation_argv(pending['version'], pending['universe']))
+            MANAGER.start(*logic.delete_evaluation_argv(pending['version'], pending['universe'],
+                                                        pending.get('start'), pending.get('end')))
     return False, None
 
 dash.register_page(__name__, path='/backtest', name='Backtest', layout=layout)

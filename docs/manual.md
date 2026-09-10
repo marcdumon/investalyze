@@ -516,24 +516,31 @@ you want the mean to mean anything. The Mean IC and t columns are rank-based and
 ### Throwing an evaluation away
 
 Re-running Evaluate replaces the horizon and period it ran over for that version and universe,
-leaving every other stored period of that same scope untouched. Deleting is coarser: it clears a
-whole version-and-universe scope, every period and horizon it holds, not one period at a time.
-Removing one is the Factors tab: pick the universe, press **Delete evaluation**. The confirmation
-names what goes:
+leaving every other stored period of that same scope untouched. Deleting follows the period shown:
+on the Factors tab, pick the universe, pick a period (or leave it blank to mean every period), and
+press **Delete evaluation**. The confirmation names what goes:
 
 ```
-Delete the as reported evaluation stored under unrecorded?
+Delete this period of the as reported evaluation stored under solar_small_mid_large?
 
-  29 factors, 2000-01-31 to 2026-09-02
-  9,128 IC rows and 43,895 quantile rows
+  28 factors, 2020-01-03 to 2024-12-31
+  8,025 IC rows, 28,437 quantile rows and 112 decay rows
+
+Evaluate factors over the same universe and period rebuilds it.
 ```
 
-This is what clears a scope that should not be there any more, such as `unrecorded`, the label given
-to rows written before evaluations recorded the universe they covered.
+Leaving the period blank instead deletes the whole version-and-universe scope, every period and
+horizon it holds. That is what clears a scope that should not be there any more, such as a stale
+label from before evaluations recorded the universe they covered.
 
 ```bash
 python -m investalyze.backtest delete-evaluation --data-version as_reported --universe unrecorded
+python -m investalyze.backtest delete-evaluation --data-version as_reported --universe solar_small_mid_large \
+    --start 2020-01-03 --end 2024-12-31
 ```
+
+`--start`/`--end` match the period's exact stored bounds, the same `StartDate`/`EndDate` stamp the
+Factors tab's period picker offers, not a date range filter.
 
 
 ### Throwing runs away

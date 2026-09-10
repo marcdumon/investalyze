@@ -134,3 +134,44 @@ def test_replace_ic_decay_keeps_rows_from_a_different_period(con):
     writer.replace_ic_decay(con, 'as_reported', 'all', 'roe', JUN[0], JUN[1], _decay_rows((5,)))
     n = con.execute('SELECT count(*) FROM factor_ic_decay').fetchone()[0]
     assert n == 2
+
+
+# --- delete_evaluation ---
+
+def _seed_evaluation(con, universe: str, dates: list[date], horizon: int = 21) -> None:
+    ic = _ic_rows(dates, horizon).assign(Universe=universe)
+    quantiles = _quantile_rows(dates, horizon).assign(Universe=universe)
+    writer.replace_evaluation(con, 'as_reported', universe, 'roe', ic, quantiles, dates[0], dates[-1])
+    writer.replace_ic_decay(con, 'as_reported', universe, 'roe', dates[0], dates[-1], _decay_rows((5,)))
+
+
+def test_delete_evaluation_also_removes_ic_decay_rows(con):
+    _seed_evaluation(con, 'all', JAN)
+    removed = writer.delete_evaluation(con, 'as_reported', 'all')
+    assert removed['factor_ic_decay'] == 1
+    assert con.execute('SELECT count(*) FROM factor_ic_decay').fetchone()[0] == 0
+
+
+def test_delete_evaluation_without_a_period_removes_every_period(con):
+    _seed_evaluation(con, 'all', JAN)
+    _seed_evaluation(con, 'all', JUN)
+    removed = writer.delete_evaluation(con, 'as_reported', 'all')
+    assert removed == {'factor_ic': 4, 'factor_quantiles': 8, 'factor_ic_decay': 2}
+    assert con.execute('SELECT count(*) FROM factor_ic').fetchone()[0] == 0
+
+
+def test_delete_evaluation_with_a_period_leaves_other_periods_alone(con):
+    _seed_evaluation(con, 'all', JAN)
+    _seed_evaluation(con, 'all', JUN)
+    removed = writer.delete_evaluation(con, 'as_reported', 'all', JAN[0], JAN[1])
+    assert removed == {'factor_ic': 2, 'factor_quantiles': 4, 'factor_ic_decay': 1}
+    remaining = con.execute('SELECT DISTINCT StartDate FROM factor_ic').fetchall()
+    assert remaining == [(JUN[0],)]
+
+
+def test_delete_evaluation_with_a_period_leaves_other_universes_alone(con):
+    _seed_evaluation(con, 'all', JAN)
+    _seed_evaluation(con, 'unrecorded', JAN)
+    writer.delete_evaluation(con, 'as_reported', 'all', JAN[0], JAN[1])
+    remaining = {row[0] for row in con.execute('SELECT Universe FROM factor_ic').fetchall()}
+    assert remaining == {'unrecorded'}

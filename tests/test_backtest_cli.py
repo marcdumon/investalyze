@@ -6,6 +6,7 @@ command missing a required argument fails before it opens the database.
 """
 
 import argparse
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -304,6 +305,20 @@ def test_deleting_an_evaluation_that_was_never_stored_says_so():
                                backtest_config.read())
 
 
+def test_deleting_an_evaluation_for_an_unstored_period_names_the_period():
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    rows = pd.DataFrame([{'Version': 'as_reported', 'Universe': 'all', 'Factor': 'roe',
+                          'Date': pd.Timestamp('2020-01-31'), 'Horizon': 21, 'Ic': 0.1, 'NNames': 50}])
+    writer.replace_evaluation(con, 'as_reported', 'all', 'roe', rows,
+                              pd.DataFrame(columns=writer.QUANTILE_COLS),
+                              pd.Timestamp('2020-01-31'), pd.Timestamp('2020-01-31'))
+    with pytest.raises(SystemExit, match='no as_reported evaluation stored for all over 2020-06-30 to 2020-06-30'):
+        cli._delete_evaluation(con, _args(command='delete-evaluation', universe='all',
+                                          start='2020-06-30', end='2020-06-30'),
+                               backtest_config.read())
+
+
 def test_deleting_an_evaluation_leaves_the_other_universes_alone():
     con = duckdb.connect()
     writer.ensure_tables(con)
@@ -319,6 +334,29 @@ def test_deleting_an_evaluation_leaves_the_other_universes_alone():
                            backtest_config.read())
 
     assert con.execute('SELECT Universe FROM factor_ic').fetchall() == [('all',)]
+
+
+def test_deleting_an_evaluation_needs_both_start_and_end_or_neither():
+    with pytest.raises(SystemExit, match='needs both --start and --end'):
+        cli._delete_evaluation(None, _args(command='delete-evaluation', universe='all', start='2020-01-31'),
+                               backtest_config.read())
+
+
+def test_deleting_an_evaluation_with_a_period_leaves_other_periods_alone():
+    con = duckdb.connect()
+    writer.ensure_tables(con)
+    for start, end in (('2020-01-31', '2020-01-31'), ('2020-06-30', '2020-06-30')):
+        rows = pd.DataFrame([{'Version': 'as_reported', 'Universe': 'all', 'Factor': 'roe',
+                              'Date': pd.Timestamp(start), 'Horizon': 21, 'Ic': 0.1, 'NNames': 50}])
+        writer.replace_evaluation(con, 'as_reported', 'all', 'roe', rows,
+                                  pd.DataFrame(columns=writer.QUANTILE_COLS),
+                                  pd.Timestamp(start), pd.Timestamp(end))
+
+    cli._delete_evaluation(con, _args(command='delete-evaluation', universe='all',
+                                      start='2020-01-31', end='2020-01-31'),
+                           backtest_config.read())
+
+    assert con.execute('SELECT StartDate FROM factor_ic').fetchall() == [(date(2020, 6, 30),)]
 
 
 # --- building only what is not stored ---

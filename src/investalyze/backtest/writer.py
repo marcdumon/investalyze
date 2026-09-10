@@ -283,21 +283,27 @@ def delete_run(con: duckdb.DuckDBPyConnection, identifier: str) -> dict[str, int
     return removed
 
 
-EVALUATION_TABLES = ('factor_ic', 'factor_quantiles')
+EVALUATION_TABLES = ('factor_ic', 'factor_quantiles', 'factor_ic_decay')
 
 
-def delete_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: str) -> dict[str, int]:
+def delete_evaluation(con: duckdb.DuckDBPyConnection, version: str, universe: str,
+                      start=None, end=None) -> dict[str, int]:
     """Delete one version and universe's evaluation, returning how many rows went per table.
 
-    Re-running an evaluation replaces the factors it covers; this is how a scope stops existing,
-    which is what a universe that was renamed or never recorded needs.
+    Passing `start` and `end` narrows the delete to that period, leaving other periods and horizons
+    the scope holds untouched. Leaving them out removes every period and horizon the scope holds,
+    which is how a universe that was renamed or never recorded stops existing: re-running an
+    evaluation replaces the factors it covers, so nothing else deletes a scope down to nothing.
     """
+    clause = 'Version = ? AND Universe = ?'
+    params = [version, universe]
+    if start and end:
+        clause += ' AND StartDate = ? AND EndDate = ?'
+        params += [start, end]
     removed = {}
     for table in EVALUATION_TABLES:
-        removed[table] = con.execute(
-            f'SELECT count(*) FROM {table} WHERE Version = ? AND Universe = ?',
-            [version, universe]).fetchone()[0]
-        con.execute(f'DELETE FROM {table} WHERE Version = ? AND Universe = ?', [version, universe])
+        removed[table] = con.execute(f'SELECT count(*) FROM {table} WHERE {clause}', params).fetchone()[0]
+        con.execute(f'DELETE FROM {table} WHERE {clause}', params)
     return removed
 
 

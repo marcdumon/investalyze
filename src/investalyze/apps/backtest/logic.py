@@ -331,23 +331,38 @@ def evaluate_argv(horizon: int, version: str, universe: str | None = None,
     return f'backtest {prefix} ({version}, {scope}, horizon {horizon})', argv
 
 
-def delete_evaluation_argv(version: str, universe: str) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.backtest delete-evaluation` on one stored evaluation."""
+def delete_evaluation_argv(version: str, universe: str, start: str | None = None,
+                           end: str | None = None) -> tuple[str, list[str]]:
+    """Argv for `python -m investalyze.backtest delete-evaluation` on one stored evaluation.
+
+    Passing a period narrows the delete to it; leaving it out removes every period the scope holds.
+    """
     argv = ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', version,
             '--universe', universe]
-    return f'backtest delete-evaluation ({version}, {universe})', argv
+    scope = f'{version}, {universe}'
+    if start and end:
+        argv += ['--start', start, '--end', end]
+        scope += f', {start} to {end}'
+    return f'backtest delete-evaluation ({scope})', argv
 
 
-def delete_evaluation_prompt(scope: dict) -> str:
-    """The confirmation text for deleting one stored evaluation, naming what goes with it."""
+def delete_evaluation_prompt(scope: dict, narrowed: bool = False) -> str:
+    """The confirmation text for deleting one stored evaluation, naming what goes with it.
+
+    `narrowed` says whether the delete is scoped to the period `scope` describes, or the whole
+    version-and-universe scope, since a scope holding several periods reads either way.
+    """
+    span = 'this period of the' if narrowed else 'the whole'
+    rebuild = 'the same universe and period' if narrowed else 'the same universe'
     return '\n'.join([
-        f'Delete the {scope["version"].replace("_", " ")} evaluation stored under '
+        f'Delete {span} {scope["version"].replace("_", " ")} evaluation stored under '
         f'{scope["universe"]}?',
         '',
         f'  {scope["factors"]} factors, {scope["first"]} to {scope["last"]}',
-        f'  {scope["ic_rows"]:,} IC rows and {scope["quantile_rows"]:,} quantile rows',
+        f'  {scope["ic_rows"]:,} IC rows, {scope["quantile_rows"]:,} quantile rows and '
+        f'{scope["decay_rows"]:,} decay rows',
         '',
-        'Evaluate factors over the same universe rebuilds it.',
+        f'Evaluate factors over {rebuild} rebuilds it.',
     ])
 
 

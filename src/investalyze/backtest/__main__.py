@@ -3,9 +3,9 @@
 Commands split along what they need: `factors` writes the point-in-time factor panel, `evaluate`
 scores a factor against forward returns, `run` walks one signal through the engine, `walkforward`
 repeats that fold by fold, `report` prints what a finished run wrote, `list` shows the signals, and
-`delete` removes stored runs and `delete-evaluation` removes a stored evaluation. Only the commands
-that store results open the DB for writing, so an evaluation can run while a job holds the write
-lock.
+`delete` removes stored runs and `delete-evaluation` removes a stored evaluation, or one period of it
+when `--start`/`--end` are given. Only the commands that store results open the DB for writing, so an
+evaluation can run while a job holds the write lock.
 """
 
 import argparse
@@ -403,15 +403,20 @@ def _report(args: argparse.Namespace, data_root: Path) -> None:
 
 
 def _delete_evaluation(con, args: argparse.Namespace, run_cfg: backtest_config.Config) -> None:
-    """Remove one version and universe's stored evaluation."""
+    """Remove one version and universe's stored evaluation, or one period of it when given."""
     universe = args.universe or run_cfg.universe.name
     if not universe:
         raise SystemExit('delete-evaluation needs --universe, the scope the rows were stored under')
-    removed = writer.delete_evaluation(con, args.version, universe)
+    if bool(args.start) != bool(args.end):
+        raise SystemExit('delete-evaluation needs both --start and --end, or neither')
+    removed = writer.delete_evaluation(con, args.version, universe, args.start, args.end)
+    span = f' ({args.start} to {args.end})' if args.start else ''
     if not any(removed.values()):
-        raise SystemExit(f'no {args.version} evaluation stored for {universe}')
-    log.info(f'deleted the {args.version} evaluation for {universe}: '
-             f'{removed["factor_ic"]:,} IC rows, {removed["factor_quantiles"]:,} quantile rows')
+        over = f' over {args.start} to {args.end}' if args.start else ''
+        raise SystemExit(f'no {args.version} evaluation stored for {universe}{over}')
+    log.info(f'deleted the {args.version} evaluation for {universe}{span}: '
+             f'{removed["factor_ic"]:,} IC rows, {removed["factor_quantiles"]:,} quantile rows, '
+             f'{removed["factor_ic_decay"]:,} decay rows')
 
 
 def _delete(con, args: argparse.Namespace, data_root: Path) -> None:

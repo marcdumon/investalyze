@@ -707,7 +707,7 @@ def test_a_cancel_button_that_reports_no_click_stops_nothing(monkeypatch):
 def _scope(**overrides) -> dict:
     """One stored evaluation, shaped as `get_evaluation_scopes` returns it."""
     base = {'version': 'as_reported', 'universe': 'unrecorded', 'factors': 29, 'ic_rows': 9128,
-            'quantile_rows': 43895, 'first': '2000-01-31', 'last': '2026-09-02'}
+            'quantile_rows': 43895, 'decay_rows': 116, 'first': '2000-01-31', 'last': '2026-09-02'}
     return base | overrides
 
 
@@ -718,12 +718,25 @@ def test_deleting_an_evaluation_builds_the_cli_argv():
     assert 'unrecorded' in title
 
 
+def test_deleting_an_evaluation_with_a_period_builds_the_cli_argv():
+    title, argv = logic.delete_evaluation_argv('as_reported', 'unrecorded', '2020-01-31', '2020-02-29')
+    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', 'as_reported',
+                    '--universe', 'unrecorded', '--start', '2020-01-31', '--end', '2020-02-29']
+    assert '2020-01-31 to 2020-02-29' in title
+
+
 def test_the_confirmation_names_the_evaluation_and_what_it_holds():
     body = logic.delete_evaluation_prompt(_scope())
-    assert 'as reported evaluation stored under unrecorded' in body
+    assert 'the whole as reported evaluation stored under unrecorded' in body
     assert '29 factors, 2000-01-31 to 2026-09-02' in body
-    assert '9,128 IC rows and 43,895 quantile rows' in body
+    assert '9,128 IC rows, 43,895 quantile rows and 116 decay rows' in body
     assert 'rebuilds it' in body
+
+
+def test_the_confirmation_names_a_narrowed_period():
+    body = logic.delete_evaluation_prompt(_scope(), narrowed=True)
+    assert 'this period of the as reported evaluation stored under unrecorded' in body
+    assert 'same universe and period rebuilds it' in body
 
 
 def test_the_delete_evaluation_button_is_dead_until_one_is_picked():
@@ -731,6 +744,52 @@ def test_the_delete_evaluation_button_is_dead_until_one_is_picked():
 
     assert page.toggle_delete_evaluation(None) is True
     assert page.toggle_delete_evaluation('unrecorded') is False
+
+
+def test_asking_to_delete_reads_the_period_picker(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    asked = []
+    monkeypatch.setattr(page.data, 'get_evaluation_scopes',
+                        lambda version, universe, start, end: asked.append((version, universe, start, end))
+                        or [_scope(first='2020-02-15', last='2020-02-20')])
+
+    opened, text, pending = page.ask_delete_evaluation(1, 'unrecorded', 'as_reported',
+                                                        '2020-01-31|2020-02-29')
+
+    assert asked == [('as_reported', 'unrecorded', '2020-01-31', '2020-02-29')]
+    assert pending == {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded',
+                       'start': '2020-01-31', 'end': '2020-02-29'}
+    assert opened is True
+    assert 'this period of' in text
+    assert '2020-01-31 to 2020-02-29' in text
+    assert '2020-02-15' not in text and '2020-02-20' not in text
+
+
+def test_asking_to_delete_with_no_period_picked_covers_the_whole_scope(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    monkeypatch.setattr(page.data, 'get_evaluation_scopes',
+                        lambda version, universe, start, end: [_scope()])
+
+    opened, text, pending = page.ask_delete_evaluation(1, 'unrecorded', 'as_reported', None)
+
+    assert pending == {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded'}
+    assert 'the whole' in text
+
+
+def test_asking_to_delete_reads_the_period_picker_as_a_state():
+    """Wiring, not just the function's own logic: the picker's Dash id must actually reach the callback."""
+    from dash._callback import GLOBAL_CALLBACK_MAP
+
+    from investalyze.apps.backtest import page
+
+    assert page.ask_delete_evaluation
+    key = next(name for name in GLOBAL_CALLBACK_MAP
+              if 'bt-delete-modal.opened' in name and 'bt-delete-text.children' in name
+              and 'bt-pending-delete.data' in name and '@' in name)
+    states = [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['state']]
+    assert 'bt-factors-period' in states
 
 
 def test_confirming_starts_the_evaluation_delete(monkeypatch):
@@ -744,6 +803,21 @@ def test_confirming_starts_the_evaluation_delete(monkeypatch):
     assert page.resolve_delete(1, None, pending) == (False, None)
     assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version',
                         'as_reported', '--universe', 'unrecorded']]
+
+
+def test_confirming_starts_the_evaluation_delete_narrowed_to_a_period(monkeypatch):
+    from investalyze.apps.backtest import page
+
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
+    pending = {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded',
+              'start': '2020-01-31', 'end': '2020-02-29'}
+
+    assert page.resolve_delete(1, None, pending) == (False, None)
+    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version',
+                        'as_reported', '--universe', 'unrecorded', '--start', '2020-01-31',
+                        '--end', '2020-02-29']]
 
 
 def test_one_dialog_tells_the_two_kinds_of_delete_apart(monkeypatch):

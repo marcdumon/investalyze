@@ -92,33 +92,54 @@ def get_evaluated_universes(version: str | None = None) -> list[str]:
     return seen
 
 
-def get_evaluation_scopes(version: str | None = None) -> list[dict]:
+def get_evaluation_scopes(version: str | None = None, universe: str | None = None,
+                          start: str | None = None, end: str | None = None) -> list[dict]:
     """Every stored evaluation, one row per version and universe, with what it holds.
 
-    The counts are what a delete would remove, so the same read answers both the picker and the
-    confirmation it leads to.
+    Narrowing by universe and period (both `start` and `end`, or neither) scopes the counts to one
+    period instead of the whole version-and-universe scope, so a delete confirmation can say exactly
+    what a narrowed delete would remove. The counts are what a delete would remove, so the same read
+    answers both the picker and the confirmation it leads to.
     """
     con = _connect()
     try:
         if not storage.table_exists(con, 'factor_ic') or not _has_column(con, 'factor_ic', 'Universe'):
             return []
-        clause, params = ('WHERE Version = ?', [version]) if version else ('', [])
+        clauses = []
+        params: list = []
+        if version:
+            clauses.append('Version = ?')
+            params.append(version)
+        if universe:
+            clauses.append('Universe = ?')
+            params.append(universe)
+        if start and end and _has_column(con, 'factor_ic', 'StartDate'):
+            clauses.append('StartDate = ? AND EndDate = ?')
+            params += [start, end]
+        clause = f"WHERE {' AND '.join(clauses)}" if clauses else ''
         rows = con.execute(f"""
-            SELECT ic.Version, ic.Universe, count(DISTINCT ic.Factor) AS factors, count(*) AS ic_rows,
-                   min(ic.Date)::VARCHAR AS first_date, max(ic.Date)::VARCHAR AS last_date
-            FROM factor_ic ic {clause}
-            GROUP BY ic.Version, ic.Universe ORDER BY ic.Version, ic.Universe
+            SELECT Version, Universe, count(DISTINCT Factor) AS factors, count(*) AS ic_rows,
+                   min(Date)::VARCHAR AS first_date, max(Date)::VARCHAR AS last_date
+            FROM factor_ic {clause}
+            GROUP BY Version, Universe ORDER BY Version, Universe
         """, params).df()
         quantiles = dict(con.execute(
-            'SELECT Version || \'|\' || Universe, count(*) FROM factor_quantiles GROUP BY 1').fetchall())
+            f"SELECT Version || '|' || Universe, count(*) FROM factor_quantiles {clause} GROUP BY 1",
+            params).fetchall())
+        decay = {}
+        if storage.table_exists(con, 'factor_ic_decay'):
+            decay = dict(con.execute(
+                f"SELECT Version || '|' || Universe, count(*) FROM factor_ic_decay {clause} GROUP BY 1",
+                params).fetchall())
     finally:
         con.close()
 
     scopes = []
     for row in rows.itertuples():
+        key = f'{row.Version}|{row.Universe}'
         scopes.append({'version': row.Version, 'universe': row.Universe, 'factors': int(row.factors),
                        'ic_rows': int(row.ic_rows), 'first': row.first_date, 'last': row.last_date,
-                       'quantile_rows': int(quantiles.get(f'{row.Version}|{row.Universe}', 0))})
+                       'quantile_rows': int(quantiles.get(key, 0)), 'decay_rows': int(decay.get(key, 0))})
     return scopes
 
 
