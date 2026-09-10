@@ -1,0 +1,6 @@
+name = 'rd_intensity'
+expression = '-research_development / revenue'
+description = 'Research spend as a share of revenue. Stored negative, so the sign is flipped.'
+higher_is_better = true
+status = 'draft'
+verdict = ''

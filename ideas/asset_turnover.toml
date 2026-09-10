@@ -1,0 +1,6 @@
+name = 'asset_turnover'
+expression = 'revenue / total_assets'
+description = 'Trailing revenue per unit of assets.'
+higher_is_better = true
+status = 'draft'
+verdict = ''

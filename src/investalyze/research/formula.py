@@ -1,0 +1,257 @@
+"""The language an idea is written in.
+
+An idea is one expression over a long panel of `Ticker`, `Date` and data columns. Expressions are
+parsed to a syntax tree and walked against an allow list, so a name that does not exist or a call to
+something that is not a function fails when the idea is saved, naming the offending term, rather than
+producing a column of NaN discovered much later.
+
+Three kinds of function, distinguished by what they group over:
+
+- cross-sectional, comparing names to each other on one date: `rank`, `zscore`, `winsorize`,
+  `neutralize`
+- time-series, comparing a name to its own past: `lag`, `delta`, `pct_change`, `mean`, `std`
+- elementwise, row by row: `where`, `mask`, `safe_div`, `abs`, `log`, `clip`, `sign`
+
+`mask(x, condition)` is how an idea says "only among names where ...". It drops a name from the
+cross-section rather than scoring it, which `where(condition, x, 0)` does not: a zero still competes
+in every ranking, and quietly drags the correlations of the idea that produced it.
+
+Division yields NaN where the denominator is zero, in place of the infinity numpy would give, since
+an infinite factor value silently dominates every ranking it takes part in.
+"""
+
+import ast
+
+import numpy as np
+import pandas as pd
+
+TICKER, DATE = 'Ticker', 'Date'
+
+CROSS_SECTIONAL = ('rank', 'zscore', 'winsorize', 'neutralize')
+TIME_SERIES = ('lag', 'delta', 'pct_change', 'mean', 'std')
+ELEMENTWISE = ('where', 'mask', 'safe_div', 'abs', 'log', 'clip', 'sign')
+FUNCTIONS = frozenset(CROSS_SECTIONAL + TIME_SERIES + ELEMENTWISE)
+
+_ALLOWED_NODES = (
+    ast.Expression, ast.BinOp, ast.UnaryOp, ast.Compare, ast.BoolOp, ast.IfExp, ast.Call,
+    ast.Name, ast.Constant, ast.keyword, ast.Load,
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Mod, ast.Pow, ast.USub, ast.UAdd, ast.Not,
+    ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq, ast.And, ast.Or,
+)
+
+
+def _parse(expression: str) -> ast.Expression:
+    """The syntax tree for an expression, with a parse failure reported as a ValueError."""
+    try:
+        return ast.parse(expression, mode='eval')
+    except SyntaxError as error:
+        raise ValueError(f'expression {expression!r} could not be parsed: {error.msg}') from error
+
+
+def _called_names(tree: ast.Expression) -> set[str]:
+    """The names used in function position, which are functions rather than columns."""
+    called = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            called.add(node.func.id)
+    return called
+
+
+def dependencies(expression: str) -> set[str]:
+    """Every column or idea name an expression reads.
+
+    Names in function position are excluded, so `rank(a)` depends on `a` alone. A keyword argument
+    naming a column, as in `neutralize(a, by=sector)`, is a dependency like any other.
+    """
+    tree = _parse(expression)
+    called = _called_names(tree)
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id not in called:
+            names.add(node.id)
+    return names
+
+
+def validate(expression: str, known: set[str]) -> None:
+    """Raise unless an expression uses only allowed syntax, known functions and known names."""
+    tree = _parse(expression)
+    for node in ast.walk(tree):
+        if not isinstance(node, _ALLOWED_NODES):
+            raise ValueError(f'{type(node).__name__} is not allowed in an idea expression')
+    for name in sorted(_called_names(tree)):
+        if name not in FUNCTIONS:
+            raise ValueError(f'unknown function {name!r}; known functions are {", ".join(sorted(FUNCTIONS))}')
+    unknown = sorted(name for name in dependencies(expression) if name not in known)
+    if unknown:
+        raise ValueError(f'unknown name(s) in expression: {", ".join(unknown)}')
+
+
+def _as_series(value, frame: pd.DataFrame) -> pd.Series:
+    """A result broadcast to one value per row, so a constant expression still returns a column."""
+    if isinstance(value, pd.Series):
+        return value
+    return pd.Series(value, index=frame.index)
+
+
+def _finite(series: pd.Series) -> pd.Series:
+    """The series with infinities replaced by NaN."""
+    return series.replace([np.inf, -np.inf], np.nan)
+
+
+def _percentile(values: pd.Series) -> pd.Series:
+    """Position within the group, from 0 for the lowest to 100 for the highest."""
+    order = values.rank(method='average') - 1.0
+    span = values.count() - 1
+    if span <= 0:
+        return pd.Series(np.nan, index=values.index)
+    return order / span * 100.0
+
+
+def _winsorize(values: pd.Series, share: float) -> pd.Series:
+    """The group's values with both tails pulled in to the given quantile."""
+    lower, upper = values.quantile(share), values.quantile(1.0 - share)
+    return values.clip(lower=lower, upper=upper)
+
+
+def _by_date(frame: pd.DataFrame, values: pd.Series, function) -> pd.Series:
+    """Apply a function to each date's cross-section, keeping the frame's row order."""
+    return values.groupby(frame[DATE], group_keys=False).apply(function)
+
+
+def _by_ticker(frame: pd.DataFrame, values: pd.Series, function) -> pd.Series:
+    """Apply a function to each name's own history in date order, keeping the frame's row order."""
+    ordered = frame[[TICKER, DATE]].assign(value=values).sort_values([TICKER, DATE])
+    shifted = ordered.groupby(TICKER, group_keys=False)['value'].apply(function)
+    return shifted.reindex(frame.index)
+
+
+class _Evaluator(ast.NodeVisitor):
+    """Walks a validated syntax tree, returning a column for every node."""
+
+    _BINARY = {ast.Add: np.add, ast.Sub: np.subtract, ast.Mult: np.multiply,
+               ast.Div: np.divide, ast.Mod: np.mod, ast.Pow: np.power}
+    _COMPARE = {ast.Lt: np.less, ast.LtE: np.less_equal, ast.Gt: np.greater,
+                ast.GtE: np.greater_equal, ast.Eq: np.equal, ast.NotEq: np.not_equal}
+
+    def __init__(self, frame: pd.DataFrame) -> None:
+        self.frame = frame
+
+    def visit_Expression(self, node):
+        return self.visit(node.body)
+
+    def visit_Constant(self, node):
+        return node.value
+
+    def visit_Name(self, node):
+        return self.frame[node.id]
+
+    def visit_BinOp(self, node):
+        left, right = self.visit(node.left), self.visit(node.right)
+        result = self._BINARY[type(node.op)](left, right)
+        # an infinite factor value dominates every ranking it enters, so division that
+        # reached a zero denominator is reported as missing instead
+        if isinstance(node.op, (ast.Div, ast.Mod)):
+            return _finite(_as_series(result, self.frame))
+        return result
+
+    def visit_UnaryOp(self, node):
+        operand = self.visit(node.operand)
+        if isinstance(node.op, ast.USub):
+            return -operand
+        if isinstance(node.op, ast.UAdd):
+            return operand
+        return ~_as_series(operand, self.frame).astype(bool)
+
+    def visit_Compare(self, node):
+        if len(node.ops) != 1:
+            raise ValueError('chained comparisons are not allowed in an idea expression')
+        left, right = self.visit(node.left), self.visit(node.comparators[0])
+        return self._COMPARE[type(node.ops[0])](left, right)
+
+    def visit_BoolOp(self, node):
+        # `and` and `or` cannot vectorize, so they are read as elementwise & and |
+        result = _as_series(self.visit(node.values[0]), self.frame).astype(bool)
+        for value in node.values[1:]:
+            other = _as_series(self.visit(value), self.frame).astype(bool)
+            result = result & other if isinstance(node.op, ast.And) else result | other
+        return result
+
+    def visit_IfExp(self, node):
+        condition = _as_series(self.visit(node.test), self.frame)
+        return self._where(condition, self.visit(node.body), self.visit(node.orelse))
+
+    def visit_Call(self, node):
+        name = node.func.id
+        arguments = [self.visit(argument) for argument in node.args]
+        keywords = {keyword.arg: self.visit(keyword.value) for keyword in node.keywords}
+        return self._call(name, arguments, keywords)
+
+    def generic_visit(self, node):
+        raise ValueError(f'{type(node).__name__} is not allowed in an idea expression')
+
+    def _where(self, condition, when_true, when_false) -> pd.Series:
+        """Pick between two branches row by row."""
+        chosen = np.where(_as_series(condition, self.frame).fillna(False).astype(bool), when_true, when_false)
+        return pd.Series(chosen, index=self.frame.index, dtype=float)
+
+    def _call(self, name: str, arguments: list, keywords: dict) -> pd.Series:
+        """Dispatch one function call to its implementation."""
+        if name == 'where':
+            return self._where(arguments[0], arguments[1], arguments[2])
+        if name == 'mask':
+            # excluding a name is not the same as scoring it zero: a zero competes in every
+            # ranking it enters, while a missing value steps out of the cross-section
+            values = _as_series(arguments[0], self.frame)
+            keep = _as_series(arguments[1], self.frame).fillna(False).astype(bool)
+            return values.where(keep)
+        if name == 'safe_div':
+            numerator, denominator = _as_series(arguments[0], self.frame), _as_series(arguments[1], self.frame)
+            return _finite(numerator / denominator.replace(0.0, np.nan))
+
+        values = _as_series(arguments[0], self.frame)
+        if name in ELEMENTWISE:
+            return self._elementwise(name, values, arguments)
+        if name in CROSS_SECTIONAL:
+            return self._cross_sectional(name, values, arguments, keywords)
+        return self._time_series(name, values, arguments)
+
+    def _elementwise(self, name: str, values: pd.Series, arguments: list) -> pd.Series:
+        if name == 'abs':
+            return values.abs()
+        if name == 'log':
+            return _finite(pd.Series(np.log(values.where(values > 0)), index=self.frame.index))
+        if name == 'sign':
+            return pd.Series(np.sign(values), index=self.frame.index)
+        return values.clip(lower=arguments[1], upper=arguments[2])
+
+    def _cross_sectional(self, name: str, values: pd.Series, arguments: list, keywords: dict) -> pd.Series:
+        if name == 'rank':
+            return _by_date(self.frame, values, _percentile)
+        if name == 'zscore':
+            return _by_date(self.frame, values, lambda group: (group - group.mean()) / group.std())
+        if name == 'winsorize':
+            share = float(arguments[1]) if len(arguments) > 1 else 0.01
+            return _by_date(self.frame, values, lambda group: _winsorize(group, share))
+        groups = keywords.get('by') if 'by' in keywords else arguments[1]
+        keyed = pd.Series(list(zip(self.frame[DATE], groups)), index=self.frame.index)
+        return values - values.groupby(keyed).transform('mean')
+
+    def _time_series(self, name: str, values: pd.Series, arguments: list) -> pd.Series:
+        periods = int(arguments[1]) if len(arguments) > 1 else 1
+        if name == 'lag':
+            return _by_ticker(self.frame, values, lambda group: group.shift(periods))
+        if name == 'delta':
+            return values - _by_ticker(self.frame, values, lambda group: group.shift(periods))
+        if name == 'pct_change':
+            previous = _by_ticker(self.frame, values, lambda group: group.shift(periods))
+            return _finite(values / previous.replace(0.0, np.nan) - 1.0)
+        if name == 'mean':
+            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).mean())
+        return _by_ticker(self.frame, values, lambda group: group.rolling(periods).std())
+
+
+def evaluate(expression: str, frame: pd.DataFrame) -> pd.Series:
+    """Compute an expression over a long panel carrying `Ticker`, `Date` and its data columns."""
+    tree = _parse(expression)
+    result = _Evaluator(frame).visit(tree)
+    return _as_series(result, frame)
