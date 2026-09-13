@@ -1,14 +1,12 @@
-"""What a draft idea tells you before it is worth computing anything expensive.
+"""Factor diagnostics, run on a sample before IC analysis.
 
-Five readings, each able to kill an idea on its own:
-
-- `coverage` says how many names actually have a value, per year. An idea that speaks about 53 names
-  is not a factor, whatever its correlation with returns turns out to be.
-- `distribution` catches a near-zero denominator producing values that will dominate any ranking.
-- `extremes` names who is at each end right now, which is the fastest sanity check there is.
-- `correlations` says whether the idea already exists in the library under another name.
-- `rank_autocorrelation` says how fast the ranking churns, which is the turnover it will cost,
-  known before a backtest rather than after one.
+- `coverage`: names with a value per year, against the names in the universe. A factor covering 53
+  names is not usable, whatever its IC.
+- `distribution`: summary statistics and percentiles, which expose outliers from near-zero
+  denominators.
+- `top_bottom`: the highest and lowest names on the latest date, with their inputs.
+- `correlations`: rank correlation with the other factors in the library, which exposes redundancy.
+- `rank_autocorrelation`: persistence of the factor ranking between dates, a proxy for turnover.
 """
 
 import numpy as np
@@ -27,7 +25,7 @@ def coverage(frame: pd.DataFrame, column: str) -> pd.DataFrame:
 
 
 def distribution(values: pd.Series) -> dict:
-    """The shape of an idea's values, and how much of it is unusable."""
+    """Summary statistics of factor values, counting infinite values as missing."""
     finite = values.replace([np.inf, -np.inf], np.nan).dropna()
     if finite.empty:
         return {'count': 0, 'missing': int(values.isna().sum())}
@@ -45,7 +43,7 @@ def distribution(values: pd.Series) -> dict:
     }
 
 
-def extremes(frame: pd.DataFrame, column: str, *, n: int = 10, inputs: list[str] | None = None) -> dict:
+def top_bottom(frame: pd.DataFrame, column: str, *, n: int = 10, inputs: list[str] | None = None) -> dict:
     """The highest and lowest names on the most recent date, with the inputs behind them."""
     latest = frame[frame[DATE] == frame[DATE].max()]
     ranked = latest.dropna(subset=[column]).sort_values(column, ascending=False)
@@ -67,7 +65,7 @@ def _mean_cross_sectional_corr(frame: pd.DataFrame, left: str, right: str) -> fl
 
 
 def correlations(frame: pd.DataFrame, column: str, others: list[str]) -> pd.Series:
-    """Rank correlation of an idea to each other idea, strongest first."""
+    """Mean cross-sectional rank correlation with each other factor, strongest first."""
     scores = {}
     for other in others:
         if other != column and other in frame.columns:
@@ -76,10 +74,9 @@ def correlations(frame: pd.DataFrame, column: str, others: list[str]) -> pd.Seri
 
 
 def rank_autocorrelation(frame: pd.DataFrame, column: str) -> float:
-    """How much of the ranking survives to the next date, averaged over dates.
+    """Mean rank autocorrelation between consecutive dates.
 
-    Near 1 is a slow-moving idea that will trade rarely; near 0 turns the book over every rebalance
-    and has to earn its costs back each time.
+    Near 1 means low turnover; near 0 means the portfolio turns over at every rebalance.
     """
     wide = frame.pivot_table(index=DATE, columns=TICKER, values=column)
     ranks = wide.rank(axis=1, pct=True)

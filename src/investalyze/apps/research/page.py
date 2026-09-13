@@ -1,12 +1,9 @@
-"""Factors page: write an idea, find out whether it is sane, then whether it predicts anything.
+"""Factors page: the factor library, factor definitions, diagnostics and IC analysis.
 
-One page, because the work is one loop. The library on the left is the decision surface: every idea
-with where it stands. The workbench on the right holds the expression, the palette it is written
-against, and what the idea looks like once computed.
-
-Nothing on this page stores an answer a user has to manage. Values and scores are cached under
-`data/cache`, keyed by a fingerprint reaching through the idea's dependencies, so redefining an idea
-throws away everything computed from it without anyone being asked.
+The factor library on the left lists every factor with its research status. The right side holds the
+selected factor's definition, the data fields its expression can use, its diagnostics and its IC
+analysis. Results are cached under `data/cache` by factor fingerprint, so editing a factor clears the
+results computed from its previous definition.
 """
 
 import dash
@@ -14,38 +11,39 @@ import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
 import plotly.graph_objects as go
-from dash import Input, Output, State, callback, clientside_callback, ctx, html
+from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
 from investalyze.apps import theming
 from investalyze.apps.research import data, logic
-from investalyze.research import ideas
+from investalyze.research import factors
 
 BUSY = 'The database is busy with a running job. Try again once it finishes.'
-NO_SELECTION = 'Pick an idea on the left, or write a new one.'
+NO_SELECTION = 'Select a factor, or define a new one.'
+TEXT_COLUMNS = ('Ticker', 'sector', 'industry', 'name')
 
 LIBRARY_COLUMNS = [
-    {'field': 'name', 'headerName': 'Idea', 'flex': 1, 'minWidth': 150},
-    {'field': 'status', 'headerName': 'Status', 'width': 88},
+    {'field': 'name', 'headerName': 'Factor', 'flex': 1, 'minWidth': 150},
+    {'field': 'status', 'headerName': 'Status', 'width': 96},
 ]
 
 DISTRIBUTION_COLUMNS = [
-    {'field': 'measure', 'headerName': 'Measure', 'width': 110},
+    {'field': 'statistic', 'headerName': 'Statistic', 'width': 110},
     {'field': 'value', 'headerName': 'Value', 'flex': 1, 'type': 'rightAligned'},
 ]
 
 DECAY_COLUMNS = [
-    {'field': 'horizon', 'headerName': 'Sessions', 'width': 100},
+    {'field': 'horizon', 'headerName': 'Horizon (days)', 'width': 130},
     {'field': 'mean_ic', 'headerName': 'Mean IC', 'width': 110, 'type': 'rightAligned',
      'valueFormatter': {'function': 'd3.format("+.4f")(params.value)'}},
-    {'field': 't_stat', 'headerName': 't', 'width': 90, 'type': 'rightAligned',
+    {'field': 't_stat', 'headerName': 't-stat', 'width': 90, 'type': 'rightAligned',
      'valueFormatter': {'function': 'd3.format("+.2f")(params.value)'}},
     {'field': 'names_median', 'headerName': 'Names', 'width': 90, 'type': 'rightAligned',
      'valueFormatter': {'function': 'd3.format(",.0f")(params.value)'}},
 ]
 
 QUANTILE_COLUMNS = [
-    {'field': 'Quantile', 'headerName': 'Bucket', 'width': 90},
+    {'field': 'Quantile', 'headerName': 'Quantile', 'width': 100},
     {'field': 'mean_return', 'headerName': 'Mean return', 'width': 130, 'type': 'rightAligned',
      'valueFormatter': {'function': 'd3.format("+.2%")(params.value)'}},
     {'field': 'median_return', 'headerName': 'Median return', 'width': 140, 'type': 'rightAligned',
@@ -73,37 +71,35 @@ def _note(text: str, colour: str = 'gray') -> dmc.Alert:
 
 
 def _library_panel() -> dmc.Paper:
-    """Every idea and where it stands, which is what a keep or kill decision reads."""
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
         dmc.Group(justify='space-between', children=[
-            dmc.Title('Your ideas', order=5),
-            dmc.Button('New', id='rs-btn-new', size='xs', variant='light'),
+            dmc.Title('Factor library', order=5),
+            dmc.Button('New factor', id='rs-btn-new', size='xs', variant='light'),
         ]),
         _grid('rs-library', LIBRARY_COLUMNS, 430, selectable=True),
         dmc.Text('', id='rs-library-description', size='xs', c='dimmed'),
     ]))
 
 
-def _editor_panel() -> dmc.Paper:
-    """The idea itself: what it is called, what it believes, and how it is computed."""
+def _definition_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
-        dmc.Title('The idea', order=5),
+        dmc.Title('Factor definition', order=5),
         dmc.Group(grow=True, children=[
-            dmc.TextInput(id='rs-name', label='Name', placeholder='disciplined_margin'),
-            dmc.Select(id='rs-status', label='Status', value=ideas.DRAFT,
-                       data=[{'value': status, 'label': status.title()} for status in ideas.STATUSES]),
-            dmc.Select(id='rs-direction', label='Good end', value='high',
-                       data=[{'value': 'high', 'label': 'High is good'},
-                             {'value': 'low', 'label': 'Low is good'}]),
+            dmc.TextInput(id='rs-name', label='Name', placeholder='op_margin_sector_neutral_rd'),
+            dmc.Select(id='rs-status', label='Status', value=factors.CANDIDATE,
+                       data=[{'value': status, 'label': status.title()} for status in factors.STATUSES]),
+            dmc.Select(id='rs-direction', label='Direction', value='higher',
+                       data=[{'value': 'higher', 'label': 'Higher is better'},
+                             {'value': 'lower', 'label': 'Lower is better'}]),
         ]),
-        dmc.TextInput(id='rs-description', label='What you believe',
-                      placeholder='Sector-relative margin, among names still spending on research.'),
+        dmc.TextInput(id='rs-description', label='Rationale',
+                      placeholder='Sector-neutral operating margin, restricted to names with R&D above 2% of revenue.'),
         dmc.Textarea(id='rs-expression', label='Expression', autosize=True, minRows=2, maxRows=6,
                      placeholder='rank(mask(neutralize(op_margin, by=sector), rd_intensity > 0.02))'),
         html.Div(id='rs-validation'),
         dmc.Group(children=[
-            dmc.Button('Check it', id='rs-btn-check', size='xs'),
-            dmc.Button('Does it predict?', id='rs-btn-predict', size='xs', variant='light'),
+            dmc.Button('Run diagnostics', id='rs-btn-diagnostics', size='xs'),
+            dmc.Button('Run IC analysis', id='rs-btn-ic', size='xs', variant='light'),
             dmc.Button('Save', id='rs-btn-save', size='xs', color='green', variant='light'),
             dmc.Button('Delete', id='rs-btn-delete', size='xs', color='red', variant='subtle'),
         ]),
@@ -111,29 +107,25 @@ def _editor_panel() -> dmc.Paper:
     ]))
 
 
-def _palette_panel() -> dmc.Paper:
-    """The raw fields an expression may name, which is what makes composing possible at all."""
+def _fields_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
         dmc.Group(justify='space-between', children=[
-            dmc.Title('The palette', order=5),
-            dmc.Text('', id='rs-palette-count', size='xs', c='dimmed'),
+            dmc.Title('Data fields', order=5),
+            dmc.Text('', id='rs-fields-count', size='xs', c='dimmed'),
         ]),
-        dmc.TextInput(id='rs-palette-search', placeholder='Search the fields, for example: research',
-                      debounce=300),
-        _grid('rs-palette', logic.FIELD_COLUMNS, 260),
+        dmc.TextInput(id='rs-fields-search', placeholder='Search data fields', debounce=300),
+        _grid('rs-fields', logic.FIELD_COLUMNS, 260),
     ]))
 
 
-def _check_panel() -> dmc.Paper:
-    """Level one: everything that can kill an idea before anything expensive is asked of it."""
+def _diagnostics_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
-        dmc.Title('Is it sane?', order=5),
-        html.Div(id='rs-check-notes', children=_note(NO_SELECTION)),
+        dmc.Title('Diagnostics', order=5),
+        html.Div(id='rs-diagnostics-notes', children=_note(NO_SELECTION)),
         dmc.Group(grow=True, align='flex-start', children=[
             dmc.Stack(gap=4, children=[
-                dmc.Text('Coverage over time', size='xs', fw=600),
-                dash.dcc.Graph(id='rs-coverage', config={'displayModeBar': False},
-                               style={'height': 290}),
+                dmc.Text('Coverage', size='xs', fw=600),
+                dcc.Graph(id='rs-coverage', config={'displayModeBar': False}, style={'height': 290}),
             ]),
             dmc.Stack(gap=4, children=[
                 dmc.Text('Distribution', size='xs', fw=600),
@@ -142,29 +134,28 @@ def _check_panel() -> dmc.Paper:
         ]),
         dmc.Group(grow=True, align='flex-start', children=[
             dmc.Stack(gap=4, children=[
-                dmc.Text('Highest now', size='xs', fw=600),
+                dmc.Text('Top names', size='xs', fw=600),
                 _grid('rs-top', [{'field': 'Ticker', 'width': 90}], 210),
             ]),
             dmc.Stack(gap=4, children=[
-                dmc.Text('Lowest now', size='xs', fw=600),
+                dmc.Text('Bottom names', size='xs', fw=600),
                 _grid('rs-bottom', [{'field': 'Ticker', 'width': 90}], 210),
             ]),
         ]),
     ]))
 
 
-def _predict_panel() -> dmc.Paper:
-    """Level two: does the idea forecast the returns that followed it."""
+def _ic_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
-        dmc.Title('Does it predict?', order=5),
-        html.Div(id='rs-verdict', children=_note('Press "Does it predict?" once an idea is saved.')),
+        dmc.Title('IC analysis', order=5),
+        html.Div(id='rs-ic-notes', children=_note('Save the factor, then run IC analysis.')),
         dmc.Group(grow=True, align='flex-start', children=[
             dmc.Stack(gap=4, children=[
-                dmc.Text('Edge by horizon', size='xs', fw=600),
+                dmc.Text('IC decay', size='xs', fw=600),
                 _grid('rs-decay', DECAY_COLUMNS, 190),
             ]),
             dmc.Stack(gap=4, children=[
-                dmc.Text('Return by score bucket', size='xs', fw=600),
+                dmc.Text('Quantile returns', size='xs', fw=600),
                 _grid('rs-quantiles', QUANTILE_COLUMNS, 190),
             ]),
         ]),
@@ -175,31 +166,30 @@ def layout() -> html.Div:
     return html.Div([
         dmc.Group(justify='space-between', mb='sm', children=[
             dmc.Title('Factors', order=3),
-            dmc.Text('Write an idea, find out whether it is sane, then whether it works.',
-                     size='sm', c='dimmed'),
+            dmc.Text('Define a factor, run diagnostics, run IC analysis.', size='sm', c='dimmed'),
         ]),
         dmc.Grid(gutter='sm', children=[
             dmc.GridCol(span=3, children=_library_panel()),
             dmc.GridCol(span=9, children=dmc.Stack(gap='sm', children=[
-                _editor_panel(), _palette_panel(), _check_panel(), _predict_panel()])),
+                _definition_panel(), _fields_panel(), _diagnostics_panel(), _ic_panel()])),
         ]),
     ], style={'padding': '4px'})
 
 
 @callback(Output('rs-library', 'rowData'), Input('rs-saved', 'children'))
 def load_library(_saved):
-    """The library, reloaded whenever an idea is written or removed."""
+    """The factor library, reloaded after every save or delete."""
     return logic.library_rows(data.library())
 
 
-@callback(Output('rs-palette', 'rowData'), Output('rs-palette-count', 'children'),
-          Input('rs-palette-search', 'value'))
-def load_palette(search):
-    """The raw fields, narrowed by whatever is typed in the search box."""
+@callback(Output('rs-fields', 'rowData'), Output('rs-fields-count', 'children'),
+          Input('rs-fields-search', 'value'))
+def load_fields(search):
+    """The data fields, filtered by the search box."""
     try:
         rows = data.field_rows(search)
     except duckdb.Error:
-        return [], 'database busy'
+        return [], 'Database busy'
     return rows, f'{len(rows)} fields'
 
 
@@ -207,19 +197,18 @@ def load_palette(search):
           Output('rs-expression', 'value'), Output('rs-direction', 'value'),
           Output('rs-status', 'value'), Output('rs-library-description', 'children'),
           Input('rs-library', 'selectedRows'), Input('rs-btn-new', 'n_clicks'))
-def fill_editor(selected, _new):
-    """Load the selected idea into the editor, or clear it for a new one."""
+def fill_definition(selected, _new):
+    """Load the selected factor into the definition form, or clear it for a new factor."""
     if ctx.triggered_id == 'rs-btn-new' or not selected:
-        return '', '', '', 'high', ideas.DRAFT, NO_SELECTION
+        return '', '', '', 'higher', factors.CANDIDATE, NO_SELECTION
     row = selected[0]
-    direction = 'high' if row['direction'] == 'high' else 'low'
-    return (row['name'], row['description'], row['expression'], direction, row['status'],
-            row['description'] or 'No description yet.')
+    return (row['name'], row['description'], row['expression'], row['direction'], row['status'],
+            row['description'] or 'No rationale recorded.')
 
 
 @callback(Output('rs-validation', 'children'), Input('rs-expression', 'value'))
 def validate(expression):
-    """Say whether the expression is usable while it is being written, which costs no query."""
+    """Validate the expression as it is typed."""
     try:
         known = data.known_names()
     except duckdb.Error:
@@ -228,45 +217,48 @@ def validate(expression):
     return _note(message, 'green' if ok else 'orange')
 
 
-@callback(Output('rs-check-notes', 'children'), Output('rs-coverage', 'figure'),
+def _empty_outputs(message: dmc.Alert, dark: bool) -> tuple:
+    ticker_only = [{'field': 'Ticker'}]
+    return message, _empty_figure(dark), [], [], ticker_only, [], ticker_only
+
+
+@callback(Output('rs-diagnostics-notes', 'children'), Output('rs-coverage', 'figure'),
           Output('rs-distribution', 'rowData'), Output('rs-top', 'rowData'),
           Output('rs-top', 'columnDefs'), Output('rs-bottom', 'rowData'),
           Output('rs-bottom', 'columnDefs'),
-          Input('rs-btn-check', 'n_clicks'), State('rs-name', 'value'),
+          Input('rs-btn-diagnostics', 'n_clicks'), State('rs-name', 'value'),
           State('rs-expression', 'value'), State('rs-direction', 'value'),
           State('theme-switch', 'checked'), prevent_initial_call=True)
-def check_idea(_clicks, name, expression, direction, dark):
-    """Compute the draft over a sample and report everything level one knows about it."""
+def show_diagnostics(_clicks, name, expression, direction, dark):
+    """Run diagnostics on the sample and fill the diagnostics panel."""
     if not name or not expression:
         raise PreventUpdate
     try:
-        result = data.preview(name, expression, higher_is_better=direction == 'high')
+        result = data.run_diagnostics(name, expression, higher_is_better=direction == 'higher')
     except (ValueError, duckdb.Error) as error:
-        return _note(str(error), 'red'), _empty_figure(dark), [], [], [{'field': 'Ticker'}], [], [{'field': 'Ticker'}]
-
+        return _empty_outputs(_note(str(error), 'red'), dark)
     if 'error' in result:
-        return (_note(result['error'], 'orange'), _empty_figure(dark), [], [],
-                [{'field': 'Ticker'}], [], [{'field': 'Ticker'}])
+        return _empty_outputs(_note(result['error'], 'orange'), dark)
 
-    notes = _check_notes(result)
-    top, bottom = result['extremes']['top'], result['extremes']['bottom']
-    columns = [{'field': column, 'flex': 1,
-                'valueFormatter': ({'function': 'd3.format(",.3f")(params.value)'}
-                                   if column not in ('Ticker', 'sector', 'industry', 'name') else None)}
-               for column in top.columns]
-    return (notes, _coverage_figure(result['coverage'], dark),
+    top, bottom = result['top_bottom']['top'], result['top_bottom']['bottom']
+    columns = []
+    for column in top.columns:
+        definition = {'field': column, 'flex': 1}
+        if column not in TEXT_COLUMNS:
+            definition['valueFormatter'] = {'function': 'd3.format(",.3f")(params.value)'}
+        columns.append(definition)
+    return (_diagnostics_notes(result), _coverage_figure(result['coverage'], dark),
             logic.distribution_rows(result['distribution']),
             top.to_dict('records'), columns, bottom.to_dict('records'), columns)
 
 
-def _check_notes(result: dict) -> dmc.Stack:
-    """The sentences that decide whether an idea is worth taking further."""
-    text, colour = logic.coverage_headline(result['coverage'])
+def _diagnostics_notes(result: dict) -> dmc.Stack:
+    text, colour = logic.coverage_note(result['coverage'])
     sample = result['sample']
     notes = [_note(text, colour),
-             _note(f'Sampled over {sample["names"]:,} of the most traded names on {sample["dates"]} dates.'),
+             _note(f'Sample: {sample["names"]:,} most liquid names, {sample["dates"]} monthly dates.'),
              _note(logic.turnover_note(result['autocorrelation']))]
-    found = logic.similarity(result['correlations'])
+    found = logic.correlation_note(result['correlations'])
     if found is not None:
         notes.insert(1, _note(found[0], found[1]))
     return dmc.Stack(gap=4, children=notes)
@@ -279,42 +271,39 @@ def _empty_figure(dark: bool) -> go.Figure:
 
 
 def _coverage_figure(table, dark: bool) -> go.Figure:
-    """How many names carry a value each year, against how many were there to carry one."""
+    """Names with a value per year, overlaid on the names in the universe."""
     figure = go.Figure()
-    figure.add_bar(x=table['year'], y=table['universe'], name='In the sample',
-                   marker_color='#8C8C8C', opacity=0.35)
-    figure.add_bar(x=table['year'], y=table['names'], name='With a value', marker_color='#4C72B0')
+    figure.add_bar(x=table['year'], y=table['universe'], name='Universe', marker_color='#8C8C8C', opacity=0.35)
+    figure.add_bar(x=table['year'], y=table['names'], name='Covered', marker_color='#4C72B0')
     figure.update_layout(**theming.figure_layout(bool(dark)), barmode='overlay',
                          margin={'l': 40, 'r': 10, 't': 10, 'b': 30}, showlegend=True,
                          legend={'orientation': 'h', 'y': 1.1, 'x': 0})
-    figure.update_yaxes(title=None)
     return figure
 
 
-@callback(Output('rs-verdict', 'children'), Output('rs-decay', 'rowData'),
+@callback(Output('rs-ic-notes', 'children'), Output('rs-decay', 'rowData'),
           Output('rs-quantiles', 'rowData'),
-          Input('rs-btn-predict', 'n_clicks'), State('rs-name', 'value'),
-          prevent_initial_call=True)
-def predict_idea(_clicks, name):
-    """Score a saved idea against the returns that followed it."""
+          Input('rs-btn-ic', 'n_clicks'), State('rs-name', 'value'), prevent_initial_call=True)
+def show_ic_analysis(_clicks, name):
+    """Run IC analysis on a saved factor and fill the IC panel."""
     if not name:
         raise PreventUpdate
     if name not in data.library():
-        return _note('Save the idea first, then it can be scored.', 'orange'), [], []
+        return _note('Save the factor before running IC analysis.', 'orange'), [], []
     try:
-        answer = data.verdict(name)
+        result = data.run_tearsheet(name)
     except (ValueError, duckdb.Error) as error:
         return _note(str(error), 'red'), [], []
-    if 'error' in answer:
-        return _note(answer['error'], 'orange'), [], []
+    if 'error' in result:
+        return _note(result['error'], 'orange'), [], []
 
-    text, colour = logic.verdict_headline(answer)
+    text, colour = logic.ic_note(result)
     notes = dmc.Stack(gap=4, children=[
         _note(text, colour),
-        _note(logic.decay_note(answer['decay'])),
-        _note(logic.multiple_testing_note(answer)),
+        _note(logic.ic_decay_note(result['decay'], higher_is_better=result['higher_is_better'])),
+        _note(logic.multiple_testing_note(result)),
     ])
-    return notes, answer['decay'].to_dict('records'), answer['quantiles'].to_dict('records')
+    return notes, result['decay'].to_dict('records'), result['quantiles'].to_dict('records')
 
 
 @callback(Output('rs-saved', 'children'),
@@ -322,32 +311,29 @@ def predict_idea(_clicks, name):
           State('rs-name', 'value'), State('rs-description', 'value'),
           State('rs-expression', 'value'), State('rs-direction', 'value'),
           State('rs-status', 'value'), prevent_initial_call=True)
-def save_idea(_save, _delete, name, description, expression, direction, status):
-    """Write the idea, or remove it, and throw away whatever the old definition had computed."""
+def save_factor(_save, _delete, name, description, expression, direction, status):
+    """Save or delete the factor, clearing cached results for its previous definition."""
     if not name:
-        return _note('An idea needs a name before it can be saved.', 'orange')
+        return _note('A factor needs a name.', 'orange')
     if ctx.triggered_id == 'rs-btn-delete':
         data.delete(name)
-        return _note(f'Deleted {name}, and every answer computed from it.', 'gray')
+        return _note(f'Deleted {name} and its cached results.', 'gray')
     try:
-        idea = ideas.Idea(name=name, expression=expression or '', description=description or '',
-                          higher_is_better=direction == 'high', status=status)
-        known = data.known_names() | {name}
-        ok, message = logic.validate_expression(idea.expression, known)
+        factor = factors.Factor(name=name, expression=expression or '', description=description or '',
+                                higher_is_better=direction == 'higher', status=status)
+        ok, message = logic.validate_expression(factor.expression, data.known_names() | {name})
         if not ok:
             return _note(message, 'red')
-        data.save(idea)
+        data.save(factor)
     except (ValueError, duckdb.Error) as error:
         return _note(str(error), 'red')
-    return _note(f'Saved {name}. Anything computed from its previous definition has been discarded.',
-                 'green')
+    return _note(f'Saved {name}. Cached results for the previous definition were cleared.', 'green')
 
 
 dash.register_page(__name__, path='/factors', name='Factors', layout=layout)
 
-# every grid on the page follows the switch, not just the first one
-for _grid_id in ('rs-library', 'rs-palette', 'rs-distribution', 'rs-top', 'rs-bottom',
-                 'rs-decay', 'rs-quantiles'):
+# every grid on the page follows the theme switch
+for _grid_id in ('rs-library', 'rs-fields', 'rs-distribution', 'rs-top', 'rs-bottom', 'rs-decay', 'rs-quantiles'):
     clientside_callback(
         "(dark) => dark ? 'ag-theme-alpine-dark' : 'ag-theme-alpine'",
         Output(_grid_id, 'className'),

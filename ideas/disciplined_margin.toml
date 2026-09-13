@@ -1,6 +1,0 @@
-name = 'disciplined_margin'
-expression = 'rank(mask(neutralize(op_margin, by=sector), rd_intensity > 0.02))'
-description = 'Sector-relative margin, but only among names still spending on research.'
-higher_is_better = true
-status = 'draft'
-verdict = ''

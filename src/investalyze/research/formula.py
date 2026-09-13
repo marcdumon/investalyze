@@ -1,8 +1,8 @@
-"""The language an idea is written in.
+"""The factor expression language.
 
-An idea is one expression over a long panel of `Ticker`, `Date` and data columns. Expressions are
+A factor is one expression over a long panel of `Ticker`, `Date` and data columns. Expressions are
 parsed to a syntax tree and walked against an allow list, so a name that does not exist or a call to
-something that is not a function fails when the idea is saved, naming the offending term, rather than
+something that is not a function fails when the factor is saved, naming the offending term, rather than
 producing a column of NaN discovered much later.
 
 Three kinds of function, distinguished by what they group over:
@@ -12,9 +12,9 @@ Three kinds of function, distinguished by what they group over:
 - time-series, comparing a name to its own past: `lag`, `delta`, `pct_change`, `mean`, `std`
 - elementwise, row by row: `where`, `mask`, `safe_div`, `abs`, `log`, `clip`, `sign`
 
-`mask(x, condition)` is how an idea says "only among names where ...". It drops a name from the
-cross-section rather than scoring it, which `where(condition, x, 0)` does not: a zero still competes
-in every ranking, and quietly drags the correlations of the idea that produced it.
+`mask(x, condition)` restricts a factor to names meeting a condition. It sets excluded names to NaN,
+which removes them from the cross-section. `where(condition, x, 0)` instead assigns them zero, which
+still takes part in every ranking and biases the factor's correlations.
 
 Division yields NaN where the denominator is zero, in place of the infinity numpy would give, since
 an infinite factor value silently dominates every ranking it takes part in.
@@ -58,7 +58,7 @@ def _called_names(tree: ast.Expression) -> set[str]:
 
 
 def dependencies(expression: str) -> set[str]:
-    """Every column or idea name an expression reads.
+    """Every data field or factor name an expression reads.
 
     Names in function position are excluded, so `rank(a)` depends on `a` alone. A keyword argument
     naming a column, as in `neutralize(a, by=sector)`, is a dependency like any other.
@@ -77,7 +77,7 @@ def validate(expression: str, known: set[str]) -> None:
     tree = _parse(expression)
     for node in ast.walk(tree):
         if not isinstance(node, _ALLOWED_NODES):
-            raise ValueError(f'{type(node).__name__} is not allowed in an idea expression')
+            raise ValueError(f'{type(node).__name__} is not allowed in a factor expression')
     for name in sorted(_called_names(tree)):
         if name not in FUNCTIONS:
             raise ValueError(f'unknown function {name!r}; known functions are {", ".join(sorted(FUNCTIONS))}')
@@ -164,7 +164,7 @@ class _Evaluator(ast.NodeVisitor):
 
     def visit_Compare(self, node):
         if len(node.ops) != 1:
-            raise ValueError('chained comparisons are not allowed in an idea expression')
+            raise ValueError('chained comparisons are not allowed in a factor expression')
         left, right = self.visit(node.left), self.visit(node.comparators[0])
         return self._COMPARE[type(node.ops[0])](left, right)
 
@@ -187,7 +187,7 @@ class _Evaluator(ast.NodeVisitor):
         return self._call(name, arguments, keywords)
 
     def generic_visit(self, node):
-        raise ValueError(f'{type(node).__name__} is not allowed in an idea expression')
+        raise ValueError(f'{type(node).__name__} is not allowed in a factor expression')
 
     def _where(self, condition, when_true, when_false) -> pd.Series:
         """Pick between two branches row by row."""

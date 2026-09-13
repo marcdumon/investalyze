@@ -1,0 +1,6 @@
+name = 'earnings_yield'
+expression = 'income_net_income / mcap'
+description = 'TTM net income per unit of market capitalisation.'
+higher_is_better = true
+status = 'candidate'
+notes = ''

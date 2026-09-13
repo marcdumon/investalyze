@@ -1,9 +1,8 @@
-"""Read side of the workbench.
+"""Read side of the Factors page.
 
-Every read opens its own short-lived read-only connection, matching the other pages, so nothing here
-can block a job holding the write lock. Drafting is deliberately sampled: a draft is computed over a
-few hundred liquid names and a coarse date grid, because the answer to "is this idea sane" does not
-change with the last decimal place and a sub-second reply is what makes editing a loop.
+Every read opens its own short-lived read-only connection, matching the other pages, so a running job
+holding the write lock is never blocked. Diagnostics run on a sample: the most liquid names on a
+monthly grid, which keeps a run around a second.
 """
 
 from pathlib import Path
@@ -11,16 +10,16 @@ from pathlib import Path
 import pandas as pd
 
 from investalyze.ingest import storage
-from investalyze.research import cache, compute, diagnostics, fields, ideas, predict
+from investalyze.research import cache, compute, diagnostics, factors, fields, tearsheet
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
-IDEAS_DIR = ROOT / 'ideas'
+FACTORS_DIR = ROOT / 'factors'
 CACHE_DIR = DATA_ROOT / 'cache'
 
-DRAFT_NAMES = 400
-DRAFT_START, DRAFT_END = '2016-01-31', '2024-12-31'
-FULL_NAMES = 1500
+SAMPLE_NAMES = 400
+SAMPLE_START, SAMPLE_END = '2016-01-31', '2024-12-31'
+TEARSHEET_NAMES = 1500
 
 
 def _connect():
@@ -28,12 +27,12 @@ def _connect():
 
 
 def library() -> dict:
-    """Every stored idea, keyed by name."""
-    return ideas.load(IDEAS_DIR)
+    """Every stored factor, keyed by name."""
+    return factors.load(FACTORS_DIR)
 
 
 def catalog() -> dict:
-    """Every raw field an idea may read."""
+    """Every data field a factor expression may read."""
     con = _connect()
     try:
         return fields.catalog(con)
@@ -42,25 +41,25 @@ def catalog() -> dict:
 
 
 def known_names() -> set:
-    """Everything an expression may reference: raw fields, identity columns and other ideas."""
+    """Every name an expression may reference: data fields, reference columns and other factors."""
     return set(catalog()) | set(fields.IDENTITY) | set(library())
 
 
 def field_rows(search: str | None = None) -> list[dict]:
-    """The palette, as grid rows, narrowed by a search term."""
+    """The data fields as grid rows, filtered by a search term."""
     available = catalog()
     rows = []
     for alias in sorted(available):
         if search and search.lower() not in alias.lower():
             continue
         field = available[alias]
-        rows.append({'name': alias, 'statement': field.statement, 'window': field.window,
-                     'source': field.source})
+        rows.append({'name': alias, 'statement': field.statement, 'period': field.window.upper(),
+                     'line_item': field.source})
     return rows
 
 
-def sample_tickers(con, limit: int) -> list[str]:
-    """The most traded names, so a sampled answer describes the universe anyone would trade."""
+def liquid_tickers(con, limit: int) -> list[str]:
+    """The names with the highest average dollar volume over the last year."""
     rows = con.execute("""
         SELECT Ticker FROM (
             SELECT Ticker, avg(C * V) AS dollar_volume
@@ -75,32 +74,30 @@ def _grid(start: str, end: str) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(pd.date_range(start, end, freq='ME'))
 
 
-def preview(name: str, expression: str, *, higher_is_better: bool = True,
-            names: int = DRAFT_NAMES) -> dict:
-    """Compute a draft over a sample and report everything level one knows about it.
+def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True,
+                    names: int = SAMPLE_NAMES) -> dict:
+    """Compute a factor on the sample and return its diagnostics.
 
-    The draft is never stored: it is held in a library alongside the saved ideas just long enough to
-    be evaluated, which is what lets an unsaved idea reference a saved one.
+    The factor does not have to be saved: it is added to a copy of the library for this run only, so
+    an unsaved expression can reference saved factors.
     """
     con = _connect()
     try:
         available = fields.catalog(con)
-        draft = ideas.Idea(name=name, expression=expression, higher_is_better=higher_is_better)
-        working = library() | {name: draft}
-        ideas.validate_library(working, set(available) | set(fields.IDENTITY))
+        candidate = factors.Factor(name=name, expression=expression, higher_is_better=higher_is_better)
+        working = library() | {name: candidate}
+        factors.validate_library(working, set(available) | set(fields.IDENTITY))
 
-        tickers = sample_tickers(con, names)
-        frame = compute.compute(con, [name], working, as_of=_grid(DRAFT_START, DRAFT_END), tickers=tickers)
+        tickers = liquid_tickers(con, names)
+        frame = compute.compute(con, [name], working, as_of=_grid(SAMPLE_START, SAMPLE_END), tickers=tickers)
         if frame.empty or name not in frame.columns:
-            return {'error': 'this idea produced no values over the sample'}
+            return {'error': 'No factor values over the sample.'}
 
         others = [other for other in working if other != name and other in frame.columns]
-        inputs = sorted(draft.dependencies)
         return {
-            'frame': frame,
             'coverage': diagnostics.coverage(frame, name),
             'distribution': diagnostics.distribution(frame[name]),
-            'extremes': diagnostics.extremes(frame, name, n=8, inputs=inputs),
+            'top_bottom': diagnostics.top_bottom(frame, name, n=8, inputs=sorted(candidate.dependencies)),
             'correlations': diagnostics.correlations(frame, name, others),
             'autocorrelation': diagnostics.rank_autocorrelation(frame, name),
             'sample': {'names': int(frame['Ticker'].nunique()), 'dates': int(frame['Date'].nunique())},
@@ -109,29 +106,27 @@ def preview(name: str, expression: str, *, higher_is_better: bool = True,
         con.close()
 
 
-def verdict(name: str, *, horizon: int = predict.DEFAULT_HORIZON, names: int = FULL_NAMES) -> dict:
-    """Level two for one saved idea, cached so asking again is cheap."""
+def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON, names: int = TEARSHEET_NAMES) -> dict:
+    """IC analysis for one saved factor, using the cache."""
     con = _connect()
     try:
         working = library()
-        tickers = sample_tickers(con, names)
-        frame = compute.compute(con, [name], working, as_of=_grid(DRAFT_START, DRAFT_END), tickers=tickers)
+        tickers = liquid_tickers(con, names)
+        frame = compute.compute(con, [name], working, as_of=_grid(SAMPLE_START, SAMPLE_END), tickers=tickers)
         if frame.empty or name not in frame.columns:
-            return {'error': 'this idea produced no values, so there is nothing to score'}
-        store = cache.Cache(CACHE_DIR)
-        return predict.verdict(con, name, working, frame, horizon=horizon, store=store)
+            return {'error': 'No factor values, so there is nothing to analyse.'}
+        return tearsheet.tearsheet(con, name, working, frame, horizon=horizon, store=cache.Cache(CACHE_DIR))
     finally:
         con.close()
 
 
-def save(idea: ideas.Idea) -> None:
-    """Write one idea to the library, and drop any answer the previous definition left behind."""
-    ideas.save(idea, IDEAS_DIR)
-    cache.Cache(CACHE_DIR).forget(idea.name)
+def save(factor: factors.Factor) -> None:
+    """Write one factor to the library and clear cached results for its previous definition."""
+    factors.save(factor, FACTORS_DIR)
+    cache.Cache(CACHE_DIR).forget(factor.name)
 
 
 def delete(name: str) -> None:
-    """Remove an idea and everything computed from it."""
-    path = IDEAS_DIR / f'{name}.toml'
-    path.unlink(missing_ok=True)
+    """Remove a factor and its cached results."""
+    (FACTORS_DIR / f'{name}.toml').unlink(missing_ok=True)
     cache.Cache(CACHE_DIR).forget(name)

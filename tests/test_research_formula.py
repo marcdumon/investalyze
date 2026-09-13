@@ -1,4 +1,4 @@
-"""Tests for the idea formula language: what it accepts, what it refuses, and what it computes."""
+"""Tests for the factor expression language: what it accepts, refuses and computes."""
 
 from datetime import date
 
@@ -44,14 +44,14 @@ def test_where_picks_between_two_branches(panel):
     assert result.tolist() == [0.0, 0.0, 1.0, 0.0, 1.0, 1.0]
 
 
-def test_mask_drops_a_name_rather_than_scoring_it(panel):
+def test_mask_sets_excluded_names_to_nan(panel):
     result = formula.evaluate('mask(revenue, income > 3)', panel)
     assert np.isnan(result.iloc[0]) and np.isnan(result.iloc[2])
     assert result.iloc[1] == pytest.approx(20.0)
 
 
 def test_a_masked_name_leaves_the_cross_section(panel):
-    """The difference from where(cond, x, 0): a zero still competes in the ranking, a NaN does not."""
+    """Unlike where(cond, x, 0), which assigns zero and keeps the name in the ranking."""
     masked = formula.evaluate('rank(mask(revenue, income > 3))', panel)
     zeroed = formula.evaluate('rank(where(income > 3, revenue, 0))', panel)
     assert np.isnan(masked.iloc[0])
@@ -163,9 +163,9 @@ def test_plain_division_by_zero_also_yields_nan(panel):
     assert np.isnan(result.iloc[2])
 
 
-# --- ideas may reference other ideas, which are simply columns by then ---
+# --- factors may reference other factors, which are columns by then ---
 
-def test_an_idea_referencing_another_idea_reads_its_column(panel):
+def test_a_factor_referencing_another_factor_reads_its_column(panel):
     enriched = panel.assign(margin=panel['income'] / panel['revenue'])
     # AAA and BBB both margin 0.2 on the first date, so they share the averaged rank
     assert formula.evaluate('rank(margin)', enriched).tolist() == pytest.approx(

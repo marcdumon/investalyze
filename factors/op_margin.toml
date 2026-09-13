@@ -2,5 +2,5 @@ name = 'op_margin'
 expression = 'operating_income_loss / revenue'
 description = 'Operating profit per unit of revenue.'
 higher_is_better = true
-status = 'draft'
-verdict = ''
+status = 'candidate'
+notes = ''

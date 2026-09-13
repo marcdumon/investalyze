@@ -1,4 +1,4 @@
-"""The raw palette an idea is written against.
+"""Data fields available to factor expressions.
 
 Every line item on the three financial statements becomes a name an expression can use, so the
 whole of what has been ingested is reachable without anyone hand-listing it. Aliases are derived
@@ -9,7 +9,7 @@ the statement-qualified `income_net_income` and `cashflow_net_income`. Silently 
 two would be a number whose origin the reader cannot see.
 
 Flow items on the income and cash flow statements are summed over the trailing four quarters;
-balance sheet items are sampled from the latest published quarter. Both read through the
+balance sheet items use the most recent quarter (MRQ). Both read through the
 point-in-time joins in `analysis.factors_pit`, so a value is only ever visible on a date it had
 already been published.
 """
@@ -21,8 +21,8 @@ import pandas as pd
 
 from investalyze.analysis import factors_pit
 
-TTM, LATEST = 'ttm', 'latest'
-STATEMENT_WINDOWS = {'income': TTM, 'cashflow': TTM, 'balance': LATEST}
+TTM, MRQ = 'ttm', 'mrq'
+STATEMENT_WINDOWS = {'income': TTM, 'cashflow': TTM, 'balance': MRQ}
 
 # bookkeeping columns present on every statement, which describe the filing rather than
 # the business, so they are not quantities anyone builds a factor from
@@ -44,7 +44,7 @@ class Field:
 
     @property
     def window(self) -> str:
-        """Whether the field is summed over a trailing year or sampled at the latest quarter."""
+        """TTM for flow items summed over four quarters, MRQ for balance sheet items."""
         return STATEMENT_WINDOWS[self.statement]
 
 
@@ -57,7 +57,7 @@ def to_alias(heading: str) -> str:
 
 
 def build_catalog(schema: dict) -> dict:
-    """Every field an idea may read, keyed by alias, given each statement's column headings."""
+    """Every data field, keyed by alias, given each statement's column headings."""
     by_alias: dict[str, list[Field]] = {}
     for statement, headings in schema.items():
         for heading in headings:
@@ -87,7 +87,7 @@ def read_schema(con) -> dict:
 
 
 def catalog(con) -> dict:
-    """Every field an idea may read, taken from the live database schema."""
+    """Every data field, taken from the live database schema."""
     return build_catalog(read_schema(con))
 
 
@@ -105,8 +105,8 @@ def panel(con, names: set[str], *, as_of: pd.DatetimeIndex, version: str = facto
           tickers: list[str] | None = None) -> pd.DataFrame:
     """A long panel of the requested fields, one row per name per as-of date.
 
-    Only the fields actually asked for are read, which is what keeps drafting an idea cheap: a two
-    term expression queries two columns rather than the whole statement. Trailing-year items also
+    Only the requested fields are queried, so a two-field expression reads two columns rather than
+    every statement column. Trailing-year items also
     return a `<alias>_prior` column holding the year before, so a growth rate needs no second query.
     """
     available = catalog(con)

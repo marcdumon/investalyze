@@ -1,1 +1,1 @@
-"""Factor research: ideas, the language they are written in, and the answers computed from them."""
+"""Factor research: factor definitions, the expression language, and cached results."""

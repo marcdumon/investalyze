@@ -1,0 +1,6 @@
+name = 'rd_intensity'
+expression = '-research_development / revenue'
+description = 'R&D expense as a share of revenue. Stored negative, so the sign is flipped.'
+higher_is_better = true
+status = 'candidate'
+notes = ''

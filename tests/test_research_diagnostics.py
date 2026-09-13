@@ -1,4 +1,4 @@
-"""Tests for the readings that let a bad idea be discarded before anything expensive runs."""
+"""Tests for factor diagnostics: coverage, distribution, top/bottom names, correlation, turnover."""
 
 from datetime import date
 
@@ -52,23 +52,23 @@ def test_distribution_of_nothing_usable_says_so():
     assert diagnostics.distribution(pd.Series([np.nan, np.nan]))['count'] == 0
 
 
-def test_extremes_reads_the_most_recent_date_only(frame):
-    ends = diagnostics.extremes(frame, 'value', n=1)
+def test_top_bottom_reads_the_latest_date_only(frame):
+    ends = diagnostics.top_bottom(frame, 'value', n=1)
     assert ends['top']['Ticker'].tolist() == ['CCC']
     assert ends['bottom']['Ticker'].tolist() == ['AAA']
 
 
-def test_extremes_shows_the_inputs_behind_the_value(frame):
-    ends = diagnostics.extremes(frame, 'value', n=1, inputs=['input'])
+def test_top_bottom_shows_the_inputs(frame):
+    ends = diagnostics.top_bottom(frame, 'value', n=1, inputs=['input'])
     assert 'input' in ends['top'].columns
 
 
-def test_a_perfectly_opposed_idea_correlates_negatively(frame):
+def test_an_opposed_factor_correlates_negatively(frame):
     scores = diagnostics.correlations(frame, 'value', ['other'])
     assert scores['other'] < 0
 
 
-def test_correlation_ignores_the_idea_itself(frame):
+def test_correlation_excludes_the_factor_itself(frame):
     assert 'value' not in diagnostics.correlations(frame, 'value', ['value', 'other'])
 
 

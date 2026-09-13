@@ -1,4 +1,4 @@
-"""Tests for the raw field catalog: how statement columns become names an idea can use."""
+"""Tests for the data field catalog: how statement columns become expression names."""
 
 import pytest
 
@@ -48,10 +48,10 @@ def test_an_unambiguous_name_keeps_its_bare_alias():
     assert 'revenue' in fields.build_catalog(SCHEMA)
 
 
-def test_flow_items_are_summed_over_a_year_and_balances_are_sampled():
+def test_flow_items_are_ttm_and_balance_items_are_mrq():
     catalog = fields.build_catalog(SCHEMA)
     assert catalog['revenue'].window == fields.TTM
-    assert catalog['total_assets'].window == fields.LATEST
+    assert catalog['total_assets'].window == fields.MRQ
     assert catalog['dividends_paid'].window == fields.TTM
 
 
