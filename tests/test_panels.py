@@ -46,8 +46,8 @@ def con() -> duckdb.DuckDBPyConnection:
 
     # share counts chosen so the market-cap order (BBB, CCC, AAA) reverses the liquidity order
     con.execute('CREATE TABLE income (Ticker VARCHAR, Period VARCHAR, "Report Date" DATE, '
-                '"Shares (Basic)" BIGINT, "Shares (Diluted)" BIGINT)')
-    con.executemany('INSERT INTO income VALUES (?, ?, ?, ?, ?)',
+                '"Shares (Basic)" BIGINT, "Shares (Diluted)" BIGINT, IsRestated BOOLEAN)')
+    con.executemany('INSERT INTO income VALUES (?, ?, ?, ?, ?, FALSE)',
                     [('AAA', 'Q', '2025-12-31', 1_000_000, 1_000_000),
                      ('BBB', 'Q', '2025-12-31', 100_000_000, 100_000_000),
                      ('CCC', 'Q', '2025-12-31', 10_000_000, 10_000_000),
@@ -167,6 +167,12 @@ def test_complete_universe_can_require_a_known_sector(con):
 def test_complete_universe_ranks_by_market_cap_when_asked(con):
     calendar = panels.trading_calendar(con, min_coverage=0.5)
     assert panels.complete_universe(con, calendar, rank_by='mcap', require_sector=False) == ['BBB', 'CCC', 'AAA']
+
+
+def test_a_restated_share_count_outranks_the_filing_it_restates(con):
+    con.execute("INSERT INTO income VALUES ('AAA', 'Q', '2025-12-31', 1_000_000_000, 1_000_000_000, TRUE)")
+    calendar = panels.trading_calendar(con, min_coverage=0.5)
+    assert panels.complete_universe(con, calendar, rank_by='mcap', require_sector=False) == ['AAA', 'BBB', 'CCC']
 
 
 def test_complete_universe_ranks_alphabetically_when_no_preference_is_wanted(con):
@@ -327,7 +333,7 @@ def _listing_con() -> duckdb.DuckDBPyConnection:
     connection.executemany('INSERT INTO prices VALUES (?, ?, ?, ?, ?, ?, ?, ?)', rows)
     # the ranking joins share counts for the mcap option, so the table has to exist
     connection.execute('CREATE TABLE income (Ticker VARCHAR, Period VARCHAR, "Report Date" DATE, '
-                       '"Shares (Basic)" BIGINT, "Shares (Diluted)" BIGINT)')
+                       '"Shares (Basic)" BIGINT, "Shares (Diluted)" BIGINT, IsRestated BOOLEAN)')
     return connection
 
 

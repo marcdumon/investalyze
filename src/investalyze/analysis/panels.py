@@ -144,7 +144,7 @@ def _ranked_universe(con: duckdb.DuckDBPyConnection, calendar: pd.DatetimeIndex,
         SELECT c.Ticker, c.liquidity, shares.n * close.last * 1.0 AS mcap
         FROM complete c
         LEFT JOIN (SELECT Ticker, arg_max(C, Date) AS last FROM prices GROUP BY Ticker) close USING (Ticker)
-        LEFT JOIN (SELECT Ticker, arg_max(COALESCE("Shares (Basic)", "Shares (Diluted)"), "Report Date") AS n
+        LEFT JOIN (SELECT Ticker, arg_max(COALESCE("Shares (Basic)", "Shares (Diluted)"), ("Report Date", IsRestated)) AS n
                    FROM income WHERE Period = 'Q' GROUP BY Ticker) shares USING (Ticker)
     """, params).df()
 

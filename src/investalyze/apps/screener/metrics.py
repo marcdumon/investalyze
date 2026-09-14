@@ -36,10 +36,12 @@ def build_metrics(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         GROUP BY Ticker
     """).df()
 
+    # a quarter and its fiscal year, or a filing and its restatement, can share the latest report date:
+    # the restated figure wins, then the quarter
     shares = con.execute("""
-        SELECT Ticker, arg_max(shares, "Report Date") AS shares
+        SELECT Ticker, arg_max(shares, ("Report Date", IsRestated, Period = 'Q')) AS shares
         FROM (
-            SELECT Ticker, COALESCE("Shares (Basic)", "Shares (Diluted)") AS shares, "Report Date"
+            SELECT Ticker, COALESCE("Shares (Basic)", "Shares (Diluted)") AS shares, "Report Date", IsRestated, Period
             FROM income
             WHERE COALESCE("Shares (Basic)", "Shares (Diluted)") IS NOT NULL
         )

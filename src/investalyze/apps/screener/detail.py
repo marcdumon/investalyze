@@ -41,7 +41,7 @@ def detail_children(ticker: str, row: pd.Series) -> list:
         fundamentals = con.execute("""
             SELECT "Fiscal Year", "Fiscal Period", Revenue, "Gross Profit", "Operating Income (Loss)",
                    "Net Income", "Shares (Basic)"
-            FROM income WHERE Ticker = ? ORDER BY "Report Date" DESC LIMIT 1
+            FROM income WHERE Ticker = ? ORDER BY "Report Date" DESC, IsRestated DESC, Period = 'Q' DESC LIMIT 1
         """, [ticker]).df()
         anomalies = con.execute(
             "SELECT CheckName, Severity, Date, Details FROM anomalies WHERE Ticker = ? ORDER BY Date", [ticker]
