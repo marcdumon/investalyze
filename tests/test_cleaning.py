@@ -335,3 +335,10 @@ def test_apply_is_idempotent(listings_con):
     rename_ticker.apply(listings_con, rename_fix())
     assert rename_ticker.apply(listings_con, rename_fix()) == 0
     assert rename_ticker.detect(listings_con, rename_fix()) == 0
+
+
+def test_read_fixes_rejects_a_table_outside_the_fixable_tables(tmp_path: Path):
+    path = tmp_path / 'cleaning.toml'
+    path.write_text("[[delete_date_range]]\ntable = 'prices; DROP TABLE income'\ntickers = ['X']\nreason = 'r'\n")
+    with pytest.raises(ValueError, match='not a fixable table'):
+        registry.read_fixes(path)

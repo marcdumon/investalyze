@@ -11,6 +11,7 @@ from pathlib import Path
 
 from investalyze.cleaning import delete_date_range, rebuild_adjusted_close, rename_ticker, repair_zero_low, repair_zero_open, set_value
 from investalyze.cleaning.fix import Fix
+from investalyze.ingest.storage import TICKER_KEYED_TABLES
 
 FIX_TYPES = {
     'delete_date_range': delete_date_range,
@@ -20,6 +21,9 @@ FIX_TYPES = {
     'repair_zero_open': repair_zero_open,
     'set_value': set_value,
 }
+
+# fix modules put `table` into SQL as an identifier, so it must name one of these
+FIX_TABLES = frozenset(TICKER_KEYED_TABLES) | {'market_data'}
 
 _REQUIRED = ('tickers', 'reason')
 _REQUIRED_EXTRA = {
@@ -39,8 +43,8 @@ def parse_fixes(text: str) -> list[Fix]:
     `tickers` and `reason`. Additional required fields depend on fix type: `table` for most
     types (delete_date_range, rebuild_adjusted_close, repair_zero_low, repair_zero_open),
     `column` for set_value, and `new_ticker` for rename_ticker. `start`/`end` are optional
-    inclusive TOML dates. Raises ValueError on unknown section, missing required field, or
-    validation error (e.g. rename_ticker with != 1 ticker).
+    inclusive TOML dates. `table` must be one of `FIX_TABLES`. Raises ValueError on unknown section,
+    missing required field, unknown table, or validation error (e.g. rename_ticker with != 1 ticker).
     """
     raw = tomllib.loads(text)
     fixes: list[Fix] = []
@@ -54,6 +58,8 @@ def parse_fixes(text: str) -> list[Fix]:
             missing = [field for field in required if field not in entry]
             if missing:
                 raise ValueError(f'[[{section}]] entry missing required field(s): {", ".join(missing)}')
+            if 'table' in entry and entry['table'] not in FIX_TABLES:
+                raise ValueError(f'[[{section}]] table {entry["table"]!r} is not a fixable table, known: {sorted(FIX_TABLES)}')
             if section == 'rename_ticker' and len(entry['tickers']) != 1:
                 raise ValueError(f'[[{section}]] entry needs exactly one ticker, got {len(entry["tickers"])}')
             fixes.append(
