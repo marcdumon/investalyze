@@ -102,7 +102,7 @@ class BacktestReport:
         if not worst.empty:
             lines += ['## Deepest drawdowns', '', '| peak | trough | recovered | depth | sessions |',
                       '| --- | --- | --- | ---: | ---: |']
-            for _, row in worst.iterrows():
+            for row in worst.to_dict('records'):
                 recovered = 'not yet' if pd.isna(row['recovered']) else str(row['recovered'].date())
                 lines.append(f'| {row["peak"].date()} | {row["trough"].date()} | {recovered} | '
                              f'{row["depth"]:.1%} | {row["sessions"]} |')

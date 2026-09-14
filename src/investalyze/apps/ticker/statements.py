@@ -65,7 +65,7 @@ def line_items(frame: pd.DataFrame) -> list[str]:
     return [column for column in frame.columns if column not in META_COLUMNS]
 
 
-def period_label(row: pd.Series) -> str:
+def period_label(row: dict) -> str:
     """Column header for one fiscal period: 'FY 2024' or '2024 Q3'."""
     if row['Fiscal Period'] == 'FY':
         return f"FY {row['Fiscal Year']}"
@@ -161,7 +161,7 @@ def table_data(frame: pd.DataFrame, statement: str, depth: str, view: str,
     unchanged lines are dropped. Rows carry a `level` field: 0 statement totals (bold +
     separator), 1 summary lines, 2 detail lines (indented, dimmed).
     """
-    labels = [period_label(row) for _, row in frame.iterrows()]
+    labels = [period_label(row) for row in frame.to_dict('records')]
     items = line_items(frame)
     if depth == 'summary':
         items = [item for item in SUMMARY[statement] if item in items]

@@ -130,7 +130,7 @@ def classify(listings: pd.DataFrame, tracked: set[str], dead_tickers: set[str], 
     """
     last_company_name = last_company_name or {}
     candidates = []
-    for _, row in listings.iterrows():
+    for row in listings.to_dict('records'):
         ticker = row['ticker']
         if ticker in tracked:
             continue

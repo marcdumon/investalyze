@@ -154,12 +154,13 @@ def test_stored_portfolio_run_ids_are_unchanged():
 
 
 def _simulation() -> backtest.Simulation:
-    """A two-session simulation with one fill, enough to build a stored-run report."""
-    dates = pd.DatetimeIndex(['2024-01-02', '2024-01-03'])
+    """A four-session simulation with one fill and one recovered drawdown, enough to build a stored-run report."""
+    dates = pd.DatetimeIndex(['2024-01-02', '2024-01-03', '2024-01-04', '2024-01-05'])
     fills = pd.DataFrame({'Date': [dates[1]], 'Ticker': ['AAA'], 'Side': ['buy'], 'Shares': [10.0], 'Price': [100.0],
                           'Notional': [1000.0], 'Cost': [1.0], 'Kind': ['market']})
-    return backtest.Simulation(equity=pd.Series([1_000_000.0, 1_000_100.0], index=dates),
-                               gross=pd.Series([0.0, 0.001], index=dates), net=pd.Series([0.0, 0.001], index=dates),
+    exposure = pd.Series([0.0, 0.001, 0.001, 0.001], index=dates)
+    return backtest.Simulation(equity=pd.Series([1_000_000.0, 1_050_000.0, 980_000.0, 1_060_000.0], index=dates),
+                               gross=exposure, net=exposure,
                                fills=fills, benchmark_equity=None, stats={'cagr': 0.1, 'sharpe': 1.0},
                                tickers=['AAA'], names_median=1.0)
 
@@ -170,12 +171,13 @@ def test_a_simulated_portfolio_becomes_rows_for_every_run_table():
     from investalyze.research import factors
     library = {'value': factors.Factor(name='value', expression='revenue')}
     portfolio = backtest.FactorPortfolio(names=('value',))
-    params = backtest.run_params(portfolio, library, universe_size=1000, start='2024-01-02', end='2024-01-03', holdout=None)
+    params = backtest.run_params(portfolio, library, universe_size=1000, start='2024-01-02', end='2024-01-05', holdout=None)
     finished = backtest.build_report(_simulation(), portfolio, params, backtest_config.read())
     assert list(finished.run_row().columns) == writer.RUN_COLS
     assert list(finished.equity_rows().columns) == writer.EQUITY_COLS
     assert list(finished.trade_rows().columns) == writer.TRADE_COLS
     assert finished.signal == 'value'
+    assert '| 2024-01-03 | 2024-01-04 | 2024-01-05 | -6.7% | 1 |' in finished.render()
 
 
 def test_a_simulated_timing_rule_becomes_rows_for_every_run_table():
@@ -184,7 +186,7 @@ def test_a_simulated_timing_rule_becomes_rows_for_every_run_table():
     from investalyze.research import factors, timing
     library = {'new_high': factors.Factor(name='new_high', expression='close')}
     rule = timing.TimingRule('new_high', trailing_stop=0.1)
-    params = timing.run_params(rule, library, universe=None, universe_size=500, start='2024-01-02', end='2024-01-03',
+    params = timing.run_params(rule, library, universe=None, universe_size=500, start='2024-01-02', end='2024-01-05',
                                holdout=None)
     finished = timing.build_report(_simulation(), rule, params, backtest_config.read())
     assert list(finished.run_row().columns) == writer.RUN_COLS

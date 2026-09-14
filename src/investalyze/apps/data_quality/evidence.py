@@ -119,6 +119,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     flagged_pos = _flagged_position(statement, parsed)
     lo = max(0, flagged_pos - 2)
     window = statement.iloc[lo:flagged_pos + 3]
+    periods = window.to_dict('records')
     window_labels = labels.iloc[lo:flagged_pos + 3].tolist()
     flagged_label = labels.iloc[flagged_pos] if flagged_pos is not None else None
 
@@ -128,7 +129,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
                                               'color': 'var(--mantine-color-orange-6)' if label == flagged_label else None})
                         for label in window_labels])
     filing_cells = [html.Td('SEC filing', style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
-    for _, srow in window.iterrows():
+    for srow in periods:
         url = (_edgar_restated_url(cik, srow['Restated Date']) if srow['IsRestated']
               else _edgar_filing_url(cik, srow['Fiscal Period'], srow['Report Date']))
         cell = html.A('EDGAR', href=url, target='_blank') if url else '-'
@@ -137,7 +138,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     check = str(row.get('CheckName', ''))
     involved = actions.involved_items(check, str(row.get('Details', '')))
     used_columns = []
-    for label, (_, srow) in zip(window_labels, window.iterrows()):
+    for label, srow in zip(window_labels, periods):
         if label == flagged_label:
             used_columns.append(True)
         elif check == 'quarters_vs_fy' and parsed is not None:
@@ -149,7 +150,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     body = []
     for item in line_items:
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
-        for used, (_, srow) in zip(used_columns, window.iterrows()):
+        for used, srow in zip(used_columns, periods):
             value = srow[item]
             text = '' if pd.isna(value) else (f'{value:,.0f}' if isinstance(value, (int, float)) else str(value))
             cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right',
@@ -157,7 +158,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
         body.append(html.Tr(cells))
     for item in ('Report Date', 'Publish Date', 'Restated Date'):
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
-        for _, srow in window.iterrows():
+        for srow in periods:
             value = srow[item]
             text = '' if pd.isna(value) else pd.Timestamp(value).strftime('%Y-%m-%d')
             cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right'}))
