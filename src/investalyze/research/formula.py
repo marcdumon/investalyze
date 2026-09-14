@@ -22,7 +22,6 @@ an infinite factor value silently dominates every ranking it takes part in.
 """
 
 import ast
-from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -118,31 +117,36 @@ def _finite(series: pd.Series) -> pd.Series:
     return series.replace([np.inf, -np.inf], np.nan)
 
 
-def _percentile(values: pd.Series) -> pd.Series:
-    """Position within the group, from 0 for the lowest to 100 for the highest."""
-    order = values.rank(method='average') - 1.0
-    span = values.count() - 1
-    if span <= 0:
-        return pd.Series(np.nan, index=values.index)
-    return order / span * 100.0
+def _percentile(values: pd.Series, dates: pd.Series) -> pd.Series:
+    """Position within each date's cross-section, from 0 for the lowest to 100 for the highest."""
+    by_date = values.groupby(dates)
+    span = by_date.transform('count') - 1
+    return ((by_date.rank(method='average') - 1.0) / span.where(span > 0)) * 100.0
 
 
-def _winsorize(values: pd.Series, share: float) -> pd.Series:
-    """The group's values with both tails pulled in to the given quantile."""
-    lower, upper = values.quantile(share), values.quantile(1.0 - share)
+def _zscore(values: pd.Series, dates: pd.Series) -> pd.Series:
+    """Distance from each date's cross-sectional mean, in standard deviations."""
+    by_date = values.groupby(dates)
+    return (values - by_date.transform('mean')) / by_date.transform('std')
+
+
+def _winsorize(values: pd.Series, dates: pd.Series, share: float) -> pd.Series:
+    """Each date's values with both tails pulled in to the given quantile."""
+    by_date = values.groupby(dates)
+    lower = dates.map(by_date.quantile(share))
+    upper = dates.map(by_date.quantile(1.0 - share))
     return values.clip(lower=lower, upper=upper)
 
 
-def _by_date(frame: pd.DataFrame, values: pd.Series, function: Callable[[pd.Series], pd.Series]) -> pd.Series:
-    """Apply a function to each date's cross-section, keeping the frame's row order."""
-    return values.groupby(frame[DATE], group_keys=False).apply(function)
-
-
-def _by_ticker(frame: pd.DataFrame, values: pd.Series, function: Callable[[pd.Series], pd.Series]) -> pd.Series:
-    """Apply a function to each name's own history in date order, keeping the frame's row order."""
+def _by_ticker(frame: pd.DataFrame, values: pd.Series, statistic: str, periods: int) -> pd.Series:
+    """A shift, or a rolling `statistic`, over each name's own history in date order, in the frame's row order."""
     ordered = frame[[TICKER, DATE]].assign(value=values).sort_values([TICKER, DATE])
-    shifted = ordered.groupby(TICKER, group_keys=False)['value'].apply(function)
-    return shifted.reindex(frame.index)
+    by_ticker = ordered.groupby(TICKER, sort=False)['value']
+    if statistic == 'shift':
+        result = by_ticker.shift(periods)
+    else:
+        result = getattr(by_ticker.rolling(periods), statistic)().droplevel(0)
+    return result.reindex(frame.index)
 
 
 class _Evaluator(ast.NodeVisitor):
@@ -259,33 +263,27 @@ class _Evaluator(ast.NodeVisitor):
         # functions still read a name's full history
         if IN_UNIVERSE in self.frame.columns:
             values = values.where(self.frame[IN_UNIVERSE].astype(bool))
+        dates = self.frame[DATE]
         if name == 'rank':
-            return _by_date(self.frame, values, _percentile)
+            return _percentile(values, dates)
         if name == 'zscore':
-            return _by_date(self.frame, values, lambda group: (group - group.mean()) / group.std())
+            return _zscore(values, dates)
         if name == 'winsorize':
             share = float(arguments[1]) if len(arguments) > 1 else 0.01
-            return _by_date(self.frame, values, lambda group: _winsorize(group, share))
+            return _winsorize(values, dates, share)
         groups = keywords.get('by') if 'by' in keywords else arguments[1]
-        keyed = pd.Series(list(zip(self.frame[DATE], groups)), index=self.frame.index)
-        return values - values.groupby(keyed).transform('mean')
+        return values - values.groupby([dates, _as_series(groups, self.frame)], dropna=False).transform('mean')
 
     def _time_series(self, name: str, values: pd.Series, arguments: list) -> pd.Series:
         periods = int(arguments[1]) if len(arguments) > 1 else 1
         if name == 'lag':
-            return _by_ticker(self.frame, values, lambda group: group.shift(periods))
+            return _by_ticker(self.frame, values, 'shift', periods)
         if name == 'delta':
-            return values - _by_ticker(self.frame, values, lambda group: group.shift(periods))
+            return values - _by_ticker(self.frame, values, 'shift', periods)
         if name == 'pct_change':
-            previous = _by_ticker(self.frame, values, lambda group: group.shift(periods))
+            previous = _by_ticker(self.frame, values, 'shift', periods)
             return _finite(values / previous.replace(0.0, np.nan) - 1.0)
-        if name == 'mean':
-            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).mean())
-        if name == 'max':
-            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).max())
-        if name == 'min':
-            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).min())
-        return _by_ticker(self.frame, values, lambda group: group.rolling(periods).std())
+        return _by_ticker(self.frame, values, name, periods)
 
 
 def evaluate(expression: str, frame: pd.DataFrame) -> pd.Series:
