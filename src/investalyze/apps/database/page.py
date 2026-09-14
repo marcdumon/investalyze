@@ -11,9 +11,10 @@ import dash
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
-from dash import Input, Output, State, callback, clientside_callback, dcc, html
+from dash import Input, Output, State, callback, clientside_callback, html
 from dash.exceptions import PreventUpdate
 
+from investalyze.apps import components
 from investalyze.apps.database import data, logic
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
@@ -21,22 +22,9 @@ PICK = 'Select a table to see what it holds.'
 
 
 def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = False) -> dag.AgGrid:
-    """One AG Grid with the page's shared styling."""
-    options = {'theme': 'legacy'}
-    if selectable:
-        options['rowSelection'] = {'mode': 'singleRow', 'checkboxes': False,
-                                   'enableClickSelection': True}
-    return dag.AgGrid(
-        id=grid_id, columnDefs=columns, rowData=[],
-        defaultColDef={'sortable': True, 'resizable': True},
-        dashGridOptions=options, columnSize='autoSize', columnSizeOptions={'skipHeader': False},
-        style={'height': height}, className='ag-theme-alpine-dark',
-    )
-
-
-def _note(text: str, colour: str = 'gray') -> dmc.Alert:
-    """A short inline note for an empty, unavailable or refused panel."""
-    return dmc.Alert(text, color=colour, variant='light')
+    """One of the page's grids, its columns sized to their content."""
+    selection = components.SINGLE_ROW if selectable else None
+    return components.grid(grid_id, columns, height, selection=selection, column_size='autoSize', min_width=None)
 
 
 def layout() -> html.Div:
@@ -53,7 +41,7 @@ def layout() -> html.Div:
     ], p='sm', withBorder=True)
 
     detail = dmc.Paper([
-        html.Div(id='db-detail', children=_note(PICK)),
+        html.Div(id='db-detail', children=components.note(PICK)),
         dmc.Text('Columns', fw=600, size='sm', mt=10, mb=4),
         html.Div(id='db-columns-note'),
         _grid('db-columns', logic.COLUMN_COLUMNS, 260),
@@ -87,30 +75,30 @@ def layout() -> html.Div:
 
 @callback(Output('db-tables', 'rowData'), Output('db-tables-notice', 'children'),
           Input('db-tables', 'id'))
-def load_tables(_):
+def load_tables(_: str) -> tuple:
     """Fill the table list once the page mounts."""
     try:
         return logic.table_rows(data.list_tables()), None
     except duckdb.Error:
-        return [], _note(BUSY)
+        return [], components.note(BUSY)
 
 
 @callback(Output('db-detail', 'children'), Output('db-columns', 'rowData'),
           Output('db-columns-note', 'children'), Output('db-sample', 'columnDefs'),
           Output('db-sample', 'rowData'),
           Input('db-tables', 'selectedRows'))
-def show_table(selected):
+def show_table(selected: list[dict] | dict | None) -> tuple:
     """Describe the selected table: what it is for, its columns, and what its rows look like."""
     if not selected:
-        return _note(PICK), [], None, [], []
+        return components.note(PICK), [], None, [], []
     name = selected[0]['name']
     try:
         described = data.describe_table(name)
         sample = data.sample_rows(name)
     except duckdb.Error:
-        return _note(BUSY), [], None, [], []
+        return components.note(BUSY), [], None, [], []
     if not described:
-        return _note(f'{name} is no longer in the database.'), [], None, [], []
+        return components.note(f'{name} is no longer in the database.'), [], None, [], []
 
     purpose, written_by, key = logic.purpose_of(name)
     detail = [
@@ -126,14 +114,14 @@ def show_table(selected):
     skipped = logic.skipped_note(described, data.NULL_COUNT_LIMIT)
     columns = [{'field': column} for column in sample.columns]
     return (html.Div(detail), logic.column_rows(described),
-            _note(skipped) if skipped else None, columns, sample.to_dict('records'))
+            components.note(skipped) if skipped else None, columns, sample.to_dict('records'))
 
 
 @callback(Output('db-results', 'columnDefs'), Output('db-results', 'rowData'),
           Output('db-query-note', 'children'),
           Input('db-btn-run', 'n_clicks'), State('db-sql', 'value'),
           prevent_initial_call=True)
-def run_query(n_clicks, sql):
+def run_query(n_clicks: int | None, sql: str | None) -> tuple:
     """Run the typed query and show what came back, or why nothing did."""
     if not n_clicks:
         raise PreventUpdate

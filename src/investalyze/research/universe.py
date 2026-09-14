@@ -6,12 +6,14 @@ liquid later is not in the universe earlier. Selecting on liquidity measured tod
 past would hold only names already known to have grown, which is look-ahead bias.
 """
 
+import duckdb
 import pandas as pd
 
 DEFAULT_LOOKBACK = 63
 
 
-def liquid_universe(con, as_of: pd.DatetimeIndex, *, size: int, lookback: int = DEFAULT_LOOKBACK) -> pd.DataFrame:
+def liquid_universe(con: duckdb.DuckDBPyConnection, as_of: pd.DatetimeIndex, *, size: int,
+                    lookback: int = DEFAULT_LOOKBACK) -> pd.DataFrame:
     """`Date` and `Ticker` rows: the top `size` names by trailing average dollar volume on each date."""
     dates = [pd.Timestamp(when).date() for when in as_of]
     if not dates:

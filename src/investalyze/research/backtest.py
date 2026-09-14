@@ -14,12 +14,14 @@ Its run id hashes the factor fingerprints with every setting that changes the re
 factor produces a new run rather than overwriting the old one.
 """
 
+import duckdb
 import numpy as np
 import pandas as pd
 
 from investalyze.backtest import config as backtest_config
 from investalyze.backtest import engine, evaluation, performance, report, writer
 from investalyze.backtest import market as market_data
+from investalyze.backtest.book import Book
 from investalyze.research import factors
 
 SIGNAL_KIND = engine.CROSS_SECTIONAL
@@ -62,7 +64,7 @@ def target_weights(scores: pd.DataFrame, sessions: pd.DatetimeIndex, tickers: np
     return weights
 
 
-def benchmark_curve(con, ticker: str, sessions: pd.DatetimeIndex, starting_cash: float) -> pd.Series | None:
+def benchmark_curve(con: duckdb.DuckDBPyConnection, ticker: str, sessions: pd.DatetimeIndex, starting_cash: float) -> pd.Series | None:
     """The benchmark close rebased to the starting cash, on the run's sessions."""
     rows = con.execute('SELECT Date, C FROM market_data WHERE Ticker = ? ORDER BY Date', [ticker]).df()
     if rows.empty:
@@ -95,8 +97,8 @@ def period_stats(equity: pd.Series, benchmark: pd.Series | None, *, holdout_star
     return pd.DataFrame(rows)
 
 
-def simulate(con, frame: pd.DataFrame, names: list[str], library: dict, *, n_quantiles: int = DEFAULT_QUANTILES,
-             cfg: backtest_config.Config | None = None) -> dict:
+def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, names: list[str], library: dict, *,
+             n_quantiles: int = DEFAULT_QUANTILES, cfg: backtest_config.Config | None = None) -> dict:
     """Run the top-quantile portfolio through the engine and return the book's curves, fills and stats."""
     cfg = cfg or backtest_config.read()
     scores = composite_scores(frame, names, library)
@@ -109,7 +111,8 @@ def simulate(con, frame: pd.DataFrame, names: list[str], library: dict, *, n_qua
                              max_weight=cfg.limits.max_weight)
     scheduled = {session for session in range(len(market.dates)) if not np.isnan(weights[session]).all()}
 
-    def step(session: int, book) -> engine.Decision:
+    def step(session: int, book: Book) -> engine.Decision:
+        """Send the target weights on the sessions where holdings change, and hold otherwise."""
         if session not in scheduled:
             return engine.HOLD
         return engine.Decision(targets=weights[session], orders=None)

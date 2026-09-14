@@ -7,22 +7,22 @@ and are paused while a job is running, since the running job may hold the write 
 """
 
 import json
-from pathlib import Path
 
 import dash
 import dash_mantine_components as dmc
 import duckdb
+import pandas as pd
 from dash import Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
-from investalyze.apps import universes
+from investalyze import paths
+from investalyze.apps import components, universes
 from investalyze.apps.control_panel import blacklist_review, listings_review, status
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.ingest import housekeeping, listings, orchestrator, storage
 from investalyze.quality import registry as quality_registry
 
-DATA_ROOT = Path('data')
 
 SEVERITY_COLOR = {'error': 'red', 'warn': 'yellow'}
 
@@ -315,13 +315,10 @@ dash.register_page(__name__, path='/', name='Control Panel', layout=layout)
 
 # ---------- status callbacks ----------
 
-def _read_status():
+def _read_status() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Open a short-lived read-only connection and run the monitor queries."""
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         return status.freshness(con), status.row_counts(con), status.anomaly_summary(con)
-    finally:
-        con.close()
 
 
 @callback(
@@ -329,7 +326,7 @@ def _read_status():
     Output('cp-anomalies-body', 'children'),
     Input('cp-poll', 'n_intervals'),
 )
-def refresh_status(_n: int):
+def refresh_status(_n: int | None) -> tuple:
     """Refresh the status cards; skip the query while the DB is locked by a writer.
 
     MANAGER only knows about jobs the panel itself launched, not a CLI run started directly in a
@@ -372,9 +369,11 @@ def refresh_status(_n: int):
     State('cp-listings-grid', 'selectedRows'),
     prevent_initial_call=True,
 )
-def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_apply_n, listings_scan_n, blacklist_n,
-                 listings_add_n, providers, mode, tasks, quality_errors, quality_warns, blacklist_ticker,
-                 blacklist_universe, blacklist_reason, listings_selected):
+def request_run(ingest_n: int | None, housekeeping_n: int | None, quality_n: int | None, cleaning_check_n: int | None,
+                cleaning_apply_n: int | None, listings_scan_n: int | None, blacklist_n: int | None, listings_add_n: int | None,
+                providers: list[str] | None, mode: str | None, tasks: list[str] | None, quality_errors: list[str] | None,
+                quality_warns: list[str] | None, blacklist_ticker: str | None, blacklist_universe: str | None,
+                blacklist_reason: str | None, listings_selected: list[dict] | dict | None) -> tuple:
     """Build the argv for the clicked Run button. Full ingest loads and cleaning applies go through a confirm modal."""
     trigger = ctx.triggered_id
     if trigger == 'cp-btn-cleaning-check':
@@ -387,7 +386,8 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
     if trigger == 'cp-btn-ingest':
         title, argv = build_ingest_argv(providers, update=mode == 'update')
         if mode == 'full':
-            return {'title': title, 'argv': argv}, True, f"Run a full ingest load? This re-downloads history for {', '.join(providers) if providers else 'all providers'}."
+            scope = ', '.join(providers) if providers else 'all providers'
+            return {'title': title, 'argv': argv}, True, f'Run a full ingest load? This re-downloads history for {scope}.'
         MANAGER.start(title, argv)
         return dash.no_update, False, dash.no_update
     if trigger == 'cp-btn-housekeeping':
@@ -410,7 +410,8 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
             raise PreventUpdate   # need a reason, and exactly one of ticker/universe
         title, argv = build_blacklist_argv([ticker] if ticker else None, universe or None, reason)
         target = f'universe "{universe}" ({len(universes.load_universe(universe))} ticker(s))' if universe else ticker
-        return {'title': title, 'argv': argv}, True, f'Permanently delete all stored data for {target} and block them from future scans?'
+        prompt = f'Permanently delete all stored data for {target} and block them from future scans?'
+        return {'title': title, 'argv': argv}, True, prompt
     if trigger == 'cp-btn-listings-add':
         rows = listings_selected or []
         if not rows:
@@ -427,7 +428,7 @@ def request_run(ingest_n, housekeeping_n, quality_n, cleaning_check_n, cleaning_
     State('cp-pending-action', 'data'),
     prevent_initial_call=True,
 )
-def resolve_confirm(yes_n, no_n, pending):
+def resolve_confirm(yes_n: int | None, no_n: int | None, pending: dict | None) -> bool:
     """Start the pending job on Confirm; just close the modal on Cancel."""
     if ctx.triggered_id == 'cp-confirm-yes' and pending:
         MANAGER.start(pending['title'], pending['argv'])
@@ -441,7 +442,7 @@ def resolve_confirm(yes_n, no_n, pending):
     Output('cp-btn-listings-scan', 'disabled'), Output('cp-btn-blacklist', 'disabled'), Output('cp-btn-listings-add', 'disabled'),
     Input('cp-poll', 'n_intervals'),
 )
-def refresh_job(_n: int):
+def refresh_job(_n: int | None) -> tuple:
     """Update the job badge, live log, and history; disable Run buttons while a job is active."""
     running = MANAGER.is_running()
     job = MANAGER.current if running else (MANAGER.history[0] if MANAGER.history else None)
@@ -472,7 +473,7 @@ def refresh_job(_n: int):
 
 
 @callback(Output('cp-cancel-tick', 'data'), Input('cp-btn-cancel', 'n_clicks'), prevent_initial_call=True)
-def cancel_job(n: int):
+def cancel_job(n: int | None) -> int | None:
     """Cancel the currently running job, if any."""
     MANAGER.cancel()
     return n
@@ -498,7 +499,7 @@ dash.clientside_callback(
     Input('cp-poll', 'n_intervals'),
     State('cp-listings-signature', 'data'),
 )
-def refresh_listings_candidates(_n, last_signature):
+def refresh_listings_candidates(_n: int | None, last_signature: list | None) -> tuple:
     """Reload the candidates grid from the last scan's saved CSV, skipping the update when the
     content hasn't changed since the last poll.
 
@@ -515,7 +516,7 @@ def refresh_listings_candidates(_n, last_signature):
 
 
 @callback(Output('cp-blacklist-universe', 'data'), Input('cp-poll', 'n_intervals'))
-def refresh_blacklist_universe_options(_n):
+def refresh_blacklist_universe_options(_n: int | None) -> list[dict]:
     """List saved universes as options for the blacklist card's universe picker."""
     return universes.list_universes()
 
@@ -527,7 +528,7 @@ def refresh_blacklist_universe_options(_n):
     Input('cp-poll', 'n_intervals'), Input('cp-blacklist-search', 'value'),
     State('cp-blacklist-signature', 'data'),
 )
-def refresh_blacklist_grid(_n, search, last_signature):
+def refresh_blacklist_grid(_n: int | None, search: str | None, last_signature: list | None) -> tuple:
     """Reload the blacklisted-tickers grid from manual_blacklist.csv, filtered by the ticker search
     box, skipping the update on an unchanged poll tick (same scroll-preserving reasoning as
     refresh_listings_candidates); a search-box edit always re-renders, since the visible rows change
@@ -545,10 +546,10 @@ def refresh_blacklist_grid(_n, search, last_signature):
     State('cp-blacklist-grid', 'selectedRows'),
     prevent_initial_call=True,
 )
-def unblacklist_selected(_n, selected):
+def unblacklist_selected(_n: int | None, selected: list[dict] | dict | None) -> components.Children:
     """Remove the selected tickers from manual_blacklist.csv so a future scan can offer them again."""
     rows = selected or []
     if not rows:
         raise PreventUpdate
-    removed = listings.unblacklist_tickers(DATA_ROOT, [r['ticker'] for r in rows])
+    removed = listings.unblacklist_tickers(paths.DATA_ROOT, [r['ticker'] for r in rows])
     return dmc.Text(f'{removed} ticker(s) unblacklisted', size='xs', c='teal')

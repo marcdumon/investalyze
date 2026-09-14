@@ -10,25 +10,25 @@ Cleaning (Preview / Apply). Everything on this page writes only the two TOML fil
 changes when apply is run from the control panel.
 """
 
-from pathlib import Path
 
 import dash
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
-from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, html
+from dash import Input, Output, State, callback, clientside_callback, dcc, html
+from dash.development.base_component import Component
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
+from investalyze import paths
+from investalyze.apps import components
 from investalyze.apps.data_quality import actions, evidence, quality_log, toml_io
 from investalyze.apps.screener.data import get_pool
 from investalyze.cleaning import registry
 from investalyze.ingest import storage
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = REPO_ROOT / 'data'
-LOG_PATH = REPO_ROOT / 'quality_log.toml'
-CLEANING_PATH = REPO_ROOT / 'cleaning.toml'
+LOG_PATH = paths.REPO_ROOT / 'quality_log.toml'
+CLEANING_PATH = paths.REPO_ROOT / 'cleaning.toml'
 ROW_LIMIT = 1000
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'
@@ -81,7 +81,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     if log_entries:
         con.register('logged_raw', quality_log.log_keys_frame(log_entries))
     try:
-        total = int(con.execute(f'SELECT count(*) FROM anomalies{where}', params).fetchone()[0])  # type: ignore[index]
+        total = int(storage.scalar(con, f'SELECT count(*) FROM anomalies{where}', params))
         frame = con.execute(
             f'SELECT CheckName, Severity, SrcTable, Ticker, Date, Key, Details FROM anomalies{where} '
             f'ORDER BY Severity, CheckName, Ticker LIMIT {limit}', params,
@@ -99,7 +99,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     return frame.to_dict('records'), total, all_checks, all_tables
 
 
-def _labeled(label: str, component) -> html.Div:
+def _labeled(label: str, component: Component) -> html.Div:
     """Small label above its control."""
     return html.Div([dmc.Text(label, size='xs', c='dimmed', mb=2), component], style={'marginBottom': '8px'})
 
@@ -213,17 +213,16 @@ clientside_callback(
     Input('dq-btn-refresh', 'n_clicks'), Input('dq-filter-check', 'value'), Input('dq-filter-severity', 'value'),
     Input('dq-filter-ticker', 'value'), Input('dq-filter-table', 'value'), Input('dq-log-tick', 'data'),
 )
-def refresh_grid(_refresh, checks, severity, ticker, tables, _tick):
+def refresh_grid(_refresh: int | None, checks: list[str] | None, severity: str | None, ticker: str | None, tables: list[str] | None,
+                 _tick: int | None) -> tuple:
     """Reload the open-anomaly grid for the current filters and the latest log state."""
     log_entries = quality_log.read_log(LOG_PATH)
-    con = storage.connect(DATA_ROOT, read_only=True)
     try:
-        rows, total, all_checks, all_tables = read_open_anomalies(
-            con, log_entries, checks, severity, ticker, tables, ROW_LIMIT)
+        with storage.connect(read_only=True) as con:
+            rows, total, all_checks, all_tables = read_open_anomalies(
+                con, log_entries, checks, severity, ticker, tables, ROW_LIMIT)
     except duckdb.Error:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dmc.Text(BUSY, size='xs', c='dimmed')
-    finally:
-        con.close()
     shown = (f'showing {len(rows)} of {total:,} open' + (' (filter to see more)' if total > len(rows) else '')
              + f' | {len(log_entries)} logged')
     return rows, shown, all_checks, all_tables, None
@@ -234,7 +233,7 @@ def refresh_grid(_refresh, checks, severity, ticker, tables, _tick):
     Input('dq-grid', 'cellClicked'), State('dq-grid', 'rowData'),
     prevent_initial_call=True,
 )
-def select_row(cell, rows):
+def select_row(cell: dict | None, rows: list[dict] | None) -> dict | None:
     """Store the clicked row; drawing it is `render_evidence`'s job."""
     row_id = (cell or {}).get('rowId')
     if row_id is None or not str(row_id).isdigit() or not rows or int(row_id) >= len(rows):
@@ -247,7 +246,7 @@ def select_row(cell, rows):
     Input('dq-selected', 'data'), Input('theme-switch', 'checked'),
     prevent_initial_call=True,
 )
-def render_evidence(row, dark):
+def render_evidence(row: dict | None, dark: bool) -> components.Children:
     """Draw the selected row's evidence, redrawn when the theme switch moves so it never lags it."""
     if not row:
         raise PreventUpdate
@@ -259,7 +258,7 @@ def render_evidence(row, dark):
     Input('dq-selected', 'data'), Input('dq-grid', 'selectedRows'),
     Input('dq-log-tag', 'value'), Input('dq-log-comment', 'value'),
 )
-def log_preview(clicked, selected, tag, comment):
+def log_preview(clicked: dict | None, selected: list[dict] | dict | None, tag: str | None, comment: str | None) -> components.Children:
     """Render the quality_log.toml blocks the Log button would append (first three, plus a count)."""
     rows = _target_rows(selected, clicked)
     if not rows:
@@ -280,7 +279,8 @@ def log_preview(clicked, selected, tag, comment):
     State('dq-log-tick', 'data'),
     prevent_initial_call=True,
 )
-def do_log(_n, clicked, selected, tag, comment, tick):
+def do_log(_n: int | None, clicked: dict | None, selected: list[dict] | dict | None, tag: str | None, comment: str | None,
+           tick: int | None) -> tuple:
     """Append the targeted findings to quality_log.toml, then drop them from the grid and clear the panel."""
     rows = _target_rows(selected, clicked)
     if not rows:
@@ -295,18 +295,15 @@ def do_log(_n, clicked, selected, tag, comment, tick):
     Output('dq-fix-column', 'data'),
     Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'),
 )
-def column_options(selected, clicked):
+def column_options(selected: list[dict] | dict | None, clicked: dict | None) -> list[str]:
     """Offer the value columns of the one table the targeted rows come from."""
     rows = _target_rows(selected, clicked)
     tables = sorted({row.get('SrcTable') for row in rows if row.get('SrcTable')})
     if len(tables) != 1:
         return []
     try:
-        con = storage.connect(DATA_ROOT, read_only=True)
-        try:
+        with storage.connect(read_only=True) as con:
             described = con.execute(f'SELECT * FROM {tables[0]} LIMIT 0').description
-        finally:
-            con.close()
     except duckdb.Error:
         return []
     return [name for name, *_ in described if name not in ('Ticker', 'Date')]
@@ -316,7 +313,7 @@ def column_options(selected, clicked):
     Output('dq-fix-reason', 'value'),
     Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'),
 )
-def default_reason(selected, clicked):
+def default_reason(selected: list[dict] | dict | None, clicked: dict | None) -> str:
     """Prefill the fix reason from the targeted issue's check and details; editable afterwards."""
     rows = _target_rows(selected, clicked)
     if not rows:
@@ -332,7 +329,8 @@ def default_reason(selected, clicked):
     Input('dq-grid', 'selectedRows'), Input('dq-selected', 'data'), Input('dq-fix-action', 'value'),
     Input('dq-fix-column', 'value'), Input('dq-fix-value', 'value'), Input('dq-fix-reason', 'value'),
 )
-def fix_preview(selected, clicked, action, column, value, reason):
+def fix_preview(selected: list[dict] | dict | None, clicked: dict | None, action: str | None, column: str | None,
+                value: float | str | None, reason: str | None) -> components.Children:
     """Render the cleaning.toml blocks the Stage button would append, or the reason it can't."""
     if not action:
         return 'choose an action'
@@ -353,7 +351,8 @@ def fix_preview(selected, clicked, action, column, value, reason):
     State('dq-log-tick', 'data'),
     prevent_initial_call=True,
 )
-def stage_fix(_n, selected, clicked, action, column, value, reason, tick):
+def stage_fix(_n: int | None, selected: list[dict] | dict | None, clicked: dict | None, action: str | None, column: str | None,
+              value: float | str | None, reason: str | None, tick: int | None) -> tuple:
     """Append the previewed fix entries to cleaning.toml and log the rows as fix-staged, dropping them."""
     keep = (dash.no_update, dash.no_update, dash.no_update, dash.no_update)
     if not action:

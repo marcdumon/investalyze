@@ -92,11 +92,8 @@ def main() -> None:
         return
 
     if args.command == 'scan-listings':
-        con = storage.connect(cfg.data_root, cfg.db, read_only=True)
-        try:
+        with storage.connect(cfg.data_root, cfg.db, read_only=True) as con:
             result = listings.scan(con, cfg.data_root)
-        finally:
-            con.close()
         counts = Counter(c.classification for c in result.candidates)
         log.info(f'scan complete: {len(result.candidates)} candidate(s) -> {result.saved_to}')
         for classification, n in sorted(counts.items()):
@@ -113,11 +110,8 @@ def main() -> None:
             tickers = universes.load_universe(args.universe, universe_dir=cfg.data_root / 'universes')
         else:
             tickers = args.tickers
-        con = storage.connect(cfg.data_root, cfg.db)
-        try:
+        with storage.connect(cfg.data_root, cfg.db) as con:
             deleted = listings.blacklist_tickers(con, cfg.data_root, tickers, args.reason)
-        finally:
-            con.close()
         log.info(f'blacklisted {len(tickers)} ticker(s) ({", ".join(tickers)}): {deleted} row(s) deleted')
         return
 
@@ -125,11 +119,8 @@ def main() -> None:
         if not args.rows:
             parser.error('add-listings requires --rows')
         rows = json.loads(args.rows)
-        con = storage.connect(cfg.data_root, cfg.db)
-        try:
+        with storage.connect(cfg.data_root, cfg.db) as con:
             added, renamed, skipped = listings.add_listings(con, cfg.data_root, rows)
-        finally:
-            con.close()
         log.info(f'added {len(added)} ticker(s), {renamed} renamed first, {skipped} skipped (no new ticker given)')
         if added:
             log.info(f'  added: {", ".join(added)}')

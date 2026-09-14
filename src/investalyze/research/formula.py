@@ -22,11 +22,16 @@ an infinite factor value silently dominates every ranking it takes part in.
 """
 
 import ast
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
 
 TICKER, DATE = 'Ticker', 'Date'
+
+# what evaluating part of an expression yields: a column, or a constant it is broadcast from
+Value = pd.Series | float | str
+
 # boolean column marking the names in the universe on each date, when the panel has one
 IN_UNIVERSE = 'in_universe'
 
@@ -101,7 +106,7 @@ def validate(expression: str, known: set[str]) -> None:
         raise ValueError(f'unknown name(s) in expression: {", ".join(unknown)}')
 
 
-def _as_series(value, frame: pd.DataFrame) -> pd.Series:
+def _as_series(value: Value, frame: pd.DataFrame) -> pd.Series:
     """A result broadcast to one value per row, so a constant expression still returns a column."""
     if isinstance(value, pd.Series):
         return value
@@ -128,12 +133,12 @@ def _winsorize(values: pd.Series, share: float) -> pd.Series:
     return values.clip(lower=lower, upper=upper)
 
 
-def _by_date(frame: pd.DataFrame, values: pd.Series, function) -> pd.Series:
+def _by_date(frame: pd.DataFrame, values: pd.Series, function: Callable[[pd.Series], pd.Series]) -> pd.Series:
     """Apply a function to each date's cross-section, keeping the frame's row order."""
     return values.groupby(frame[DATE], group_keys=False).apply(function)
 
 
-def _by_ticker(frame: pd.DataFrame, values: pd.Series, function) -> pd.Series:
+def _by_ticker(frame: pd.DataFrame, values: pd.Series, function: Callable[[pd.Series], pd.Series]) -> pd.Series:
     """Apply a function to each name's own history in date order, keeping the frame's row order."""
     ordered = frame[[TICKER, DATE]].assign(value=values).sort_values([TICKER, DATE])
     shifted = ordered.groupby(TICKER, group_keys=False)['value'].apply(function)
@@ -151,16 +156,20 @@ class _Evaluator(ast.NodeVisitor):
     def __init__(self, frame: pd.DataFrame) -> None:
         self.frame = frame
 
-    def visit_Expression(self, node):
+    def visit_Expression(self, node: ast.Expression) -> Value:
+        """The value of the whole expression."""
         return self.visit(node.body)
 
-    def visit_Constant(self, node):
+    def visit_Constant(self, node: ast.Constant) -> Value:
+        """A literal number or string."""
         return node.value
 
-    def visit_Name(self, node):
+    def visit_Name(self, node: ast.Name) -> Value:
+        """The panel column a name refers to."""
         return self.frame[node.id]
 
-    def visit_BinOp(self, node):
+    def visit_BinOp(self, node: ast.BinOp) -> Value:
+        """Arithmetic between two values."""
         left, right = self.visit(node.left), self.visit(node.right)
         result = self._BINARY[type(node.op)](left, right)
         # an infinite factor value dominates every ranking it enters, so division that
@@ -169,7 +178,8 @@ class _Evaluator(ast.NodeVisitor):
             return _finite(_as_series(result, self.frame))
         return result
 
-    def visit_UnaryOp(self, node):
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Value:
+        """Negation, unary plus, or logical not."""
         operand = self.visit(node.operand)
         if isinstance(node.op, ast.USub):
             return -operand
@@ -177,13 +187,15 @@ class _Evaluator(ast.NodeVisitor):
             return operand
         return ~_as_series(operand, self.frame).astype(bool)
 
-    def visit_Compare(self, node):
+    def visit_Compare(self, node: ast.Compare) -> Value:
+        """One comparison, as a 1 or 0 column."""
         if len(node.ops) != 1:
             raise ValueError('chained comparisons are not allowed in a factor expression')
         left, right = self.visit(node.left), self.visit(node.comparators[0])
         return self._COMPARE[type(node.ops[0])](left, right)
 
-    def visit_BoolOp(self, node):
+    def visit_BoolOp(self, node: ast.BoolOp) -> Value:
+        """`and` and `or`, elementwise."""
         # `and` and `or` cannot vectorize, so they are read as elementwise & and |
         result = _as_series(self.visit(node.values[0]), self.frame).astype(bool)
         for value in node.values[1:]:
@@ -191,20 +203,23 @@ class _Evaluator(ast.NodeVisitor):
             result = result & other if isinstance(node.op, ast.And) else result | other
         return result
 
-    def visit_IfExp(self, node):
+    def visit_IfExp(self, node: ast.IfExp) -> Value:
+        """`a if cond else b`, row by row."""
         condition = _as_series(self.visit(node.test), self.frame)
         return self._where(condition, self.visit(node.body), self.visit(node.orelse))
 
-    def visit_Call(self, node):
+    def visit_Call(self, node: ast.Call) -> Value:
+        """One allowed function call."""
         name = node.func.id
         arguments = [self.visit(argument) for argument in node.args]
         keywords = {keyword.arg: self.visit(keyword.value) for keyword in node.keywords}
         return self._call(name, arguments, keywords)
 
-    def generic_visit(self, node):
+    def generic_visit(self, node: ast.AST) -> Value:
+        """Refuse any syntax the expression language leaves out."""
         raise ValueError(f'{type(node).__name__} is not allowed in a factor expression')
 
-    def _where(self, condition, when_true, when_false) -> pd.Series:
+    def _where(self, condition: Value, when_true: Value, when_false: Value) -> pd.Series:
         """Pick between two branches row by row."""
         chosen = np.where(_as_series(condition, self.frame).fillna(False).astype(bool), when_true, when_false)
         return pd.Series(chosen, index=self.frame.index, dtype=float)

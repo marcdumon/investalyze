@@ -12,9 +12,9 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+from investalyze import paths
+
 _MAX_LINES = 5000
 _MAX_HISTORY = 20
 
@@ -61,7 +61,7 @@ class JobManager:
             job = Job(title=title, argv=argv, started=datetime.now())
             process = subprocess.Popen(
                 [sys.executable, *argv],
-                cwd=REPO_ROOT,
+                cwd=paths.REPO_ROOT,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

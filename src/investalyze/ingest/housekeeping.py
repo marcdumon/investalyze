@@ -130,13 +130,10 @@ def run_housekeeping(config: Config, tasks: Sequence[str] | None = None) -> dict
     `config.db`), passes each task its provider's settings, and closes the connection when done.
     """
     selected = list(tasks) if tasks is not None else list(HOUSEKEEPING_TASKS)
-    con = storage.connect(config.data_root, config.db)
-    try:
+    with storage.connect(config.data_root, config.db) as con:
         results: dict[str, dict] = {}
         for name in selected:
             provider_name, task = HOUSEKEEPING_TASKS[name]
             log.info(f'housekeeping: {name}')
             results[name] = task(con, config.data_root, config.provider(provider_name))
         return results
-    finally:
-        con.close()

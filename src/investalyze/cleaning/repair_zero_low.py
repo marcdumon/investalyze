@@ -8,6 +8,7 @@ when the bar's open is broken too. An empty tickers list applies the rule to eve
 import duckdb
 
 from investalyze.cleaning.fix import Fix
+from investalyze.ingest import storage
 
 _BROKEN = 'L <= 0 AND H > 0 AND C > 0 AND AC > 0'
 
@@ -32,12 +33,11 @@ def _predicate(fix: Fix) -> tuple[str, list]:
 def detect(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Count of rows currently matching the fix's predicate."""
     where, params = _predicate(fix)
-    return int(con.execute(f'SELECT count(*) FROM {fix.table} WHERE {where}', params).fetchone()[0])  # type: ignore[index]
+    return int(storage.scalar(con, f'SELECT count(*) FROM {fix.table} WHERE {where}', params))
 
 
 def apply(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Set L = min(O, C) (C alone when O is broken) on the matching rows, returning the rows changed."""
     where, params = _predicate(fix)
-    return int(con.execute(
-        f'UPDATE {fix.table} SET L = CASE WHEN O > 0 THEN LEAST(O, C) ELSE C END WHERE {where}', params,
-    ).fetchone()[0])  # type: ignore[index]
+    sql = f'UPDATE {fix.table} SET L = CASE WHEN O > 0 THEN LEAST(O, C) ELSE C END WHERE {where}'
+    return int(storage.scalar(con, sql, params))

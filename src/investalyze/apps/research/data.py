@@ -6,18 +6,13 @@ by trailing dollar volume known on that date. Diagnostics use a smaller universe
 which keeps a diagnostics run to a few seconds.
 """
 
-from pathlib import Path
-
+import duckdb
 import pandas as pd
 
+from investalyze import paths
 from investalyze.analysis import factors_pit
 from investalyze.ingest import storage
 from investalyze.research import cache, compute, diagnostics, factors, fields, tearsheet, universe
-
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
-FACTORS_DIR = ROOT / 'factors'
-CACHE_DIR = DATA_ROOT / 'cache'
 
 SAMPLE_START, SAMPLE_END = '2016-01-31', '2024-12-31'
 HOLDOUT_START = pd.Timestamp('2022-01-01')
@@ -25,26 +20,20 @@ DIAGNOSTICS_SIZE = 400
 RESEARCH_SIZE = 1000
 
 
-def _connect():
-    return storage.connect(DATA_ROOT, read_only=True)
-
-
 def _store() -> cache.Cache:
-    return cache.Cache(CACHE_DIR)
+    """The results cache under the data directory."""
+    return cache.Cache(paths.CACHE_DIR)
 
 
 def library() -> dict:
     """Every stored factor, keyed by name."""
-    return factors.load(FACTORS_DIR)
+    return factors.load(paths.FACTORS_DIR)
 
 
 def catalog() -> dict:
     """Every data field a factor expression may read."""
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         return fields.catalog(con)
-    finally:
-        con.close()
 
 
 def known_names() -> set:
@@ -72,7 +61,7 @@ def summaries() -> dict:
     return {name: store.get_summary(name, factors.fingerprint(name, working)) for name in working}
 
 
-def _panel(con, names: list[str], working: dict, size: int) -> pd.DataFrame:
+def _panel(con: duckdb.DuckDBPyConnection, names: list[str], working: dict, size: int) -> pd.DataFrame:
     """The factor panel over the research period for a point-in-time universe of `size` names."""
     grid = factors_pit.rebalance_dates(con, start=SAMPLE_START, end=SAMPLE_END, freq='M')
     members = universe.liquid_universe(con, grid, size=size)
@@ -80,6 +69,7 @@ def _panel(con, names: list[str], working: dict, size: int) -> pd.DataFrame:
 
 
 def _is_saved(name: str, expression: str, working: dict) -> bool:
+    """True when `name` is in the library with exactly this expression."""
     return name in working and working[name].expression == expression
 
 
@@ -89,8 +79,7 @@ def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True
     The factor does not have to be saved: it is added to a copy of the library for this run only, so
     an unsaved expression can reference saved factors.
     """
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         available = fields.catalog(con)
         saved = library()
         candidate = factors.Factor(name=name, expression=expression, higher_is_better=higher_is_better)
@@ -115,14 +104,11 @@ def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True
         if _is_saved(name, expression, saved) and not coverage.empty:
             _store().put_summary(name, factors.fingerprint(name, saved), {'coverage': float(coverage.iloc[-1]['share'])})
         return result
-    finally:
-        con.close()
 
 
 def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON) -> dict:
     """IC analysis for one saved factor over the research universe, using the cache."""
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         working = library()
         frame = _panel(con, [name], working, RESEARCH_SIZE)
         if frame.empty or name not in frame.columns:
@@ -135,8 +121,6 @@ def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON) -> dic
             'oos_t_stat': float(split.loc['Out-of-sample', 't_stat']) if 'Out-of-sample' in split.index else None,
         })
         return result
-    finally:
-        con.close()
 
 
 def save(factor: factors.Factor) -> None:
@@ -145,10 +129,10 @@ def save(factor: factors.Factor) -> None:
     Cached results are keyed by fingerprint, so a changed expression is never served an old result,
     and a change to status or rationale keeps the results it already has.
     """
-    factors.save(factor, FACTORS_DIR)
+    factors.save(factor, paths.FACTORS_DIR)
 
 
 def delete(name: str) -> None:
     """Remove a factor and its cached results."""
-    (FACTORS_DIR / f'{name}.toml').unlink(missing_ok=True)
+    (paths.FACTORS_DIR / f'{name}.toml').unlink(missing_ok=True)
     _store().forget(name)

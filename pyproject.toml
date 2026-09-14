@@ -1,7 +1,7 @@
 [project]
 name = "investalyze"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.4.0"
+description = "Stock research: data ingest, quality checks, factor research and backtests."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

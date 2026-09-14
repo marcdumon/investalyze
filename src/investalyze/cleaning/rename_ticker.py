@@ -10,7 +10,7 @@ type, this one is not scoped to one `table` in cleaning.toml: it always touches 
 import duckdb
 
 from investalyze.cleaning.fix import Fix
-from investalyze.ingest.storage import TICKER_KEYED_TABLES, table_exists
+from investalyze.ingest.storage import TICKER_KEYED_TABLES, scalar, table_exists
 
 
 def detect(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
@@ -19,7 +19,7 @@ def detect(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     total = 0
     for table in TICKER_KEYED_TABLES:
         if table_exists(con, table):
-            total += int(con.execute(f'SELECT count(*) FROM {table} WHERE Ticker = ?', [old]).fetchone()[0])  # type: ignore[index]
+            total += int(scalar(con, f'SELECT count(*) FROM {table} WHERE Ticker = ?', [old]))
     return total
 
 
@@ -29,7 +29,5 @@ def apply(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     total = 0
     for table in TICKER_KEYED_TABLES:
         if table_exists(con, table):
-            total += int(con.execute(
-                f'UPDATE {table} SET Ticker = ? WHERE Ticker = ?', [fix.new_ticker, old],
-            ).fetchone()[0])  # type: ignore[index]
+            total += int(scalar(con, f'UPDATE {table} SET Ticker = ? WHERE Ticker = ?', [fix.new_ticker, old]))
     return total

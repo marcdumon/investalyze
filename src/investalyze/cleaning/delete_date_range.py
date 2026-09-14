@@ -7,6 +7,7 @@ on every full reload; running `apply` after each reload keeps the DB clean.
 import duckdb
 
 from investalyze.cleaning.fix import Fix
+from investalyze.ingest import storage
 
 
 def _predicate(fix: Fix) -> tuple[str, list]:
@@ -26,10 +27,10 @@ def _predicate(fix: Fix) -> tuple[str, list]:
 def detect(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Count of rows currently matching the fix's predicate."""
     where, params = _predicate(fix)
-    return int(con.execute(f'SELECT count(*) FROM {fix.table} WHERE {where}', params).fetchone()[0])  # type: ignore[index]
+    return int(storage.scalar(con, f'SELECT count(*) FROM {fix.table} WHERE {where}', params))
 
 
 def apply(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Delete the matching rows, returning the number of rows deleted."""
     where, params = _predicate(fix)
-    return int(con.execute(f'DELETE FROM {fix.table} WHERE {where}', params).fetchone()[0])  # type: ignore[index]
+    return int(storage.scalar(con, f'DELETE FROM {fix.table} WHERE {where}', params))

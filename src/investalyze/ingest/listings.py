@@ -207,7 +207,7 @@ def _ticker_row_count(con: duckdb.DuckDBPyConnection, ticker: str) -> int:
     plan's "Design note: intentional duplication."
     """
     return sum(
-        int(con.execute(f'SELECT count(*) FROM {table} WHERE Ticker = ?', [ticker]).fetchone()[0])  # type: ignore[index]
+        int(storage.scalar(con, f'SELECT count(*) FROM {table} WHERE Ticker = ?', [ticker]))
         for table in storage.TICKER_KEYED_TABLES if storage.table_exists(con, table)
     )
 
@@ -302,7 +302,7 @@ def _blacklist_chunk(con: duckdb.DuckDBPyConnection, data_root: Path, tickers: l
     total = 0
     for table in storage.TICKER_KEYED_TABLES:
         if storage.table_exists(con, table):
-            total += int(con.execute(f'DELETE FROM {table} WHERE Ticker IN ({placeholders})', tickers).fetchone()[0])  # type: ignore[index]
+            total += int(storage.scalar(con, f'DELETE FROM {table} WHERE Ticker IN ({placeholders})', tickers))
 
     if tracked is not None:
         tracked[~tracked['ticker'].isin(tickers)].to_csv(ticker_csv, index=False)

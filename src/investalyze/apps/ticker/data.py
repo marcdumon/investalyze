@@ -6,7 +6,6 @@ selection via short-lived read-only connections. Shaping helpers are pure frame-
 functions, testable without a database.
 """
 
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,8 +16,6 @@ from investalyze.apps.ticker import statements
 from investalyze.backtest import performance
 from investalyze.ingest import storage
 
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
 # selectable performance-chart benchmarks, ticker -> display label; fixed order controls color assignment
 BENCHMARKS = {'^SPX': 'S&P 500', '^NDQ': 'Nasdaq Composite', '^NDX': 'Nasdaq-100', '^DJI': 'Dow Jones'}
 MAX_UNIVERSE_PEERS = 100   # caps the factor-profile comparison group for very large peer sets
@@ -72,14 +69,11 @@ def price_history(ticker: str, benchmarks: tuple[str, ...] = ()) -> pd.DataFrame
     Columns: Date, AC, plus one column per ticker in `benchmarks` (e.g. '^SPX'). No benchmarks
     means no join at all, so a ticker's own history is never trimmed by an index's date range.
     """
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         prices = con.execute("SELECT Date, AC FROM prices WHERE Ticker = ? AND AC IS NOT NULL ORDER BY Date", [ticker]).df()
         for benchmark in benchmarks:
             market = con.execute("SELECT Date, C FROM market_data WHERE Ticker = ? ORDER BY Date", [benchmark]).df()
             prices = prices.merge(market.rename(columns={'C': benchmark}), on='Date', how='inner')
-    finally:
-        con.close()
     return prices
 
 
@@ -131,12 +125,9 @@ def statement_history(ticker: str, statement: str, period: str, restated: bool =
     one row per fiscal period (the latest available), oldest first."""
     if statement not in STATEMENT_TABLES:
         raise ValueError(f'unknown statement {statement!r}')
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         frame = con.execute(f'SELECT * FROM {statement} WHERE Ticker = ? AND Period = ? AND IsRestated = ?',
                             [ticker, period, restated]).df()
-    finally:
-        con.close()
     return statements.latest_restated(frame) if len(frame) else frame
 
 
@@ -152,16 +143,13 @@ def matched_revenue(frame: pd.DataFrame, ticker: str, period: str, restated: boo
 def fundamentals_history(ticker: str) -> pd.DataFrame:
     """Restated quarterly income, cashflow and balance items merged on Report Date, oldest first."""
     frames = []
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         for table, items in (('income', _INCOME_ITEMS), ('cashflow', _CASHFLOW_ITEMS), ('balance', _BALANCE_ITEMS)):
             quoted = ', '.join(f'"{item}"' for item in items)
             frames.append(con.execute(
                 f"SELECT \"Report Date\", {quoted} FROM {table} "
                 f"WHERE Ticker = ? AND Period = 'Q' AND IsRestated ORDER BY \"Report Date\"", [ticker],
             ).df())
-    finally:
-        con.close()
     merged = frames[0]
     for frame in frames[1:]:
         merged = merged.merge(frame, on='Report Date', how='outer')

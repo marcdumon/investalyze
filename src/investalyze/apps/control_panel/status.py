@@ -10,6 +10,8 @@ from datetime import date
 import duckdb
 import pandas as pd
 
+from investalyze.ingest import storage
+
 _FRESHNESS_SOURCES = [
     ('prices', 'Date'),
     ('market_data', 'Date'),
@@ -23,7 +25,7 @@ def freshness(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Most recent date per key table, plus how many days ago that was."""
     rows = []
     for table, column in _FRESHNESS_SOURCES:
-        last = con.execute(f'SELECT max("{column}") FROM "{table}"').fetchone()[0]
+        last = storage.scalar(con, f'SELECT max("{column}") FROM "{table}"')
         last_date = last.date() if hasattr(last, 'date') else last
         days_ago = (date.today() - last_date).days if last_date is not None else None
         rows.append({'table': table, 'last': last_date, 'days_ago': days_ago})
@@ -33,7 +35,7 @@ def freshness(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 def row_counts(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     """Row count of every table in the database, largest first."""
     tables = con.execute("SELECT table_name FROM information_schema.tables ORDER BY table_name").df()['table_name']
-    counts = [{'table': t, 'rows': con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]} for t in tables]
+    counts = [{'table': t, 'rows': storage.scalar(con, f'SELECT count(*) FROM "{t}"')} for t in tables]
     return pd.DataFrame(counts).sort_values('rows', ascending=False).reset_index(drop=True)
 
 

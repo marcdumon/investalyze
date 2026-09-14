@@ -10,9 +10,12 @@ Split this module only if one of these grows enough to earn its own file.
 """
 
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pandas as pd
+
+from investalyze import paths
 
 _DB = 'investalyze.duckdb'
 
@@ -24,12 +27,21 @@ TICKER_KEYED_TABLES = (
 
 
 # --- db -----------------------------------------------------------------------
-def connect(data_root: Path, db: str = _DB, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+def connect(data_root: Path = paths.DATA_ROOT, db: str = _DB, *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
     """Open a connection to the shared DB at the data root (writable by default).
 
-    `read_only=True` for consumers (e.g. notebooks) that only query.
+    `read_only=True` for consumers (e.g. pages and notebooks) that only query. The connection is a
+    context manager that closes on exit.
     """
     return duckdb.connect(str(data_root / db), read_only=read_only)
+
+
+def scalar(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> Any:
+    """The first column of the first row `sql` returns."""
+    row = con.execute(sql, params or []).fetchone()
+    if row is None:
+        raise ValueError(f'query returned no rows: {sql}')
+    return row[0]
 
 
 # --- introspection ------------------------------------------------------------
@@ -42,7 +54,7 @@ def count_rows(con: duckdb.DuckDBPyConnection, table: str) -> int:
     """Row count of `table`, or 0 if it doesn't exist."""
     if not table_exists(con, table):
         return 0
-    return int(con.execute(f'SELECT count(*) FROM {table}').fetchone()[0])  # type: ignore[index]
+    return int(scalar(con, f'SELECT count(*) FROM {table}'))
 
 
 # --- store --------------------------------------------------------------------
@@ -73,5 +85,4 @@ def store(con: duckdb.DuckDBPyConnection, table: str, df: pd.DataFrame, key: lis
         """)
     finally:
         con.unregister('_incoming')
-    count: int = con.execute(f'SELECT count(*) FROM {table}').fetchone()[0]  # type: ignore[index]
-    return count
+    return int(scalar(con, f'SELECT count(*) FROM {table}'))

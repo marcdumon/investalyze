@@ -17,6 +17,7 @@ already been published.
 import re
 from dataclasses import dataclass
 
+import duckdb
 import pandas as pd
 
 from investalyze.analysis import factors_pit
@@ -80,7 +81,7 @@ def build_catalog(schema: dict) -> dict:
     return catalog
 
 
-def read_schema(con) -> dict:
+def read_schema(con: duckdb.DuckDBPyConnection) -> dict:
     """The column headings of each statement table in the database."""
     schema = {}
     for statement in STATEMENT_WINDOWS:
@@ -88,7 +89,7 @@ def read_schema(con) -> dict:
     return schema
 
 
-def catalog(con) -> dict:
+def catalog(con: duckdb.DuckDBPyConnection) -> dict:
     """Every data field: statement line items from the live schema, plus the market data fields."""
     available = build_catalog(read_schema(con))
     for name, description in market.FIELDS.items():
@@ -106,7 +107,7 @@ def _requested_by_statement(names: set[str], available: dict) -> dict:
     return grouped
 
 
-def panel(con, names: set[str], *, as_of: pd.DatetimeIndex, version: str = factors_pit.AS_REPORTED,
+def panel(con: duckdb.DuckDBPyConnection, names: set[str], *, as_of: pd.DatetimeIndex, version: str = factors_pit.AS_REPORTED,
           tickers: list[str] | None = None) -> pd.DataFrame:
     """A long panel of the requested fields, one row per name per as-of date.
 

@@ -9,7 +9,6 @@ import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-import duckdb
 
 from investalyze.ingest import storage
 from investalyze.ingest.config import Config
@@ -65,12 +64,9 @@ def run(config: Config, providers: Sequence[str] | None = None, *, update: bool 
     closes the connection when done.
     """
     selected = list(providers) if providers is not None else list(PROVIDERS)
-    con: duckdb.DuckDBPyConnection = storage.connect(config.data_root, config.db)
-    try:
+    with storage.connect(config.data_root, config.db) as con:
         results: dict[str, int] = {}
         for name in selected:
             log.info(f'running {name}')
             results[name] = PROVIDERS[name](con, config.data_root, config.provider(name), update=update)
         return results
-    finally:
-        con.close()

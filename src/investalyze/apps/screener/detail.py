@@ -1,6 +1,5 @@
 """Per-ticker detail panel: stats, latest fundamentals and anomalies side by side."""
 
-from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -8,8 +7,6 @@ from dash import html
 
 from investalyze.ingest import storage
 
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
 
 
 def fmt_money(value: object) -> str:
@@ -40,8 +37,7 @@ def detail_children(ticker: str, row: pd.Series) -> list:
         ('Fundamental periods', row['n_periods']), ('Anomalies', row['n_anomalies']),
     ])
 
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         fundamentals = con.execute("""
             SELECT "Fiscal Year", "Fiscal Period", Revenue, "Gross Profit", "Operating Income (Loss)",
                    "Net Income", "Shares (Basic)"
@@ -50,8 +46,6 @@ def detail_children(ticker: str, row: pd.Series) -> list:
         anomalies = con.execute(
             "SELECT CheckName, Severity, Date, Details FROM anomalies WHERE Ticker = ? ORDER BY Date", [ticker]
         ).df()
-    finally:
-        con.close()
 
     if len(fundamentals):
         f = fundamentals.iloc[0]

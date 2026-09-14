@@ -17,6 +17,7 @@ from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, 
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
+from investalyze.apps import components
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.apps.control_panel.page import build_blacklist_argv
 from investalyze.apps.screener.data import clear_cache, get_pool
@@ -319,7 +320,7 @@ def _basis_options() -> list[dict]:
     return options
 
 
-def layout(symbol: str | None = None, **_query) -> html.Div:
+def layout(symbol: str | None = None, **_query: str) -> html.Div:
     """Page shell: searchable ticker select (options built here so ?symbol= preselects), peer basis and content."""
     try:
         options = _select_options(get_pool())
@@ -402,7 +403,7 @@ clientside_callback(
 
 
 @callback(Output('tk-select', 'data'), Input('tk-peer-basis', 'value'), Input('tk-select', 'value'))
-def update_ticker_options(basis, ticker):
+def update_ticker_options(basis: str | None, ticker: str | None) -> list[dict]:
     """Regroup the ticker select so the active peer group's members come first, largest first."""
     try:
         pool = get_pool()
@@ -421,7 +422,7 @@ def update_ticker_options(basis, ticker):
 
 @callback(Output('tk-stepper', 'style'), Output('tk-pos', 'children'),
           Input('tk-peer-basis', 'value'), Input('tk-select', 'value'))
-def update_stepper(basis, ticker):
+def update_stepper(basis: str | None, ticker: str | None) -> tuple:
     """Show the universe stepper with the current position; auto basis hides it."""
     loaded = _universe_members(basis)
     if loaded is None:
@@ -433,7 +434,7 @@ def update_stepper(basis, ticker):
 
 @callback(Output('tk-select', 'value'), Input('tk-prev', 'n_clicks'), Input('tk-next', 'n_clicks'),
           State('tk-select', 'value'), State('tk-peer-basis', 'value'), prevent_initial_call=True)
-def step_ticker(_prev, _next, ticker, basis):
+def step_ticker(_prev: int | None, _next: int | None, ticker: str | None, basis: str | None) -> str | None:
     """Step to the previous or next universe member, wrapping around at the ends."""
     loaded = _universe_members(basis)
     if loaded is None:
@@ -449,7 +450,7 @@ def step_ticker(_prev, _next, ticker, basis):
 
 @callback(Output('tk-content', 'children'), Input('tk-select', 'value'), Input('tk-peer-basis', 'value'),
           Input('theme-switch', 'checked'))
-def render(ticker, basis, dark):
+def render(ticker: str | None, basis: str | None, dark: bool) -> components.Children:
     """Rebuild the whole page for the selected ticker, peer basis and theme."""
     if not ticker:
         return PROMPT
@@ -462,7 +463,7 @@ def render(ticker, basis, dark):
 @callback(Output('tk-perf', 'figure'), Output('tk-trailing', 'figure'),
           Input('tk-range', 'value'), Input('tk-benchmarks', 'value'),
           State('tk-select', 'value'), State('theme-switch', 'checked'), prevent_initial_call=True)
-def update_performance(range_key, benchmarks, ticker, dark):
+def update_performance(range_key: str | None, benchmarks: list[str] | None, ticker: str | None, dark: bool) -> tuple:
     """Re-render the performance chart and trailing-returns bars for a new range or benchmark pick."""
     if not ticker:
         raise PreventUpdate
@@ -481,7 +482,8 @@ def update_performance(range_key, benchmarks, ticker, dark):
           Input('tk-st-statement', 'value'), Input('tk-st-period', 'value'), Input('tk-st-basis', 'value'),
           Input('tk-st-depth', 'value'), Input('tk-st-view', 'value'),
           State('tk-select', 'value'), prevent_initial_call=True)
-def update_statements(statement, period, basis, depth, view, ticker):
+def update_statements(statement: str | None, period: str | None, basis: str | None, depth: str | None, view: str | None,
+                      ticker: str | None) -> tuple:
     """Re-render only the statements grid for a new statement/period/basis/depth/view."""
     if not ticker:
         raise PreventUpdate
@@ -496,7 +498,8 @@ def update_statements(statement, period, basis, depth, view, ticker):
           State('tk-st-grid', 'rowData'), State('tk-st-statement', 'value'), State('tk-st-period', 'value'),
           State('tk-st-basis', 'value'), State('tk-select', 'value'), State('theme-switch', 'checked'),
           prevent_initial_call=True)
-def chart_line_item(cell, rows, statement, period, basis, ticker, dark):
+def chart_line_item(cell: dict | None, rows: list[dict] | None, statement: str | None, period: str | None, basis: str | None,
+                    ticker: str | None, dark: bool) -> components.Children:
     """Chart the clicked line item's full reported history below the table; Diff overlays both bases."""
     row_id = (cell or {}).get('rowId')
     if not ticker or row_id is None or not str(row_id).isdigit() or not rows or int(row_id) >= len(rows):
@@ -522,7 +525,7 @@ def chart_line_item(cell, rows, statement, period, basis, ticker, dark):
     State('tk-select', 'value'),
     prevent_initial_call=True,
 )
-def open_blacklist_confirm(_n_clicks, ticker):
+def open_blacklist_confirm(_n_clicks: int | None, ticker: str | None) -> tuple:
     """Open the confirm modal for the currently viewed ticker."""
     if not ticker:
         raise PreventUpdate
@@ -537,7 +540,7 @@ def open_blacklist_confirm(_n_clicks, ticker):
     State('tk-select', 'value'), State('tk-blacklist-reason', 'value'),
     prevent_initial_call=True,
 )
-def resolve_blacklist_confirm(_yes_n, _no_n, ticker, reason):
+def resolve_blacklist_confirm(_yes_n: int | None, _no_n: int | None, ticker: str | None, reason: str | None) -> tuple:
     """Start the blacklist job for the current ticker on Confirm; just close the modal on Cancel."""
     if ctx.triggered_id != 'tk-confirm-yes':
         return False, dash.no_update, dash.no_update, dash.no_update
@@ -558,7 +561,7 @@ def resolve_blacklist_confirm(_yes_n, _no_n, ticker, reason):
     State('tk-blacklist-pending', 'data'), State('tk-select', 'value'),
     prevent_initial_call=True,
 )
-def poll_blacklist_job(_n_intervals, pending, current_ticker):
+def poll_blacklist_job(_n_intervals: int | None, pending: dict | None, current_ticker: str | None) -> tuple:
     """Once our own blacklist job finishes, refresh the ticker options, clear the selection if it's
     gone, and stop polling."""
     if not pending or MANAGER.is_running():

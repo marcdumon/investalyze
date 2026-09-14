@@ -7,7 +7,6 @@ transposed, line items on the rows, periods on the columns, the flagged period h
 """
 
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -20,8 +19,6 @@ from investalyze.apps import theming
 from investalyze.apps.data_quality import actions, edgar
 from investalyze.ingest import storage
 
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
 BUSY = 'database busy, a job is currently running, try again once it finishes'
 
 _PRICE_TABLES = ('prices', 'market_data')
@@ -50,7 +47,7 @@ def _yahoo_finance_link(ticker: str) -> html.A:
                   style={'color': 'var(--mantine-color-blue-5)'})
 
 
-def _edgar_filing_url(cik: int | None, fiscal_period: str, report_date) -> str | None:
+def _edgar_filing_url(cik: int | None, fiscal_period: str, report_date: pd.Timestamp | str | None) -> str | None:
     """Direct EDGAR document URL for the filing covering this period, or None without a CIK or match."""
     if cik is None or pd.isna(report_date):
         return None
@@ -60,7 +57,7 @@ def _edgar_filing_url(cik: int | None, fiscal_period: str, report_date) -> str |
         return None
 
 
-def _edgar_restated_url(cik: int | None, restated_date) -> str | None:
+def _edgar_restated_url(cik: int | None, restated_date: pd.Timestamp | str | None) -> str | None:
     """Direct EDGAR document URL for the filing that published these restated figures, or None."""
     if cik is None or pd.isna(restated_date):
         return None
@@ -76,8 +73,7 @@ def price_evidence(row: dict, dark: bool) -> list:
     on_date = _flag_date(row)
     has_volume = table == 'prices'
     columns = 'Date, O, H, L, C' + (', V' if has_volume else '')
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         if on_date is not None:
             window = con.execute(
                 f'SELECT {columns} FROM {table} WHERE Ticker = ? AND Date BETWEEN ? AND ? ORDER BY Date',
@@ -85,8 +81,6 @@ def price_evidence(row: dict, dark: bool) -> list:
             ).df()
         else:
             window = con.execute(f'SELECT {columns} FROM {table} WHERE Ticker = ? ORDER BY Date', [ticker]).df().tail(500)
-    finally:
-        con.close()
 
     if window.empty:
         return [html.Div(f'no {table} rows for {ticker}', style={'color': 'var(--mantine-color-dimmed)', 'fontSize': '13px'})]
@@ -112,12 +106,9 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     """Flagged fiscal period and its neighbours transposed: line items on rows, periods on columns."""
     ticker, table = row['Ticker'], row['SrcTable']
     parsed = actions.parse_key(row.get('Key'))
-    con = storage.connect(DATA_ROOT, read_only=True)
-    try:
+    with storage.connect(read_only=True) as con:
         statement = con.execute(f'SELECT * FROM {table} WHERE Ticker = ? ORDER BY "Report Date"', [ticker]).df()
         cik_row = con.execute('SELECT CIK FROM companies WHERE Ticker = ?', [ticker]).fetchone()
-    finally:
-        con.close()
     cik = int(cik_row[0]) if cik_row and cik_row[0] is not None else None
 
     if statement.empty:

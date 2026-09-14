@@ -17,9 +17,10 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from investalyze.analysis import factors
-from investalyze.apps.screener import data as pool_data
+from investalyze.apps import components
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.apps.control_panel.page import build_blacklist_argv
+from investalyze.apps.screener import data as pool_data
 from investalyze.apps.screener import metrics
 from investalyze.apps.screener.data import clear_cache, get_pool, get_scales
 from investalyze.apps.screener.detail import safe_detail_children
@@ -308,8 +309,10 @@ def industry_options(sectors: list[str] | None) -> list[str]:
     Input('score-factors', 'value'), Input('mode', 'value'), Input('btn-refresh', 'n_clicks'),
     Input('selection', 'data'),
 )
-def update_grid(search, sectors, industries, buckets, min_dvol, min_years, active, max_anom,
-                _fmin_values, _fmax_values, score_factors, mode, refresh_clicks, selection):
+def update_grid(search: str | None, sectors: list[str] | None, industries: list[str] | None, buckets: list[str] | None,
+                min_dvol: float | str | None, min_years: float | str | None, active: str | None, max_anom: float | str | None,
+                _fmin_values: list[float | None], _fmax_values: list[float | None], score_factors: list[str] | None,
+                mode: str | None, refresh_clicks: int | None, selection: list[str] | None) -> tuple:
     """Rebuild both grids for the current filters, score selection, display mode and curation state.
 
     The factor bounds are read back off ctx.inputs_list by id, so the two pattern-matching arguments
@@ -374,7 +377,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     Input('btn-clear-bounds', 'n_clicks'),
     prevent_initial_call=True,
 )
-def clear_bounds(_n_clicks):
+def clear_bounds(_n_clicks: int | None) -> tuple:
     """Blank every factor bound at once, since the panel holds two inputs for every factor.
 
     The inputs are blanked with '' rather than None: None leaves dmc.NumberInput showing its old
@@ -392,7 +395,8 @@ def clear_bounds(_n_clicks):
     State('selection', 'data'), State('grid', 'rowData'),
     prevent_initial_call=True,
 )
-def update_state(grid_events, sel_events, select_all, deselect_all, universe, selection, row_data):
+def update_state(grid_events: list[dict] | None, sel_events: list[dict] | None, select_all: int | None, deselect_all: int | None,
+                 universe: str | None, selection: list[str] | None, row_data: list[dict] | None) -> tuple:
     """Route one user action (checkbox edit, button click) through apply_action."""
     action = str(ctx.triggered_id)
     events = grid_events if action == 'grid' else sel_events if action == 'sel-grid' else None
@@ -406,7 +410,7 @@ def update_state(grid_events, sel_events, select_all, deselect_all, universe, se
     Input('btn-save', 'n_clicks'), State('selection', 'data'), State('universe-name', 'value'),
     prevent_initial_call=True,
 )
-def save_current(n_clicks, selection, name):
+def save_current(n_clicks: int | None, selection: list[str] | None, name: str | None) -> tuple:
     """Save the selected tickers as a named universe.
 
     The message distinguishes a new file from an overwrite, since the name box is pre-filled after a
@@ -427,7 +431,7 @@ def save_current(n_clicks, selection, name):
     Input('universe-dd', 'value'),
     prevent_initial_call=True,
 )
-def name_the_loaded_universe(universe):
+def name_the_loaded_universe(universe: str | None) -> str | dash.NoUpdate:
     """Put the loaded universe's name into the save box, so edits can be written back to it.
 
     Without this the box stays empty after a load, and saving a universe you have just added tickers
@@ -442,7 +446,7 @@ def name_the_loaded_universe(universe):
     State('grid', 'rowData'), State('sel-grid', 'rowData'),
     prevent_initial_call=True,
 )
-def show_detail(cell, sel_cell, rows, sel_rows):
+def show_detail(cell: dict | None, sel_cell: dict | None, rows: list[dict] | None, sel_rows: list[dict] | None) -> components.Children:
     """Show the detail panel for the clicked row of either grid.
 
     rowId is AG Grid's auto-assigned id (== original rowData array index) and stays stable under a
@@ -469,7 +473,7 @@ def show_detail(cell, sel_cell, rows, sel_rows):
     State('selection', 'data'),
     prevent_initial_call=True,
 )
-def open_blacklist_confirm(_n_clicks, selection):
+def open_blacklist_confirm(_n_clicks: int | None, selection: list[str] | None) -> tuple:
     """Open the confirm modal for the current selection; no-op if nothing is selected."""
     if not selection:
         raise PreventUpdate
@@ -486,7 +490,7 @@ def open_blacklist_confirm(_n_clicks, selection):
     State('selection', 'data'), State('scr-blacklist-reason', 'value'),
     prevent_initial_call=True,
 )
-def resolve_blacklist_confirm(_yes_n, _no_n, selection, reason):
+def resolve_blacklist_confirm(_yes_n: int | None, _no_n: int | None, selection: list[str] | None, reason: str | None) -> tuple:
     """Start the blacklist job for the current selection on Confirm; just close the modal on Cancel."""
     if ctx.triggered_id != 'scr-confirm-yes':
         return False, dash.no_update, dash.no_update, dash.no_update, dash.no_update
@@ -508,7 +512,7 @@ def resolve_blacklist_confirm(_yes_n, _no_n, selection, reason):
     State('scr-blacklist-pending', 'data'), State('selection', 'data'),
     prevent_initial_call=True,
 )
-def poll_blacklist_job(_n_intervals, pending, selection):
+def poll_blacklist_job(_n_intervals: int | None, pending: dict | None, selection: list[str] | None) -> tuple:
     """Once our own blacklist job finishes, clear the pool cache, drop blacklisted tickers from selection,
     and stop polling."""
     running = MANAGER.is_running()

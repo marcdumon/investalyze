@@ -10,46 +10,39 @@ recomputed when a factor definition changes.
 
 import argparse
 import sys
-from pathlib import Path
 
+import duckdb
 import pandas as pd
 
+from investalyze import paths
 from investalyze.analysis import factors_pit
+from investalyze.apps import universes as saved_universes
 from investalyze.backtest import config as backtest_config
 from investalyze.backtest import report, writer
 from investalyze.ingest import storage
-from investalyze.apps import universes as saved_universes
 from investalyze.research import backtest, cache, compute, diagnostics, factors, fields, tearsheet, timing, universe
 
-ROOT = Path(__file__).resolve().parents[3]
-FACTORS_DIR = ROOT / 'factors'
-CACHE_DIR = ROOT / 'data' / 'cache'
 COMMANDS = ('list', 'fields', 'diagnostics', 'tearsheet', 'backtest', 'timing')
 
 
-def _connect():
-    """A read-only connection to the project database."""
-    return storage.connect(ROOT / 'data', read_only=True)
-
-
-def _grid(con, args) -> pd.DatetimeIndex:
+def _grid(con: duckdb.DuckDBPyConnection, args: argparse.Namespace) -> pd.DatetimeIndex:
     """The last trading session of each month in the range."""
     return factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq='M')
 
 
-def _panel(con, name: str, library: dict, args) -> pd.DataFrame:
+def _panel(con: duckdb.DuckDBPyConnection, name: str, library: dict, args: argparse.Namespace) -> pd.DataFrame:
     grid = _grid(con, args)
     members = universe.liquid_universe(con, grid, size=args.size)
     return compute.compute(con, [name], library, as_of=grid, members=members)
 
 
-def _holdout(args) -> pd.Timestamp | None:
+def _holdout(args: argparse.Namespace) -> pd.Timestamp | None:
     return pd.Timestamp(args.holdout) if args.holdout else None
 
 
 def _show_library(library: dict) -> None:
     if not library:
-        print(f'no factors yet; add one as a .toml file under {FACTORS_DIR}')
+        print(f'no factors yet; add one as a .toml file under {paths.FACTORS_DIR}')
         return
     print(f'{"factor":30} {"status":10} {"direction":9} expression')
     for name in sorted(library):
@@ -58,7 +51,7 @@ def _show_library(library: dict) -> None:
         print(f'{name:30} {factor.status:10} {direction:9} {factor.expression}')
 
 
-def _show_fields(con, search: str | None) -> None:
+def _show_fields(con: duckdb.DuckDBPyConnection, search: str | None) -> None:
     catalog = fields.catalog(con)
     matches = sorted(catalog) if not search else sorted(
         alias for alias in catalog if search.lower() in alias.lower())
@@ -70,7 +63,7 @@ def _show_fields(con, search: str | None) -> None:
         print(f'  ... and {len(matches) - 60} more')
 
 
-def _diagnostics(con, name: str, library: dict, args) -> None:
+def _diagnostics(con: duckdb.DuckDBPyConnection, name: str, library: dict, args: argparse.Namespace) -> None:
     frame = _panel(con, name, library, args)
     if frame.empty or name not in frame.columns:
         raise SystemExit(f'{name!r} has no values over this range')
@@ -101,11 +94,11 @@ def _diagnostics(con, name: str, library: dict, args) -> None:
     print(f'\nrank autocorrelation: {diagnostics.rank_autocorrelation(frame, name):.3f}')
 
 
-def _tearsheet(con, name: str, library: dict, args) -> None:
+def _tearsheet(con: duckdb.DuckDBPyConnection, name: str, library: dict, args: argparse.Namespace) -> None:
     frame = _panel(con, name, library, args)
     if frame.empty or name not in frame.columns:
         raise SystemExit(f'{name!r} has no values over this range')
-    result = tearsheet.tearsheet(con, name, library, frame, horizon=args.horizon, store=cache.Cache(CACHE_DIR),
+    result = tearsheet.tearsheet(con, name, library, frame, horizon=args.horizon, store=cache.Cache(paths.CACHE_DIR),
                                  holdout_start=_holdout(args))
     summary = result['summary']
 
@@ -127,15 +120,14 @@ def _tearsheet(con, name: str, library: dict, args) -> None:
     print(result['by_year'].to_string(index=False))
 
 
-def _backtest(name_arg: str, library: dict, args) -> None:
+def _backtest(name_arg: str, library: dict, args: argparse.Namespace) -> None:
     """Simulate a factor portfolio and store it as a backtest run, with its report."""
     names = [name.strip() for name in name_arg.split(',') if name.strip()]
     unknown = [name for name in names if name not in library]
     if unknown:
         raise SystemExit(f'no factor named {", ".join(unknown)}; `list` shows the library')
     cfg = backtest_config.read()
-    con = storage.connect(ROOT / 'data')
-    try:
+    with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
         grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=args.rebalance)
         members = universe.liquid_universe(con, grid, size=args.size)
@@ -151,17 +143,15 @@ def _backtest(name_arg: str, library: dict, args) -> None:
         finished = backtest.build_report(result, params, cfg)
         writer.ensure_tables(con)
         writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(), finished.trade_rows())
-        path = report.write_report(finished, ROOT / 'data')
+        path = report.write_report(finished, paths.DATA_ROOT)
 
         periods = backtest.period_stats(result['equity'], result['benchmark_equity'], holdout_start=_holdout(args))
         if len(names) == 1:
             split = periods.set_index('period')
-            cache.Cache(CACHE_DIR).put_summary(names[0], factors.fingerprint(names[0], library), {
+            cache.Cache(paths.CACHE_DIR).put_summary(names[0], factors.fingerprint(names[0], library), {
                 'sharpe': result['stats']['sharpe'], 'cagr': result['stats']['cagr'],
                 'oos_sharpe': float(split.loc['Out-of-sample', 'sharpe']) if 'Out-of-sample' in split.index else None,
             })
-    finally:
-        con.close()
 
     print(finished.render())
     print('periods:')
@@ -169,7 +159,7 @@ def _backtest(name_arg: str, library: dict, args) -> None:
     print(f'run {finished.run_id} stored; report written to {path}; median {result["names_median"]:,.0f} names held')
 
 
-def _timing(entry_factor: str, library: dict, args) -> None:
+def _timing(entry_factor: str, library: dict, args: argparse.Namespace) -> None:
     """Simulate a timing rule on the daily grid and store it as a backtest run, with its report."""
     used = [name for name in (entry_factor, args.exit_factor, args.priority_factor) if name]
     unknown = [name for name in used if name not in library]
@@ -177,8 +167,7 @@ def _timing(entry_factor: str, library: dict, args) -> None:
         raise SystemExit(f'no factor named {", ".join(unknown)}; `list` shows the library')
     trailing_stop = args.trailing_stop or None
     cfg = backtest_config.read()
-    con = storage.connect(ROOT / 'data')
-    try:
+    with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
         sessions = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq='D')
         if args.universe:
@@ -204,10 +193,8 @@ def _timing(entry_factor: str, library: dict, args) -> None:
         finished = timing.build_report(result, params, cfg)
         writer.ensure_tables(con)
         writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(), finished.trade_rows())
-        path = report.write_report(finished, ROOT / 'data')
+        path = report.write_report(finished, paths.DATA_ROOT)
         periods = backtest.period_stats(result['equity'], result['benchmark_equity'], holdout_start=_holdout(args))
-    finally:
-        con.close()
 
     print(finished.render())
     print('periods:')
@@ -248,7 +235,7 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = _parser().parse_args(argv)
-    library = factors.load(FACTORS_DIR)
+    library = factors.load(paths.FACTORS_DIR)
 
     if args.command == 'list':
         _show_library(library)
@@ -264,8 +251,7 @@ def main(argv: list[str] | None = None) -> None:
         _timing(args.name, library, args)
         return
 
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         if args.command == 'fields':
             _show_fields(con, args.name)
             return
@@ -278,8 +264,6 @@ def main(argv: list[str] | None = None) -> None:
             _diagnostics(con, args.name, library, args)
         else:
             _tearsheet(con, args.name, library, args)
-    finally:
-        con.close()
 
 
 if __name__ == '__main__':

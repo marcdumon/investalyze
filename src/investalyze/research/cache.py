@@ -27,23 +27,19 @@ def _quoted(path: Path) -> str:
 
 
 def _write_parquet(frame: pd.DataFrame, path: Path) -> None:
-    con = duckdb.connect()
-    try:
+    """Write a frame to a parquet file through an in-memory DuckDB."""
+    with duckdb.connect() as con:
         con.register('result', frame)
         con.execute(f"COPY result TO '{_quoted(path)}' (FORMAT PARQUET)")
-    finally:
-        con.close()
 
 
 def _read_parquet(path: Path) -> pd.DataFrame:
-    con = duckdb.connect()
-    try:
+    """Read a parquet file into a frame through an in-memory DuckDB."""
+    with duckdb.connect() as con:
         return con.execute(f"SELECT * FROM read_parquet('{_quoted(path)}')").df()
-    finally:
-        con.close()
 
 
-def params_hash(**params) -> str:
+def params_hash(**params: object) -> str:
     """A short stable hash of the parameters a result was computed with."""
     payload = json.dumps(params, sort_keys=True, default=str)
     return hashlib.sha1(payload.encode()).hexdigest()[:12]

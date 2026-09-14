@@ -44,16 +44,13 @@ def main() -> None:
     configure_logging(cfg.log_level)
     selected = args.checks or sorted(registry.CHECKS)
 
-    con = storage.connect(cfg.data_root, cfg.db)
-    try:
+    with storage.connect(cfg.data_root, cfg.db) as con:
         writer.ensure_table(con)
         for name in selected:
             severity, check = registry.CHECKS[name]
             findings = check(con)
             n = writer.replace_findings(con, name, severity, findings)
             log.info(f'{name}: {n} findings ({severity})')
-    finally:
-        con.close()
 
 
 if __name__ == '__main__':

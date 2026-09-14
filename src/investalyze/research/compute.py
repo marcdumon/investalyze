@@ -10,6 +10,7 @@ are then read on the requested dates. The same expression therefore gives the sa
 asked for monthly or daily.
 """
 
+import duckdb
 import pandas as pd
 
 from investalyze.analysis import factors_pit, panels
@@ -84,7 +85,7 @@ def lookback_days(names: list[str], library: dict) -> int:
     return total
 
 
-def compute(con, names: list[str], library: dict, *, as_of: pd.DatetimeIndex,
+def compute(con: duckdb.DuckDBPyConnection, names: list[str], library: dict, *, as_of: pd.DatetimeIndex,
             tickers: list[str] | None = None, version: str = factors_pit.AS_REPORTED,
             members: pd.DataFrame | None = None) -> pd.DataFrame:
     """A long panel of `Ticker`, `Date` and one column per requested factor.

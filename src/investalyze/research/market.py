@@ -6,6 +6,7 @@ later price. Returns use the dividend-adjusted close (total return); price level
 capitalisation use the split-adjusted close.
 """
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -117,7 +118,7 @@ def sample(matrices: dict, as_of: pd.DatetimeIndex) -> pd.DataFrame:
     return frame
 
 
-def _daily_bars(con, tickers: list[str], calendar: pd.DatetimeIndex, columns: tuple[str, ...]) -> dict:
+def _daily_bars(con: duckdb.DuckDBPyConnection, tickers: list[str], calendar: pd.DatetimeIndex, columns: tuple[str, ...]) -> dict:
     """The requested price columns (`O`, `H`, `L`, `C`, `AC`, `V`) as wide matrices on the calendar."""
     selected = ', '.join(columns)
     bars = con.execute(f"""
@@ -131,7 +132,8 @@ def _daily_bars(con, tickers: list[str], calendar: pd.DatetimeIndex, columns: tu
     return wide
 
 
-def panel(con, names: set[str], *, as_of: pd.DatetimeIndex, tickers: list[str] | None = None) -> pd.DataFrame:
+def panel(con: duckdb.DuckDBPyConnection, names: set[str], *, as_of: pd.DatetimeIndex,
+          tickers: list[str] | None = None) -> pd.DataFrame:
     """Long panel of the requested market fields on the as-of dates."""
     wanted = sorted(name for name in names if name in FIELDS)
     if not wanted:

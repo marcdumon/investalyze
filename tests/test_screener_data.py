@@ -71,7 +71,7 @@ def test_a_library_factor_brings_its_direction_and_definition(monkeypatch):
 def test_a_library_factor_named_like_a_built_in_one_is_reported_and_left_out(monkeypatch, tmp_path):
     factor_library.save(factor_library.Factor(name='roe', expression='net_income_common / total_equity'), tmp_path)
     factor_library.save(factor_library.Factor(name='momentum_12_1', expression='ret_12_1'), tmp_path)
-    monkeypatch.setattr(data, 'FACTORS_DIR', tmp_path)
+    monkeypatch.setattr(data.paths, 'FACTORS_DIR', tmp_path)
     monkeypatch.setattr(data, '_LIBRARY', None)
     assert data.shadowed_factors() == ['roe']
     assert 'roe' not in data.library() and 'momentum_12_1' in data.library()

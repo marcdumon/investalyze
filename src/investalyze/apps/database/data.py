@@ -10,15 +10,11 @@ make selecting a table feel broken.
 """
 
 import threading
-from pathlib import Path
 
 import duckdb
 import pandas as pd
 
 from investalyze.ingest import storage
-
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
 
 SAMPLE_ROWS = 50
 QUERY_ROWS = 500          # a page cannot show more, and a runaway query should not try
@@ -26,15 +22,9 @@ QUERY_SECONDS = 20.0
 NULL_COUNT_LIMIT = 5_000_000   # measured: 1M rows costs 0.07s, 27M costs 5.3s
 
 
-def _connect() -> duckdb.DuckDBPyConnection:
-    """A read-only connection to the project database."""
-    return storage.connect(DATA_ROOT, read_only=True)
-
-
 def list_tables() -> pd.DataFrame:
     """Every table with its row and column counts, both read from metadata rather than scanned."""
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         return con.execute("""
             SELECT t.table_name AS name,
                    (SELECT count(*) FROM information_schema.columns c
@@ -42,19 +32,16 @@ def list_tables() -> pd.DataFrame:
             FROM information_schema.tables t
             WHERE t.table_schema = 'main' ORDER BY t.table_name
         """).df().assign(rows=lambda frame: [_row_count(con, name) for name in frame['name']])
-    finally:
-        con.close()
 
 
 def _row_count(con: duckdb.DuckDBPyConnection, table: str) -> int:
     """How many rows a table holds. DuckDB answers this from metadata, whatever the size."""
-    return con.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+    return int(storage.scalar(con, f'SELECT count(*) FROM "{table}"'))
 
 
 def describe_table(name: str) -> dict:
     """One table's columns, their types, how empty each is, and the span of its dates."""
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         if not storage.table_exists(con, name):
             return {}
         rows = _row_count(con, name)
@@ -66,8 +53,6 @@ def describe_table(name: str) -> dict:
         return {'name': name, 'rows': rows, 'columns': columns.to_dict('records'),
                 'nulls': nulls, 'nulls_counted': counted, 'span': span,
                 'tickers': _ticker_count(con, name, columns)}
-    finally:
-        con.close()
 
 
 def _null_counts(con: duckdb.DuckDBPyConnection, table: str, columns: list[str]) -> dict[str, int]:
@@ -91,18 +76,15 @@ def _ticker_count(con: duckdb.DuckDBPyConnection, table: str, columns: pd.DataFr
     """How many distinct tickers a table covers, where it has any."""
     if 'Ticker' not in set(columns['column_name']):
         return None
-    return con.execute(f'SELECT count(DISTINCT "Ticker") FROM "{table}"').fetchone()[0]
+    return int(storage.scalar(con, f'SELECT count(DISTINCT "Ticker") FROM "{table}"'))
 
 
 def sample_rows(name: str, limit: int = SAMPLE_ROWS) -> pd.DataFrame:
     """The first rows of a table, for seeing what the values actually look like."""
-    con = _connect()
-    try:
+    with storage.connect(read_only=True) as con:
         if not storage.table_exists(con, name):
             return pd.DataFrame()
         return con.execute(f'SELECT * FROM "{name}" LIMIT {int(limit)}').df()
-    finally:
-        con.close()
 
 
 def run_query(sql: str, limit: int = QUERY_ROWS,
@@ -119,7 +101,7 @@ def run_query(sql: str, limit: int = QUERY_ROWS,
     thread interrupts one that outstays its welcome; without it a careless cross join would hold the
     page open indefinitely.
     """
-    con = _connect()
+    con = storage.connect(read_only=True)
     finished = threading.Event()
     watchdog = threading.Timer(timeout, lambda: None if finished.is_set() else con.interrupt())
     watchdog.start()

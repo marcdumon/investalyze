@@ -9,6 +9,8 @@ import argparse
 import logging
 from pathlib import Path
 
+import duckdb
+
 from investalyze.backtest import report, writer
 from investalyze.ingest import config, storage
 from investalyze.ingest.logging import configure_logging
@@ -40,7 +42,7 @@ def _report(args: argparse.Namespace, data_root: Path) -> None:
     print(path.read_text())
 
 
-def _delete(con, args: argparse.Namespace, data_root: Path) -> None:
+def _delete(con: duckdb.DuckDBPyConnection, args: argparse.Namespace, data_root: Path) -> None:
     """Remove stored runs: their summary rows, equity curves, blotters and rendered reports.
 
     Every run named is dealt with before an unknown one is reported, so one bad id in a selection
@@ -71,12 +73,9 @@ def main() -> None:
         _report(args, cfg.data_root)
         return
 
-    con = storage.connect(cfg.data_root, cfg.db)
-    try:
+    with storage.connect(cfg.data_root, cfg.db) as con:
         writer.ensure_tables(con)
         _delete(con, args, cfg.data_root)
-    finally:
-        con.close()
 
 
 if __name__ == '__main__':

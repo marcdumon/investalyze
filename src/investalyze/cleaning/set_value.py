@@ -10,6 +10,7 @@ import re
 import duckdb
 
 from investalyze.cleaning.fix import Fix
+from investalyze.ingest import storage
 
 _COLUMN_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_ ().,-]*$')
 
@@ -41,12 +42,11 @@ def _predicate(fix: Fix) -> tuple[str, list]:
 def detect(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Count of rows currently matching the fix's predicate."""
     where, params = _predicate(fix)
-    return int(con.execute(f'SELECT count(*) FROM {fix.table} WHERE {where}', params).fetchone()[0])  # type: ignore[index]
+    return int(storage.scalar(con, f'SELECT count(*) FROM {fix.table} WHERE {where}', params))
 
 
 def apply(con: duckdb.DuckDBPyConnection, fix: Fix) -> int:
     """Set the column to the configured value (NULL when omitted) on the matching rows, returning rows changed."""
     where, params = _predicate(fix)
-    return int(con.execute(
-        f'UPDATE {fix.table} SET {_quoted_column(fix)} = ? WHERE {where}', [fix.value, *params],
-    ).fetchone()[0])  # type: ignore[index]
+    sql = f'UPDATE {fix.table} SET {_quoted_column(fix)} = ? WHERE {where}'
+    return int(storage.scalar(con, sql, [fix.value, *params]))

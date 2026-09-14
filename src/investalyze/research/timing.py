@@ -11,12 +11,14 @@ Decisions are made at each close on the daily grid and filled at the next open b
 costs and limits from `backtest.toml`. Target weights are sent only on sessions where holdings change.
 """
 
+import duckdb
 import numpy as np
 import pandas as pd
 
 from investalyze.backtest import config as backtest_config
 from investalyze.backtest import engine, performance, report, writer
 from investalyze.backtest import market as market_data
+from investalyze.backtest.book import Book
 from investalyze.research import backtest as factor_backtest
 from investalyze.research import factors
 
@@ -84,7 +86,7 @@ def _wide(frame: pd.DataFrame, name: str, market: market_data.MarketData) -> pd.
     return wide.reindex(index=market.dates, columns=list(market.tickers))
 
 
-def simulate(con, frame: pd.DataFrame, library: dict, *, entry_factor: str, exit_factor: str | None,
+def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, library: dict, *, entry_factor: str, exit_factor: str | None,
              exit_on_entry_false: bool, trailing_stop: float | None, max_positions: int, priority_factor: str | None,
              start: str, end: str, cfg: backtest_config.Config | None = None) -> dict:
     """Run a timing rule through the engine over `start` to `end` and return the book's curves, fills and stats."""
@@ -103,7 +105,8 @@ def simulate(con, frame: pd.DataFrame, library: dict, *, entry_factor: str, exit
                              trailing_stop=trailing_stop, max_positions=max_positions, priority=priority)
     scheduled = {session for session in range(len(market.dates)) if not np.isnan(weights[session]).all()}
 
-    def step(session: int, book) -> engine.Decision:
+    def step(session: int, book: Book) -> engine.Decision:
+        """Send the target weights on the sessions where holdings change, and hold otherwise."""
         if session not in scheduled:
             return engine.HOLD
         return engine.Decision(targets=weights[session], orders=None)

@@ -11,10 +11,11 @@ access rebuilds both.
 """
 
 import logging
-from pathlib import Path
 
+import duckdb
 import pandas as pd
 
+from investalyze import paths
 from investalyze.analysis import factors as builtin
 from investalyze.analysis import panels
 from investalyze.apps.screener import metrics
@@ -25,9 +26,6 @@ from investalyze.research import factors as factor_library
 
 log = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parents[4]
-DATA_ROOT = ROOT / 'data'
-FACTORS_DIR = ROOT / 'factors'
 LIBRARY_FAMILY = 'factor library'
 
 _POOL: pd.DataFrame | None = None
@@ -39,14 +37,14 @@ def library() -> dict:
     """The factor library factors the Screener shows: every stored factor not named like a built-in one."""
     global _LIBRARY
     if _LIBRARY is None:
-        stored = factor_library.load(FACTORS_DIR)
+        stored = factor_library.load(paths.FACTORS_DIR)
         _LIBRARY = {name: factor for name, factor in stored.items() if name not in builtin.FACTORS}
     return _LIBRARY
 
 
 def shadowed_factors() -> list[str]:
     """Factor library names left out of the Screener because a built-in factor has the same name."""
-    return sorted(name for name in factor_library.load(FACTORS_DIR) if name in builtin.FACTORS)
+    return sorted(name for name in factor_library.load(paths.FACTORS_DIR) if name in builtin.FACTORS)
 
 
 def factor_names() -> list[str]:
@@ -76,15 +74,15 @@ def factor_docs() -> dict[str, builtin.FactorDoc]:
     return docs
 
 
-def _library_values(con, stored: dict) -> pd.DataFrame:
+def _library_values(con: duckdb.DuckDBPyConnection, stored: dict) -> pd.DataFrame:
     """Factor library values for every ticker on the latest trading session."""
     names = sorted(stored)
     if not names:
         return pd.DataFrame(columns=['Ticker'])
-    last = con.execute('SELECT max(Date) FROM prices').fetchone()[0]
+    last = storage.scalar(con, 'SELECT max(Date) FROM prices')
     calendar = panels.trading_calendar(con, start=(pd.Timestamp(last) - pd.Timedelta(days=20)).date().isoformat())
     try:
-        frame = compute.compute(con, names, factor_library.load(FACTORS_DIR), as_of=pd.DatetimeIndex([calendar.max()]))
+        frame = compute.compute(con, names, factor_library.load(paths.FACTORS_DIR), as_of=pd.DatetimeIndex([calendar.max()]))
     except ValueError as error:
         log.warning(f'factor library left out of the screener: {error}')
         return pd.DataFrame(columns=['Ticker'])
@@ -106,11 +104,8 @@ def get_pool() -> pd.DataFrame:
     """Return the cached pool frame, building it once via a short-lived read-only connection."""
     global _POOL
     if _POOL is None:
-        con = storage.connect(DATA_ROOT, read_only=True)
-        try:
+        with storage.connect(read_only=True) as con:
             _POOL = _merge_pool(metrics.build_metrics(con), builtin.build_factors(con), _library_values(con, library()))
-        finally:
-            con.close()
     return _POOL
 
 

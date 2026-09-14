@@ -11,15 +11,15 @@ out-of-sample, and lists its settings and fills.
 from urllib.parse import parse_qs
 
 import dash
-import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
+import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 
-from investalyze.apps import theming, universes
+from investalyze.apps import components, theming, universes
 from investalyze.apps.backtest import data, logic
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.backtest import config as backtest_config
@@ -82,37 +82,6 @@ SETTING_COLUMNS = [
     {'field': 'value', 'headerName': 'Value', 'flex': 1},
 ]
 
-# the checkbox column comes free with this selection mode; clicking the row still selects it
-_MULTI_SELECT = {'mode': 'multiRow', 'checkboxes': True, 'headerCheckbox': True, 'enableClickSelection': True}
-
-
-def _grid(grid_id: str, columns: list[dict], height: int, selectable: bool = False, fixed: bool = False,
-          dense: bool = False) -> dag.AgGrid:
-    """One AG Grid with the page's shared styling."""
-    options = {'theme': 'legacy'}   # without this the className theme below is ignored
-    if selectable:
-        options['rowSelection'] = _MULTI_SELECT
-    if dense:
-        options['rowHeight'] = 26
-        options['headerHeight'] = 28
-    grid_kwargs = {}
-    if selectable:
-        grid_kwargs['columnSize'] = 'autoSize'
-        grid_kwargs['columnSizeOptions'] = {'skipHeader': False}
-    elif not fixed:
-        grid_kwargs['columnSize'] = 'sizeToFit'
-    return dag.AgGrid(
-        id=grid_id, columnDefs=columns, rowData=[],
-        defaultColDef={'sortable': True, 'resizable': True, 'minWidth': 70},
-        dashGridOptions=options, style={'height': height}, className='ag-theme-alpine-dark',
-        **grid_kwargs,
-    )
-
-
-def _note(text: str, colour: str = 'gray') -> dmc.Alert:
-    return dmc.Alert(text, color=colour, variant='light')
-
-
 def _date_fields(prefix: str, start: str, end: str) -> list:
     """The From and To inputs a card carries."""
     return [
@@ -131,12 +100,8 @@ def _factor_panel() -> dmc.Paper:
                   gap=8, mb=6),
         dmc.Text('Factor library: tick the factors to backtest. t-stat and OOS t come from IC analysis on the '
                  'Factors page, Sharpe from the latest single-factor backtest.', size='xs', c='dimmed', mb=4),
-        dag.AgGrid(
-            id='bt-factor-library', columnDefs=FACTOR_LIBRARY_COLUMNS, rowData=[], getRowId='params.data.name',
-            defaultColDef={'sortable': True, 'resizable': True, 'filter': True},
-            dashGridOptions={'theme': 'legacy', 'rowHeight': 28, 'headerHeight': 30, 'rowSelection': _MULTI_SELECT},
-            style={'height': 280}, className='ag-theme-alpine-dark',
-        ),
+        components.grid('bt-factor-library', FACTOR_LIBRARY_COLUMNS, 280, selection=components.MULTI_ROW,
+                        row_id='params.data.name', column_size=None, row_height=28, min_width=None, filterable=True),
         html.Div(id='bt-selected-factors', style={'margin': '6px 0'}),
         dmc.Group([
             *_date_fields('bt-fp', '2016-01-31', '2024-12-31'),
@@ -191,7 +156,7 @@ def _timing_panel() -> dmc.Paper:
     ], p='sm', withBorder=True)
 
 
-def layout(**_query) -> html.Div:
+def layout(**_query: str) -> html.Div:
     """The page body, built per request so a run stored since the last view shows up.
 
     Dash passes URL query parameters as keywords; `?factor=` is read by `load_factor_options` instead.
@@ -208,18 +173,18 @@ def layout(**_query) -> html.Div:
                        disabled=True),
         ], justify='space-between', mb=4),
         html.Div(id='bt-runs-notice'),
-        _grid('bt-runs', logic.RUN_COLUMNS, 240, selectable=True),
+        components.grid('bt-runs', logic.RUN_COLUMNS, 240, selection=components.MULTI_ROW, column_size='autoSize'),
     ])
 
     detail_panel = html.Div([
         html.Div(id='bt-caveats', style={'marginBottom': '8px'}),
         dcc.Graph(id='bt-curve', config={'displayModeBar': False}, style={'height': '380px'}),
         dmc.Text('In-sample and out-of-sample', fw=600, size='sm', mt=8, mb=4),
-        _grid('bt-periods', PERIOD_COLUMNS, 150, fixed=True, dense=True),
+        components.grid('bt-periods', PERIOD_COLUMNS, 150, column_size=None, row_height=26),
         dmc.Text('Settings', fw=600, size='sm', mt=8, mb=4),
-        _grid('bt-settings', SETTING_COLUMNS, 220, dense=True),
+        components.grid('bt-settings', SETTING_COLUMNS, 220, row_height=26),
         dmc.Text('Fills', fw=600, size='sm', mt=8, mb=4),
-        _grid('bt-trades', TRADE_COLUMNS, 360, fixed=True, dense=True),
+        components.grid('bt-trades', TRADE_COLUMNS, 360, column_size=None, row_height=26),
     ])
 
     return html.Div([
@@ -250,7 +215,7 @@ def layout(**_query) -> html.Div:
     ], style={'padding': '4px'})
 
 
-def _ticked_names(selected) -> list[str]:
+def _ticked_names(selected: list[dict] | dict | None) -> list[str]:
     """Factor names from the grid's selection, which holds row objects or, right after a load, {'ids': [...]}."""
     if isinstance(selected, dict):
         return list(selected.get('ids', []))
@@ -259,7 +224,7 @@ def _ticked_names(selected) -> list[str]:
 
 @callback(Output('bt-factor-library', 'rowData'), Output('bt-factor-library', 'selectedRows'),
           Input('bt-runs-tick', 'data'), Input('url', 'search'), State('bt-factor-library', 'selectedRows'))
-def load_factor_library(_tick, search, current):
+def load_factor_library(_tick: str | int | None, search: str | None, current: list[dict] | dict | None) -> tuple:
     """Fill the factor library table, ticking a factor passed from the Factors page as ?factor=name."""
     rows = data.factor_rows()
     names = {row['name'] for row in rows}
@@ -271,7 +236,7 @@ def load_factor_library(_tick, search, current):
 
 
 @callback(Output('bt-selected-factors', 'children'), Input('bt-factor-library', 'selectedRows'))
-def show_selected_factors(selected):
+def show_selected_factors(selected: list[dict] | dict | None) -> components.Children:
     """Name the factors a press of Run backtest will trade."""
     names = _ticked_names(selected)
     if not names:
@@ -282,62 +247,54 @@ def show_selected_factors(selected):
 
 @callback(Output('bt-tr-entry', 'data'), Output('bt-tr-exit', 'data'), Output('bt-tr-priority', 'data'),
           Output('bt-tr-universe', 'data'), Input('bt-runs-tick', 'data'))
-def load_timing_options(_tick):
+def load_timing_options(_tick: str | int | None) -> tuple:
     """Offer the factor library for entry, exit and priority, and every universe saved from the Screener."""
     names = [row['name'] for row in data.factor_rows()]
     return names, names, names, universes.list_universes()
 
 
 @callback(Output('bt-runs', 'rowData'), Output('bt-runs-notice', 'children'), Input('bt-runs-tick', 'data'))
-def load_runs(_tick):
+def load_runs(_tick: str | int | None) -> tuple:
     """Fill the run table once the page mounts, and again after every job."""
     try:
         runs = data.get_runs()
     except duckdb.IOException:
-        return [], _note(BUSY)
+        return [], components.note(BUSY)
     if runs.empty:
-        return [], _note(EMPTY_RUNS)
+        return [], components.note(EMPTY_RUNS)
     return runs.to_dict('records'), None
 
 
 @callback(Output('bt-curve', 'figure'), Output('bt-trades', 'rowData'), Output('bt-caveats', 'children'),
           Output('bt-periods', 'rowData'), Output('bt-settings', 'rowData'),
           Input('bt-runs', 'selectedRows'), Input('theme-switch', 'checked'))
-def show_run(selected, dark):
+def show_run(selected: list[dict] | dict | None, dark: bool) -> tuple:
     """Draw the selected run's equity curve and drawdown, and list its periods, settings and fills."""
     dark = bool(dark)
     if not selected:
-        return _empty_figure('Select a run', dark), [], None, [], []
+        return components.empty_figure(dark, 'Select a run'), [], None, [], []
     run = selected[0]
     try:
         curve = data.get_equity(run['RunId'])
         trades = data.get_trades(run['RunId'])
     except duckdb.IOException:
-        return _empty_figure(BUSY, dark), [], _note(BUSY), [], []
+        return components.empty_figure(dark, BUSY), [], components.note(BUSY), [], []
     if curve.empty:
-        return _empty_figure('This run stored no equity curve', dark), [], None, [], []
+        return components.empty_figure(dark, 'This run stored no equity curve'), [], None, [], []
 
     holdout = logic.holdout_of(run.get('ConfigJson'))
     rebased = logic.rebase(curve, ['Equity', 'BenchmarkEquity'])
     drawdown = logic.drawdown_from_equity(curve['Equity'])
     caveats = None
     if len(selected) > 1:
-        caveats = _note(f'{len(selected)} runs selected; the chart below is run {run["RunId"]}.', 'yellow')
+        caveats = components.note(f'{len(selected)} runs selected; the chart below is run {run["RunId"]}.', 'yellow')
     periods = logic.run_periods(curve, holdout)
     return (_curve_figure(rebased, drawdown, run, holdout, dark), trades.to_dict('records'), caveats,
             periods.to_dict('records'), logic.run_settings_rows(run.get('ConfigJson')))
 
 
-def _empty_figure(message: str, dark: bool) -> go.Figure:
-    """A blank chart carrying one centred message."""
-    figure = go.Figure()
-    figure.add_annotation(text=message, showarrow=False, xref='paper', yref='paper', x=0.5, y=0.5)
-    figure.update_layout(**theming.figure_layout(dark), margin={'l': 40, 'r': 20, 't': 20, 'b': 30},
-                         xaxis={'visible': False}, yaxis={'visible': False})
-    return figure
-
-
-def _curve_figure(rebased, drawdown, run: dict, holdout, dark: bool) -> go.Figure:
+def _curve_figure(rebased: pd.DataFrame, drawdown: pd.Series, run: dict, holdout: pd.Timestamp | None,
+                  dark: bool) -> go.Figure:
     """Equity against benchmark on top, drawdown beneath, sharing one date axis."""
     figure = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.04)
     figure.add_trace(go.Scatter(x=rebased['Date'], y=rebased['Equity'], name=run['Signal'],
@@ -360,7 +317,7 @@ def _curve_figure(rebased, drawdown, run: dict, holdout, dark: bool) -> go.Figur
 
 
 @callback(Output('bt-job-status', 'children'), Input('bt-poll', 'n_intervals'))
-def show_job_status(_n):
+def show_job_status(_n: int | None) -> components.Children:
     """Show what the job runner is doing, with a way out of it while it is still running."""
     job = MANAGER.current or (MANAGER.history[0] if MANAGER.history else None)
     if job is None:
@@ -384,37 +341,41 @@ def show_job_status(_n):
           State('bt-tr-universe', 'value'), State('bt-tr-size', 'value'), State('bt-tr-start', 'value'),
           State('bt-tr-end', 'value'), State('bt-tr-holdout', 'value'),
           prevent_initial_call=True)
-def launch(_factor_run, _timing_run, selected_factors, fp_start, fp_end, rebalance, quantiles, size, fp_holdout,
-           entry, exit_factor, stop, exit_on_false, max_positions, priority, universe, tr_size, tr_start, tr_end, tr_holdout):
+def launch(_factor_run: int | None, _timing_run: int | None, selected_factors: list[dict] | dict | None, fp_start: str | None,
+           fp_end: str | None, rebalance: str | None, quantiles: str | None, size: str | None, fp_holdout: str | None,
+           entry: str | None, exit_factor: str | None, stop: float | str | None, exit_on_false: bool,
+           max_positions: float | str | None,
+           priority: str | None, universe: str | None, tr_size: str | None, tr_start: str | None, tr_end: str | None,
+           tr_holdout: str | None) -> components.Children:
     """Start the pressed card's backtest as a job, or say why it cannot start."""
     if MANAGER.current is not None:
-        return _note(JOB_RUNNING, 'yellow')
+        return components.note(JOB_RUNNING, 'yellow')
     if ctx.triggered_id == 'bt-btn-factor-run':
         factor_names = _ticked_names(selected_factors)
         if not factor_names:
-            return _note('Tick at least one factor in the factor library table.', 'orange')
+            return components.note('Tick at least one factor in the factor library table.', 'orange')
         title, argv = logic.factor_portfolio_argv(factor_names, fp_start, fp_end, rebalance or 'M',
                                                   int(quantiles or 5), int(size or 1000), fp_holdout)
     else:
         if not entry:
-            return _note('Pick an entry factor.', 'orange')
+            return components.note('Pick an entry factor.', 'orange')
         stop_percent = float(stop) if stop not in (None, '') else None
         problem = logic.timing_rule_problem(exit_factor=exit_factor, exit_on_entry_false=bool(exit_on_false),
                                             trailing_stop_percent=stop_percent)
         if problem:
-            return _note(problem, 'orange')
+            return components.note(problem, 'orange')
         title, argv = logic.timing_rule_argv(entry, exit_factor=exit_factor, exit_on_entry_false=bool(exit_on_false),
                                              trailing_stop_percent=stop_percent, max_positions=int(max_positions or 20),
                                              priority_factor=priority, universe=universe,
                                              universe_size=int(tr_size or 500), start=tr_start, end=tr_end,
                                              holdout=tr_holdout)
     if not MANAGER.start(title, argv):
-        return _note(JOB_RUNNING, 'yellow')
+        return components.note(JOB_RUNNING, 'yellow')
     return None
 
 
 @callback(Output('bt-cancel-tick', 'data'), Input('bt-btn-cancel', 'n_clicks'), prevent_initial_call=True)
-def cancel_job(n_clicks):
+def cancel_job(n_clicks: int | None) -> int | None:
     """Stop the running job."""
     if n_clicks:
         MANAGER.cancel()
@@ -423,7 +384,7 @@ def cancel_job(n_clicks):
 
 @callback(Output('bt-runs-tick', 'data'), Input('bt-poll', 'n_intervals'),
           State('bt-runs-tick', 'data'), prevent_initial_call=True)
-def refresh_after_job(_n, tick):
+def refresh_after_job(_n: int | None, tick: str | int | None) -> str:
     """Reload the tables when a job finishes, keyed on when it finished so one reload happens per job."""
     if MANAGER.current is not None or not MANAGER.history:
         raise PreventUpdate
@@ -435,7 +396,7 @@ def refresh_after_job(_n, tick):
 
 
 @callback(Output('bt-btn-delete-run', 'disabled'), Input('bt-runs', 'selectedRows'))
-def toggle_delete(selected):
+def toggle_delete(selected: list[dict] | dict | None) -> bool:
     """There is nothing to delete until at least one run is ticked."""
     return not selected
 
@@ -443,7 +404,7 @@ def toggle_delete(selected):
 @callback(Output('bt-delete-modal', 'opened'), Output('bt-delete-text', 'children'),
           Output('bt-pending-delete', 'data'),
           Input('bt-btn-delete-run', 'n_clicks'), State('bt-runs', 'selectedRows'), prevent_initial_call=True)
-def ask_delete(_n, selected):
+def ask_delete(_n: int | None, selected: list[dict] | dict | None) -> tuple:
     """Name every selected run and what goes with it, since the page offers no way back."""
     if not selected:
         raise PreventUpdate
@@ -455,7 +416,7 @@ def ask_delete(_n, selected):
           Output('bt-launch-note', 'children', allow_duplicate=True),
           Input('bt-delete-yes', 'n_clicks'), Input('bt-delete-no', 'n_clicks'),
           State('bt-pending-delete', 'data'), prevent_initial_call=True)
-def resolve_delete(yes_clicks, _no, pending):
+def resolve_delete(yes_clicks: int | None, _no: int | None, pending: dict | None) -> tuple:
     """Start the pending delete on Delete; just close the modal on Cancel.
 
     A click is required, not merely a callback firing with Delete as its trigger: a remounted button
@@ -463,7 +424,7 @@ def resolve_delete(yes_clicks, _no, pending):
     """
     if ctx.triggered_id == 'bt-delete-yes' and yes_clicks and pending:
         if not MANAGER.start(*logic.delete_argv(pending['ids'])):
-            return False, None, _note('A job is already running, so nothing was deleted. Try again once it finishes.',
+            return False, None, components.note('A job is already running, so nothing was deleted. Try again once it finishes.',
                                       'yellow')
     return False, None, dash.no_update
 

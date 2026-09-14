@@ -10,9 +10,10 @@ lookup data the decoder needs, not the decoding logic itself.
 import re
 import tomllib
 from functools import lru_cache
-from pathlib import Path
 
-_REFERENCE_FILE = Path(__file__).parents[5] / 'stooq_tickers.toml'
+from investalyze import paths
+
+_REFERENCE_FILE = paths.REPO_ROOT / 'stooq_tickers.toml'
 
 _BOND_PATTERN = re.compile(r'^(\d+)([MY])([A-Z]{2})([YP])$')
 _PAIR_PATTERN = re.compile(r'^([A-Z]{3})([A-Z]{3})$')

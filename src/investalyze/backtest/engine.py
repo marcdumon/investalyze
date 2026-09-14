@@ -284,7 +284,7 @@ def _liquidate_delisted(book: Book, market: MarketData, marks: np.ndarray, last_
     return proceeds
 
 
-def run_backtest(market: MarketData, step, *, starting_cash: float, costs: Costs, limits: Limits,
+def run_backtest(market: MarketData, step: SignalStep, *, starting_cash: float, costs: Costs, limits: Limits,
                  check_accounting: bool = False) -> Book:
     """Walk the calendar, filling each session's orders at its open and marking the book at its close.
 

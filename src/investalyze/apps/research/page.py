@@ -10,11 +10,12 @@ import dash
 import dash_ag_grid as dag
 import dash_mantine_components as dmc
 import duckdb
+import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 
-from investalyze.apps import theming
+from investalyze.apps import components, theming
 from investalyze.apps.research import data, logic
 from investalyze.research import factors
 
@@ -68,23 +69,9 @@ QUANTILE_COLUMNS = [
 ]
 
 
-def _grid(grid_id: str, columns: list, height: int, *, selectable: bool = False) -> dag.AgGrid:
-    """One AG Grid with the page's shared styling."""
-    options = {'theme': 'legacy', 'rowHeight': 28, 'headerHeight': 30}
-    if selectable:
-        options['rowSelection'] = {'mode': 'singleRow', 'checkboxes': False, 'enableClickSelection': True}
-        # a stable row id keeps the selection when the grid reloads with fresh results
-        options['getRowId'] = 'params.data.name'
-    return dag.AgGrid(
-        id=grid_id, columnDefs=columns, rowData=[],
-        defaultColDef={'sortable': True, 'resizable': True, 'minWidth': 70},
-        dashGridOptions=options, style={'height': height},
-        className='ag-theme-alpine-dark', columnSize='sizeToFit',
-    )
-
-
-def _note(text: str, colour: str = 'gray') -> dmc.Alert:
-    return dmc.Alert(text, color=colour, variant='light')
+def _grid(grid_id: str, columns: list[dict], height: int) -> dag.AgGrid:
+    """One of the page's result grids."""
+    return components.grid(grid_id, columns, height, row_height=28)
 
 
 def _library_panel() -> dmc.Paper:
@@ -93,7 +80,7 @@ def _library_panel() -> dmc.Paper:
             dmc.Title('Factor library', order=5),
             dmc.Button('New factor', id='rs-btn-new', size='xs', variant='light'),
         ]),
-        _grid('rs-library', LIBRARY_COLUMNS, 430, selectable=True),
+        components.grid('rs-library', LIBRARY_COLUMNS, 430, selection=components.SINGLE_ROW, row_id='params.data.name', row_height=28),
         dmc.Text('', id='rs-library-description', size='xs', c='dimmed'),
     ]))
 
@@ -140,7 +127,7 @@ def _fields_panel() -> dmc.Paper:
 def _diagnostics_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
         dmc.Title('Diagnostics', order=5),
-        dcc.Loading(html.Div(id='rs-diagnostics-notes', children=_note(NO_SELECTION)), type='dot'),
+        dcc.Loading(html.Div(id='rs-diagnostics-notes', children=components.note(NO_SELECTION)), type='dot'),
         dmc.Group(grow=True, align='flex-start', children=[
             dmc.Stack(gap=4, children=[
                 dmc.Text('Coverage', size='xs', fw=600),
@@ -167,7 +154,7 @@ def _diagnostics_panel() -> dmc.Paper:
 def _ic_panel() -> dmc.Paper:
     return dmc.Paper(withBorder=True, p='sm', children=dmc.Stack(gap='xs', children=[
         dmc.Title('IC analysis', order=5),
-        dcc.Loading(html.Div(id='rs-ic-notes', children=_note('Save the factor, then run IC analysis.')), type='dot'),
+        dcc.Loading(html.Div(id='rs-ic-notes', children=components.note('Save the factor, then run IC analysis.')), type='dot'),
         dmc.Group(grow=True, align='flex-start', children=[
             dmc.Stack(gap=4, children=[
                 dmc.Text('IC decay', size='xs', fw=600),
@@ -185,7 +172,7 @@ def _ic_panel() -> dmc.Paper:
     ]))
 
 
-def layout(**_query) -> html.Div:
+def layout(**_query: str) -> html.Div:
     return html.Div([
         dmc.Group(justify='space-between', mb='sm', children=[
             dmc.Title('Factors', order=3),
@@ -201,14 +188,14 @@ def layout(**_query) -> html.Div:
 
 @callback(Output('rs-library', 'rowData'), Input('rs-saved', 'children'), Input('rs-diagnostics-notes', 'children'),
           Input('rs-ic-notes', 'children'))
-def load_library(_saved, _diagnostics, _ic):
+def load_library(_saved: components.Children, _diagnostics: components.Children, _ic: components.Children) -> list[dict]:
     """The factor library with recorded results, reloaded after a save, delete or new result."""
     return logic.library_rows(data.library(), data.summaries())
 
 
 @callback(Output('rs-fields', 'rowData'), Output('rs-fields-count', 'children'),
           Input('rs-fields-search', 'value'))
-def load_fields(search):
+def load_fields(search: str | None) -> tuple:
     """The data fields, filtered by the search box."""
     try:
         rows = data.field_rows(search)
@@ -221,7 +208,7 @@ def load_fields(search):
           Output('rs-expression', 'value'), Output('rs-direction', 'value'),
           Output('rs-status', 'value'), Output('rs-library-description', 'children'),
           Input('rs-library', 'selectedRows'), Input('rs-btn-new', 'n_clicks'))
-def fill_definition(selected, _new):
+def fill_definition(selected: list[dict] | dict | None, _new: int | None) -> tuple:
     """Load the selected factor into the definition form, or clear it for a new factor."""
     if ctx.triggered_id == 'rs-btn-new':
         return '', '', '', 'higher', factors.CANDIDATE, NO_SELECTION
@@ -233,19 +220,19 @@ def fill_definition(selected, _new):
 
 
 @callback(Output('rs-validation', 'children'), Input('rs-expression', 'value'))
-def validate(expression):
+def validate(expression: str | None) -> components.Children:
     """Validate the expression as it is typed."""
     try:
         known = data.known_names()
     except duckdb.Error:
-        return _note(BUSY)
+        return components.note(BUSY)
     ok, message = logic.validate_expression(expression or '', known)
-    return _note(message, 'green' if ok else 'orange')
+    return components.note(message, 'green' if ok else 'orange')
 
 
 def _empty_outputs(message: dmc.Alert, dark: bool) -> tuple:
     ticker_only = [{'field': 'Ticker'}]
-    return message, _empty_figure(dark), [], [], ticker_only, [], ticker_only
+    return message, components.empty_figure(dark), [], [], ticker_only, [], ticker_only
 
 
 @callback(Output('rs-diagnostics-notes', 'children'), Output('rs-coverage', 'figure'),
@@ -255,16 +242,16 @@ def _empty_outputs(message: dmc.Alert, dark: bool) -> tuple:
           Input('rs-btn-diagnostics', 'n_clicks'), State('rs-name', 'value'),
           State('rs-expression', 'value'), State('rs-direction', 'value'),
           State('theme-switch', 'checked'), prevent_initial_call=True)
-def show_diagnostics(_clicks, name, expression, direction, dark):
+def show_diagnostics(_clicks: int | None, name: str | None, expression: str | None, direction: str | None, dark: bool) -> tuple:
     """Run diagnostics on the sample and fill the diagnostics panel."""
     if not name or not expression:
         raise PreventUpdate
     try:
         result = data.run_diagnostics(name, expression, higher_is_better=direction == 'higher')
     except (ValueError, duckdb.Error) as error:
-        return _empty_outputs(_note(str(error), 'red'), dark)
+        return _empty_outputs(components.note(str(error), 'red'), dark)
     if 'error' in result:
-        return _empty_outputs(_note(result['error'], 'orange'), dark)
+        return _empty_outputs(components.note(result['error'], 'orange'), dark)
 
     top, bottom = result['top_bottom']['top'], result['top_bottom']['bottom']
     columns = []
@@ -281,22 +268,17 @@ def show_diagnostics(_clicks, name, expression, direction, dark):
 def _diagnostics_notes(result: dict) -> dmc.Stack:
     text, colour = logic.coverage_note(result['coverage'])
     sample = result['sample']
-    notes = [_note(text, colour),
-             _note(f'Universe: top {sample["size"]:,} names by trailing dollar volume on each of {sample["dates"]} month-ends.'),
-             _note(logic.turnover_note(result['autocorrelation']))]
+    notes = [components.note(text, colour),
+             components.note(f'Universe: top {sample["size"]:,} names by trailing dollar volume on each of '
+                             f'{sample["dates"]} month-ends.'),
+             components.note(logic.turnover_note(result['autocorrelation']))]
     found = logic.correlation_note(result['correlations'])
     if found is not None:
-        notes.insert(1, _note(found[0], found[1]))
+        notes.insert(1, components.note(found[0], found[1]))
     return dmc.Stack(gap=4, children=notes)
 
 
-def _empty_figure(dark: bool) -> go.Figure:
-    figure = go.Figure()
-    figure.update_layout(**theming.figure_layout(bool(dark)), margin={'l': 40, 'r': 10, 't': 10, 'b': 30})
-    return figure
-
-
-def _coverage_figure(table, dark: bool) -> go.Figure:
+def _coverage_figure(table: pd.DataFrame, dark: bool) -> go.Figure:
     """Names with a value per year, overlaid on the names in the universe."""
     figure = go.Figure()
     figure.add_bar(x=table['year'], y=table['universe'], name='Universe', marker_color='#8C8C8C', opacity=0.35)
@@ -310,33 +292,33 @@ def _coverage_figure(table, dark: bool) -> go.Figure:
 @callback(Output('rs-ic-notes', 'children'), Output('rs-decay', 'rowData'),
           Output('rs-quantiles', 'rowData'), Output('rs-years', 'rowData'),
           Input('rs-btn-ic', 'n_clicks'), State('rs-name', 'value'), prevent_initial_call=True)
-def show_ic_analysis(_clicks, name):
+def show_ic_analysis(_clicks: int | None, name: str | None) -> tuple:
     """Run IC analysis on a saved factor and fill the IC panel."""
     if not name:
         raise PreventUpdate
     if name not in data.library():
-        return _note('Save the factor before running IC analysis.', 'orange'), [], [], []
+        return components.note('Save the factor before running IC analysis.', 'orange'), [], [], []
     try:
         result = data.run_tearsheet(name)
     except (ValueError, duckdb.Error) as error:
-        return _note(str(error), 'red'), [], [], []
+        return components.note(str(error), 'red'), [], [], []
     if 'error' in result:
-        return _note(result['error'], 'orange'), [], [], []
+        return components.note(result['error'], 'orange'), [], [], []
 
     text, colour = logic.ic_note(result)
-    notes = [_note(text, colour)]
+    notes = [components.note(text, colour)]
     holdout = logic.holdout_note(result['split'])
     if holdout is not None:
-        notes.append(_note(holdout[0], holdout[1]))
-    notes += [_note(logic.ic_decay_note(result['decay'], higher_is_better=result['higher_is_better'])),
-              _note(f'Universe: top {data.RESEARCH_SIZE:,} names by trailing dollar volume on each month-end.'),
-              _note(logic.multiple_testing_note(result))]
+        notes.append(components.note(holdout[0], holdout[1]))
+    notes += [components.note(logic.ic_decay_note(result['decay'], higher_is_better=result['higher_is_better'])),
+              components.note(f'Universe: top {data.RESEARCH_SIZE:,} names by trailing dollar volume on each month-end.'),
+              components.note(logic.multiple_testing_note(result))]
     return (dmc.Stack(gap=4, children=notes), result['decay'].to_dict('records'),
             result['quantiles'].to_dict('records'), result['by_year'].to_dict('records'))
 
 
 @callback(Output('rs-backtest-link', 'href'), Input('rs-name', 'value'))
-def backtest_link(name):
+def backtest_link(name: str | None) -> str:
     """Open the Backtest page with this factor already selected."""
     return f'/backtest?factor={name}' if name else '/backtest'
 
@@ -346,23 +328,24 @@ def backtest_link(name):
           State('rs-name', 'value'), State('rs-description', 'value'),
           State('rs-expression', 'value'), State('rs-direction', 'value'),
           State('rs-status', 'value'), prevent_initial_call=True)
-def save_factor(_save, _delete, name, description, expression, direction, status):
+def save_factor(_save: int | None, _delete: int | None, name: str | None, description: str | None, expression: str | None,
+                direction: str | None, status: str | None) -> components.Children:
     """Save or delete the factor, clearing cached results for its previous definition."""
     if not name:
-        return _note('A factor needs a name.', 'orange')
+        return components.note('A factor needs a name.', 'orange')
     if ctx.triggered_id == 'rs-btn-delete':
         data.delete(name)
-        return _note(f'Deleted {name} and its cached results.', 'gray')
+        return components.note(f'Deleted {name} and its cached results.', 'gray')
     try:
         factor = factors.Factor(name=name, expression=expression or '', description=description or '',
                                 higher_is_better=direction == 'higher', status=status)
         ok, message = logic.validate_expression(factor.expression, data.known_names() | {name})
         if not ok:
-            return _note(message, 'red')
+            return components.note(message, 'red')
         data.save(factor)
     except (ValueError, duckdb.Error) as error:
-        return _note(str(error), 'red')
-    return _note(f'Saved {name}. Cached results for the previous definition were cleared.', 'green')
+        return components.note(str(error), 'red')
+    return components.note(f'Saved {name}. Cached results for the previous definition were cleared.', 'green')
 
 
 dash.register_page(__name__, path='/factors', name='Factors', layout=layout)

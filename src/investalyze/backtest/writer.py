@@ -10,6 +10,8 @@ import json
 import duckdb
 import pandas as pd
 
+from investalyze.ingest import storage
+
 RUN_SCHEMA_VERSION = 1  # bump when engine semantics change, so old runs do not collide with new
 
 RUN_COLS = ['RunId', 'Signal', 'Kind', 'ConfigJson', 'StartDate', 'EndDate', 'NTickers', 'Benchmark',
@@ -132,6 +134,6 @@ def delete_run(con: duckdb.DuckDBPyConnection, identifier: str) -> dict[str, int
     """
     removed = {}
     for table in RUN_TABLES:
-        removed[table] = con.execute(f'SELECT count(*) FROM {table} WHERE RunId = ?', [identifier]).fetchone()[0]
+        removed[table] = storage.scalar(con, f'SELECT count(*) FROM {table} WHERE RunId = ?', [identifier])
         con.execute(f'DELETE FROM {table} WHERE RunId = ?', [identifier])
     return removed

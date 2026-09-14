@@ -10,6 +10,7 @@ cross-section each IC was computed on. `expected_false_positives` gives how many
 of this size would pass p<0.05 by chance (multiple testing).
 """
 
+import duckdb
 import numpy as np
 import pandas as pd
 
@@ -22,7 +23,8 @@ DEFAULT_HORIZON = 21
 DEFAULT_QUANTILES = 5
 
 
-def _closes(con, tickers: list[str], first, last, horizon: int) -> pd.DataFrame:
+def _closes(con: duckdb.DuckDBPyConnection, tickers: list[str], first: pd.Timestamp, last: pd.Timestamp,
+            horizon: int) -> pd.DataFrame:
     """Adjusted closes over the factor's dates, extended to cover the forward return window."""
     padded = pd.Timestamp(last) + pd.Timedelta(days=2 * horizon + 10)
     calendar = panels.trading_calendar(con, start=pd.Timestamp(first).date().isoformat(),
@@ -32,7 +34,7 @@ def _closes(con, tickers: list[str], first, last, horizon: int) -> pd.DataFrame:
     return panels.close_panel(con, tickers, calendar, min_obs_frac=factors_pit.MIN_PRICE_COVERAGE)
 
 
-def ic_series(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON) -> pd.DataFrame:
+def ic_series(con: duckdb.DuckDBPyConnection, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON) -> pd.DataFrame:
     """Per date: the rank IC against the `horizon`-day forward return, and the number of names used."""
     scores = evaluation.factor_scores(frame, name)
     tickers = sorted(scores.columns)
@@ -86,7 +88,7 @@ def ic_split(ic_frame: pd.DataFrame, holdout_start: pd.Timestamp, *, higher_is_b
     return pd.DataFrame(rows, columns=['period', 'start', 'end', 'mean_ic', 't_stat', 'n_periods'])
 
 
-def ic_decay(con, name: str, frame: pd.DataFrame, *, horizons: tuple = HORIZONS,
+def ic_decay(con: duckdb.DuckDBPyConnection, name: str, frame: pd.DataFrame, *, horizons: tuple = HORIZONS,
              store: cache.Cache | None = None, fingerprint: str = '') -> pd.DataFrame:
     """Mean IC and t-statistic at each forward horizon."""
     rows = []
@@ -98,7 +100,7 @@ def ic_decay(con, name: str, frame: pd.DataFrame, *, horizons: tuple = HORIZONS,
     return pd.DataFrame(rows)
 
 
-def quantile_returns(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
+def quantile_returns(con: duckdb.DuckDBPyConnection, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
                      n_quantiles: int = DEFAULT_QUANTILES) -> pd.DataFrame:
     """Mean and median forward return per factor quantile, with the average number of names in each."""
     scores = evaluation.factor_scores(frame, name)
@@ -134,7 +136,7 @@ def ic_params(frame: pd.DataFrame, horizon: int) -> str:
                              start=dates.min().date().isoformat(), end=dates.max().date().isoformat())
 
 
-def cached_ic(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
+def cached_ic(con: duckdb.DuckDBPyConnection, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
               store: cache.Cache | None = None, fingerprint: str = '') -> pd.DataFrame:
     """The per-date IC series, read from the cache when current and computed otherwise."""
     params = ic_params(frame, horizon)
@@ -149,7 +151,7 @@ def cached_ic(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HOR
     return computed
 
 
-def tearsheet(con, name: str, library: dict, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
+def tearsheet(con: duckdb.DuckDBPyConnection, name: str, library: dict, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
               store: cache.Cache | None = None, holdout_start: pd.Timestamp | None = None) -> dict:
     """The full tear sheet for one factor: IC summary, IC decay, quantile returns, multiple testing."""
     fingerprint = factors.fingerprint(name, library) if name in library else ''

@@ -12,14 +12,14 @@ import logging
 import time
 from datetime import date
 from functools import lru_cache
-from pathlib import Path
 
 import requests
 
+from investalyze import paths
+
 log = logging.getLogger('investalyze.apps.data_quality.edgar')
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-CACHE_DIR = REPO_ROOT / 'data' / 'sec' / 'submissions'
+SUBMISSIONS_DIR = paths.DATA_ROOT / 'sec' / 'submissions'
 HEADERS = {'User-Agent': 'investalyze data-quality (7793950+marcdumon@users.noreply.github.com)'}
 EDGAR_DOC_URL = 'https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_dashes}/{primary_doc}'
 CACHE_TTL_SECONDS = 86400 * 7
@@ -32,10 +32,10 @@ def _fetch_chunk(filename: str) -> dict:
     filings, with everything older referenced in `filings.files[]` as chunk file names. Each chunk has
     the same parallel-arrays schema as `recent`.
     """
-    cache = CACHE_DIR / filename
+    cache = SUBMISSIONS_DIR / filename
     if cache.exists() and (time.time() - cache.stat().st_mtime) < CACHE_TTL_SECONDS:
         return json.loads(cache.read_text())
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
     log.info(f'GET https://data.sec.gov/submissions/{filename}')
     response = requests.get(f'https://data.sec.gov/submissions/{filename}', headers=HEADERS, timeout=10)
     response.raise_for_status()
@@ -52,11 +52,11 @@ def _fetch_submissions(cik: int) -> dict:
     full filing history for the company.
     """
     cik_str = f'{cik:010d}'
-    cache = CACHE_DIR / f'{cik_str}.json'
+    cache = SUBMISSIONS_DIR / f'{cik_str}.json'
     if cache.exists() and (time.time() - cache.stat().st_mtime) < CACHE_TTL_SECONDS:
         data = json.loads(cache.read_text())
     else:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
         log.info(f'GET https://data.sec.gov/submissions/CIK{cik_str}.json')
         response = requests.get(f'https://data.sec.gov/submissions/CIK{cik_str}.json', headers=HEADERS, timeout=10)
         response.raise_for_status()

@@ -58,7 +58,7 @@ def header_facts(described: dict) -> list[str]:
     return facts
 
 
-def _as_date(value) -> str:
+def _as_date(value: pd.Timestamp | str) -> str:
     """A date or timestamp as a plain ISO day."""
     return pd.Timestamp(value).date().isoformat()
 
