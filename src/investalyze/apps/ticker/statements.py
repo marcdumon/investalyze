@@ -167,20 +167,30 @@ def table_data(frame: pd.DataFrame, statement: str, depth: str, view: str,
         items = [item for item in SUMMARY[statement] if item in items]
     values = _view_matrix(frame, items, statement, view, revenue)
     diff = filed is not None
-    if diff:
-        filed_values = _view_matrix(filed, items, statement, view, filed_revenue)
-        filed_position = {(fy, fp): i for i, (fy, fp)
-                          in enumerate(zip(filed['Fiscal Year'], filed['Fiscal Period']))}
-        aligned = pd.DataFrame(np.nan, index=values.index, columns=values.columns)
-        for i, (fy, fp) in enumerate(zip(frame['Fiscal Year'], frame['Fiscal Period'])):
-            position = filed_position.get((fy, fp))
-            if position is not None:
-                aligned.iloc[:, i] = filed_values.iloc[:, position].to_numpy()
-        delta = values - aligned
-        values = delta.where(delta != 0)
+    if filed is not None:
+        values = _restatement_delta(values, frame, _view_matrix(filed, items, statement, view, filed_revenue), filed)
     values = values.iloc[:, -last:].iloc[:, ::-1]
     shown = labels[-last:][::-1]
+    currency = str(frame['Currency'].iloc[-1]) if len(frame) else ''
+    return _grid_columns(shown, statement, view, currency, diff), _grid_rows(values, items, shown, statement, view, diff)
 
+
+def _restatement_delta(values: pd.DataFrame, frame: pd.DataFrame, filed_values: pd.DataFrame,
+                       filed: pd.DataFrame) -> pd.DataFrame:
+    """Restated minus as-filed values per fiscal period, blank where nothing changed."""
+    filed_position = {(fy, fp): i for i, (fy, fp) in enumerate(zip(filed['Fiscal Year'], filed['Fiscal Period']))}
+    aligned = pd.DataFrame(np.nan, index=values.index, columns=values.columns)
+    for i, (fy, fp) in enumerate(zip(frame['Fiscal Year'], frame['Fiscal Period'])):
+        position = filed_position.get((fy, fp))
+        if position is not None:
+            aligned.iloc[:, i] = filed_values.iloc[:, position].to_numpy()
+    delta = values - aligned
+    return delta.where(delta != 0)
+
+
+def _grid_rows(values: pd.DataFrame, items: list[str], shown: list[str], statement: str, view: str,
+               diff: bool) -> list[dict]:
+    """One formatted grid row per line item that has a value in the shown periods."""
     formatter = {'usd': _fmt_millions, 'yoy': _fmt_signed_pct, 'common': _fmt_pct, 'ps': _fmt_per_share}[view]
     totals = TOTALS[statement]
     summary = SUMMARY[statement]
@@ -197,8 +207,11 @@ def table_data(frame: pd.DataFrame, statement: str, depth: str, view: str,
                 text = '+' + text
             row[label] = text
         rows.append(row)
+    return rows
 
-    currency = str(frame['Currency'].iloc[-1]) if len(frame) else ''
+
+def _grid_columns(shown: list[str], statement: str, view: str, currency: str, diff: bool) -> list[dict]:
+    """The pinned line item column and one right-aligned column per shown period."""
     if diff or view == 'yoy':
         value_style = {'styleConditions': [
             {'condition': "params.value && params.value.startsWith('+')", 'style': {'color': _GREEN}},
@@ -214,4 +227,4 @@ def table_data(frame: pd.DataFrame, statement: str, depth: str, view: str,
                     {'condition': 'params.data.level === 2', 'style': {'paddingLeft': '24px'}}]}}]
     for label in shown:
         columns.append({'field': label, 'width': 92, 'type': 'rightAligned', 'cellStyle': value_style})
-    return columns, rows
+    return columns

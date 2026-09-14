@@ -229,83 +229,110 @@ def peer_violin_figure(peers: pd.DataFrame, ticker: str, spec: list[tuple[str, s
         annotation.update(x=0, xanchor='left', font={'size': 11, 'color': theme['context']})
     others = peers[peers['Ticker'] != ticker]
     me = peers[peers['Ticker'] == ticker]
-    point_style = {'size': 7, 'color': theme['context'], 'opacity': 0.8, 'line': {'width': 1, 'color': theme['ring']}}
     for i, (column, _label, fmt) in enumerate(spec, start=1):
         own = float(me.iloc[0][column]) if len(me) and pd.notna(me.iloc[0][column]) else None
-        if fmt == 'usd':
-            valid = others[others[column].notna() & (others[column] > 0)]
-            x = np.log10(valid[column])
-            own_x = np.log10(own) if own is not None and own > 0 else None
-            customdata = valid[column]
-            point_hover = '%{text}: %{customdata:,.3s}<extra></extra>'
-            own_hover = '%{text}: %{customdata:,.3s}<extra></extra>'
-        else:
-            valid = others[others[column].notna()]
-            x = valid[column]
-            own_x = own
-            customdata = None
-            point_hover = '%{text}: %{x:.2f}<extra></extra>'
-            own_hover = '%{text}: %{x:.2f}<extra></extra>'
-        pct, edge, fill = None, theme['context'], 'rgba(137, 135, 129, 0.35)'
-        if own is not None and len(valid):
-            pct = float((valid[column] <= own).mean() * 100)
-            if column in HIGHER_IS_BETTER:
-                pct = pct if HIGHER_IS_BETTER[column] else 100 - pct
-                verdict = _verdict_rgb(pct)
-                if verdict is not None:
-                    r, g, b = verdict
-                    edge, fill = f'rgb({r}, {g}, {b})', f'rgba({r}, {g}, {b}, 0.3)'
+        valid, x, own_x, customdata = _peer_axis_values(others, column, fmt, own)
+        hover = '%{text}: %{customdata:,.3s}<extra></extra>' if fmt == 'usd' else '%{text}: %{x:.2f}<extra></extra>'
+        pct, edge, fill = _peer_verdict(valid[column], own, column, theme)
         fences = _fence_range(x, own_x) if fmt != 'usd' and len(valid) else None
-        inside = (x >= fences[0]) & (x <= fences[1]) if fences is not None else pd.Series(True, index=valid.index)
-        if inside.any():
-            fig.add_trace(go.Violin(
-                x=x[inside], y0=0.0, orientation='h', width=1.6, spanmode='hard',
-                points='outliers', jitter=0.25, pointpos=0, marker=point_style,
-                box={'visible': True, 'width': 0.2, 'fillcolor': 'rgba(0, 0, 0, 0)',
-                     'line': {'color': edge, 'width': 1}},
-                text=valid['Ticker'][inside], customdata=customdata[inside] if customdata is not None else None,
-                hoveron='points', hovertemplate=point_hover,
-                line={'color': edge, 'width': 1}, fillcolor=fill,
-                showlegend=False), row=i, col=1)
-        if fences is not None and (~inside).any():
-            extremes = x[~inside]
-            sides = [extremes[extremes < fences[0]], extremes[extremes > fences[1]]]
-            offsets = pd.concat([_stacked_offsets(side) for side in sides if len(side)]).reindex(extremes.index)
-            fig.add_trace(go.Scatter(
-                x=extremes.clip(fences[0], fences[1]), y=offsets,
-                mode='markers', text=valid['Ticker'][~inside], customdata=extremes,
-                marker={'size': 8, 'color': theme['context'], 'opacity': 0.9,
-                        'symbol': ['triangle-right' if value > fences[1] else 'triangle-left' for value in extremes],
-                        'line': {'width': 1, 'color': theme['ring']}},
-                hovertemplate='%{text}: %{customdata:.2f} (beyond axis)<extra></extra>',
-                showlegend=False), row=i, col=1)
+        _add_peer_distribution(fig, i, x, valid['Ticker'], customdata, hover, fences, edge, fill, theme)
         if pct is not None:
             fig.add_annotation(text=f'P{pct:.0f}', x=1, y=1, xref='x domain', yref='y domain',
                                xanchor='right', yanchor='top', showarrow=False,
                                font={'size': 11, 'color': edge}, row=i, col=1)
         if own_x is not None:
-            fig.add_trace(go.Scatter(
-                x=[own_x, own_x], y=[-0.8, 0.8], mode='lines', line={'color': theme['accent'], 'width': 2},
-                hoverinfo='skip', showlegend=False), row=i, col=1)
-            fig.add_trace(go.Scatter(
-                x=[own_x], y=[0], mode='markers', text=[ticker], customdata=[own], marker={
-                    'size': 14, 'symbol': 'diamond', 'color': theme['accent'],
-                    'line': {'width': 2, 'color': theme['ring']}},
-                hovertemplate=own_hover, showlegend=False), row=i, col=1)
+            _add_own_value(fig, i, own_x, own, ticker, hover, theme)
         fig.update_yaxes(visible=False, range=[-1, 1], row=i, col=1)
-        if fmt == 'usd':
-            exponents = list(x) + ([own_x] if own_x is not None else [])
-            if exponents:
-                lo, hi = int(np.floor(min(exponents))), int(np.ceil(max(exponents)))
-                fig.update_xaxes(tickvals=list(range(lo, hi + 1)),
-                                 ticktext=[_usd_tick(k) for k in range(lo, hi + 1)], row=i, col=1)
-        else:
-            if fences is not None:
-                pad = (fences[1] - fences[0]) * 0.05
-                fig.update_xaxes(range=[fences[0] - pad, fences[1] + pad], row=i, col=1)
-            if fmt == 'pct':
-                fig.update_xaxes(tickformat='.0%', row=i, col=1)
+        _format_peer_axis(fig, i, fmt, x, own_x, fences)
     return _style(fig, dark, 108 * len(spec) + 40)
+
+
+def _peer_axis_values(others: pd.DataFrame, column: str, fmt: str,
+                      own: float | None) -> tuple[pd.DataFrame, pd.Series, float | None, pd.Series | None]:
+    """Peers with a value, their axis positions, the ticker's axis position and the dollar values for hover.
+
+    Dollar metrics sit on a log10 axis over positive values; every other metric uses its own values.
+    """
+    if fmt == 'usd':
+        valid = others[others[column].notna() & (others[column] > 0)]
+        own_x = np.log10(own) if own is not None and own > 0 else None
+        return valid, np.log10(valid[column]), own_x, valid[column]
+    valid = others[others[column].notna()]
+    return valid, valid[column], own, None
+
+
+def _peer_verdict(values: pd.Series, own: float | None, column: str, theme: dict) -> tuple[float | None, str, str]:
+    """The ticker's peer percentile, oriented when the metric has a direction, with its edge and fill colours."""
+    pct, edge, fill = None, theme['context'], 'rgba(137, 135, 129, 0.35)'
+    if own is None or not len(values):
+        return pct, edge, fill
+    pct = float((values <= own).mean() * 100)
+    if column in HIGHER_IS_BETTER:
+        pct = pct if HIGHER_IS_BETTER[column] else 100 - pct
+        verdict = _verdict_rgb(pct)
+        if verdict is not None:
+            r, g, b = verdict
+            edge, fill = f'rgb({r}, {g}, {b})', f'rgba({r}, {g}, {b}, 0.3)'
+    return pct, edge, fill
+
+
+def _add_peer_distribution(fig: go.Figure, row: int, x: pd.Series, tickers: pd.Series, customdata: pd.Series | None,
+                           hover: str, fences: tuple[float, float] | None, edge: str, fill: str, theme: dict) -> None:
+    """Add the violin of peer values inside the fences, and edge triangles for the peers beyond them."""
+    inside = (x >= fences[0]) & (x <= fences[1]) if fences is not None else pd.Series(True, index=x.index)
+    point_style = {'size': 7, 'color': theme['context'], 'opacity': 0.8, 'line': {'width': 1, 'color': theme['ring']}}
+    if inside.any():
+        fig.add_trace(go.Violin(
+            x=x[inside], y0=0.0, orientation='h', width=1.6, spanmode='hard',
+            points='outliers', jitter=0.25, pointpos=0, marker=point_style,
+            box={'visible': True, 'width': 0.2, 'fillcolor': 'rgba(0, 0, 0, 0)',
+                 'line': {'color': edge, 'width': 1}},
+            text=tickers[inside], customdata=customdata[inside] if customdata is not None else None,
+            hoveron='points', hovertemplate=hover,
+            line={'color': edge, 'width': 1}, fillcolor=fill,
+            showlegend=False), row=row, col=1)
+    if fences is not None and (~inside).any():
+        extremes = x[~inside]
+        sides = [extremes[extremes < fences[0]], extremes[extremes > fences[1]]]
+        offsets = pd.concat([_stacked_offsets(side) for side in sides if len(side)]).reindex(extremes.index)
+        fig.add_trace(go.Scatter(
+            x=extremes.clip(fences[0], fences[1]), y=offsets,
+            mode='markers', text=tickers[~inside], customdata=extremes,
+            marker={'size': 8, 'color': theme['context'], 'opacity': 0.9,
+                    'symbol': ['triangle-right' if value > fences[1] else 'triangle-left' for value in extremes],
+                    'line': {'width': 1, 'color': theme['ring']}},
+            hovertemplate='%{text}: %{customdata:.2f} (beyond axis)<extra></extra>',
+            showlegend=False), row=row, col=1)
+
+
+def _add_own_value(fig: go.Figure, row: int, own_x: float, own: float | None, ticker: str, hover: str,
+                   theme: dict) -> None:
+    """Add the ticker's accent needle and diamond."""
+    fig.add_trace(go.Scatter(
+        x=[own_x, own_x], y=[-0.8, 0.8], mode='lines', line={'color': theme['accent'], 'width': 2},
+        hoverinfo='skip', showlegend=False), row=row, col=1)
+    fig.add_trace(go.Scatter(
+        x=[own_x], y=[0], mode='markers', text=[ticker], customdata=[own], marker={
+            'size': 14, 'symbol': 'diamond', 'color': theme['accent'],
+            'line': {'width': 2, 'color': theme['ring']}},
+        hovertemplate=hover, showlegend=False), row=row, col=1)
+
+
+def _format_peer_axis(fig: go.Figure, row: int, fmt: str, x: pd.Series, own_x: float | None,
+                      fences: tuple[float, float] | None) -> None:
+    """Label a dollar axis in dollars at each power of ten; clamp any other axis to its fences."""
+    if fmt == 'usd':
+        exponents = list(x) + ([own_x] if own_x is not None else [])
+        if exponents:
+            lo, hi = int(np.floor(min(exponents))), int(np.ceil(max(exponents)))
+            fig.update_xaxes(tickvals=list(range(lo, hi + 1)),
+                             ticktext=[_usd_tick(k) for k in range(lo, hi + 1)], row=row, col=1)
+        return
+    if fences is not None:
+        pad = (fences[1] - fences[0]) * 0.05
+        fig.update_xaxes(range=[fences[0] - pad, fences[1] + pad], row=row, col=1)
+    if fmt == 'pct':
+        fig.update_xaxes(tickformat='.0%', row=row, col=1)
 
 
 def fundamentals_figure(ttm: pd.DataFrame, dark: bool) -> go.Figure:

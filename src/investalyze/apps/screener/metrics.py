@@ -15,6 +15,15 @@ def build_metrics(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     Joins price-history stats, liquidity, market cap (latest reported shares x last close),
     fundamentals coverage, company identity and anomaly counts.
     """
+    price_stats, *others = _per_ticker_tables(con)
+    df = price_stats
+    for other in others:
+        df = df.merge(other, on='Ticker', how='left')
+    return _with_derived_columns(df).sort_values('Ticker', ignore_index=True)
+
+
+def _per_ticker_tables(con: duckdb.DuckDBPyConnection) -> list[pd.DataFrame]:
+    """Price-history stats first, then liquidity, latest shares, statement count, anomaly count and identity per ticker."""
     price_stats = con.execute("""
         SELECT Ticker,
                MIN(Date) AS first_date,
@@ -56,10 +65,11 @@ def build_metrics(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         FROM companies
     """).df()
 
-    df = price_stats
-    for other in (dollar_volume, shares, n_periods, anomalies, companies):
-        df = df.merge(other, on='Ticker', how='left')
+    return [price_stats, dollar_volume, shares, n_periods, anomalies, companies]
 
+
+def _with_derived_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Add history length, activity, market cap and display units, and fill the counts and labels a ticker lacks."""
     df['years'] = ((df['last_date'] - df['first_date']).dt.days / 365.25).round(1)
     df['active'] = df['last_date'] >= df['last_date'].max() - pd.Timedelta(days=7)
     df['mcap'] = df['shares'] * df['last_close']
@@ -77,5 +87,4 @@ def build_metrics(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
     df['last_close'] = df['last_close'].round(2)
     df['first_date'] = df['first_date'].dt.date.astype(str)
     df['last_date'] = df['last_date'].dt.date.astype(str)
-
-    return df.sort_values('Ticker', ignore_index=True)
+    return df

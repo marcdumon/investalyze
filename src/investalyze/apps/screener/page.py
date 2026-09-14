@@ -147,8 +147,6 @@ def apply_action(
     return sorted(sel), message
 
 
-
-
 def layout() -> html.Div:
     """Build the screener page. The pool is loaded (and cached) on first visit."""
     try:
@@ -156,11 +154,56 @@ def layout() -> html.Div:
         scales = get_scales()
     except duckdb.Error:
         return html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '14px', 'padding': '24px'})
+    return html.Div([
+        dcc.Store(id='selection', data=[]),
+        _header(),
+        _filter_row(sorted(df['sector'].unique())),
+        _factor_panel(scales),
+        html.Div(id='notice'),
+        _grids(),
+        dmc.Group([
+            dmc.Text('click a row to inspect it below; click a Ticker cell to open its full analysis in a new tab',
+                     size='xs', c='dimmed'),
+            dmc.Text(id='sel-status', size='xs', c='teal'),
+        ], gap=16, px=12, py=6),
+        html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '30vh',
+                                             'flexShrink': 0}),
+        _blacklist_modal(),
+        dcc.Store(id='scr-blacklist-pending'),
+        dcc.Interval(id='scr-blacklist-poll', interval=1000, disabled=True),
+    ], style={'display': 'flex', 'flexDirection': 'column', 'minHeight': 'calc(100vh - 32px)'})
 
-    filter_row = dmc.Group([
+
+def _header() -> dmc.Group:
+    """The title bar: selection count, display mode, universe save and load, blacklist and refresh."""
+    return dmc.Group([
+        dmc.Text('Screener', fw=700, size='lg'),
+        dmc.Text(id='sel-count', size='xs', c='dimmed'),
+        dmc.SegmentedControl(id='mode', value='raw', size='xs',
+                             data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
+        dmc.TextInput(id='universe-name', placeholder='Universe name', size='xs', style={'width': '120px'}),
+        # Save/Load are icon-only: as labelled buttons the four universe controls cost 496px
+        # of the 862px row on their own, which forced the whole header onto a second line.
+        dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:device-floppy', width=16), id='btn-save',
+                                   size='input-xs', variant='default'), label='Save universe'),
+        dmc.Select(id='universe-dd', data=list_universes(), placeholder='Load saved universe', clearable=True,
+                   size='xs', style={'width': '170px'}),
+        dmc.Button('Blacklist', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
+                   leftSection=DashIconify(icon='tabler:trash', width=14)),
+        dmc.Text(id='scr-blacklist-status', size='xs'),
+        dmc.Button('Refresh', id='btn-refresh', size='xs', variant='subtle',
+                   leftSection=DashIconify(icon='tabler:reload', width=14)),
+        dmc.Text(id='save-status', size='xs', c='teal'),
+    ], gap=6, px=12, py=6, align='center',
+       style={'borderBottom': '1px solid var(--mantine-color-default-border)', 'flexWrap': 'wrap'})
+
+
+def _filter_row(sectors: list[str]) -> dmc.Group:
+    """The metadata filters: search, sector, industry, liquidity, history, anomalies, listing and market-cap bucket."""
+    return dmc.Group([
         dmc.TextInput(id='f-search', label='Search', placeholder='Ticker or company', debounce=500, size='xs',
                       leftSection=DashIconify(icon='tabler:search', width=14), style={'width': '160px'}),
-        dmc.MultiSelect(id='f-sector', label='Sector', data=sorted(df['sector'].unique()), placeholder='All',
+        dmc.MultiSelect(id='f-sector', label='Sector', data=sectors, placeholder='All',
                         clearable=True, searchable=True, size='xs', style={'width': '155px'}),
         dmc.MultiSelect(id='f-industry', label='Industry', data=[], placeholder='All',
                         clearable=True, searchable=True, size='xs', style={'width': '170px'}),
@@ -176,8 +219,11 @@ def layout() -> html.Div:
                            style={'height': '30px', 'display': 'flex', 'alignItems': 'center'})]),
     ], gap=8, align='flex-end', px=12, pt=4, pb=4, style={'flexWrap': 'wrap'})
 
+
+def _factor_panel(scales: dict[str, pool_data.FactorScale]) -> dmc.Accordion:
+    """The collapsible factor value filters, grouped by family, with the composite score factor picker."""
     shadowed = pool_data.shadowed_factors()
-    factor_panel = dmc.Accordion([
+    return dmc.Accordion([
         dmc.AccordionItem([
             dmc.AccordionControl('Factor value filters & composite score', py=2),
             dmc.AccordionPanel([
@@ -201,28 +247,10 @@ def layout() -> html.Div:
     ], multiple=True, styles={'control': {'paddingLeft': '12px'}, 'content': {'padding': '4px 12px 10px'}},
        style={'borderBottom': '1px solid var(--mantine-color-default-border)'})
 
-    header = dmc.Group([
-        dmc.Text('Screener', fw=700, size='lg'),
-        dmc.Text(id='sel-count', size='xs', c='dimmed'),
-        dmc.SegmentedControl(id='mode', value='raw', size='xs',
-                             data=[{'label': 'Raw', 'value': 'raw'}, {'label': 'Rank', 'value': 'rank'}]),
-        dmc.TextInput(id='universe-name', placeholder='Universe name', size='xs', style={'width': '120px'}),
-        # Save/Load are icon-only: as labelled buttons the four universe controls cost 496px
-        # of the 862px row on their own, which forced the whole header onto a second line.
-        dmc.Tooltip(dmc.ActionIcon(DashIconify(icon='tabler:device-floppy', width=16), id='btn-save',
-                                   size='input-xs', variant='default'), label='Save universe'),
-        dmc.Select(id='universe-dd', data=list_universes(), placeholder='Load saved universe', clearable=True,
-                   size='xs', style={'width': '170px'}),
-        dmc.Button('Blacklist', id='scr-btn-blacklist', size='xs', color='red', variant='outline',
-                   leftSection=DashIconify(icon='tabler:trash', width=14)),
-        dmc.Text(id='scr-blacklist-status', size='xs'),
-        dmc.Button('Refresh', id='btn-refresh', size='xs', variant='subtle',
-                   leftSection=DashIconify(icon='tabler:reload', width=14)),
-        dmc.Text(id='save-status', size='xs', c='teal'),
-    ], gap=6, px=12, py=6, align='center',
-       style={'borderBottom': '1px solid var(--mantine-color-default-border)', 'flexWrap': 'wrap'})
 
-    grids = html.Div([
+def _grids() -> html.Div:
+    """The candidates grid beside the selected names grid."""
+    return html.Div([
         html.Div([
             grid_title('Candidates', 'select all', 'btn-select-all', count_id='filter-count'),
             dag.AgGrid(
@@ -249,35 +277,21 @@ def layout() -> html.Div:
     # once the blocks above it grow, and the page scrolls to reach whatever no longer fits.
     ], style={'display': 'flex', 'gap': '10px', 'flex': 1, 'minHeight': '60vh', 'padding': '8px 12px 0'})
 
-    return html.Div([
-        dcc.Store(id='selection', data=[]),
-        header,
-        filter_row,
-        factor_panel,
-        html.Div(id='notice'),
-        grids,
-        dmc.Group([
-            dmc.Text('click a row to inspect it below; click a Ticker cell to open its full analysis in a new tab',
-                     size='xs', c='dimmed'),
-            dmc.Text(id='sel-status', size='xs', c='teal'),
-        ], gap=16, px=12, py=6),
-        html.Div(id='detail-content', style={'overflowY': 'auto', 'padding': '0 12px 12px', 'maxHeight': '30vh',
-                                             'flexShrink': 0}),
-        dmc.Modal(
-            id='scr-confirm-modal', title='Confirm', centered=True,
-            children=[
-                dmc.Text(id='scr-confirm-text'),
-                dmc.Textarea(id='scr-blacklist-reason', autosize=True, minRows=2, size='xs', mt=8,
-                             placeholder='Reason (stored against every ticker blacklisted)'),
-                dmc.Group([
-                    dmc.Button('Cancel', id='scr-confirm-no', variant='default', size='xs'),
-                    dmc.Button('Confirm', id='scr-confirm-yes', color='red', size='xs'),
-                ], justify='flex-end', mt=12),
-            ],
-        ),
-        dcc.Store(id='scr-blacklist-pending'),
-        dcc.Interval(id='scr-blacklist-poll', interval=1000, disabled=True),
-    ], style={'display': 'flex', 'flexDirection': 'column', 'minHeight': 'calc(100vh - 32px)'})
+
+def _blacklist_modal() -> dmc.Modal:
+    """The blacklist confirmation dialog, with the reason stored against every blacklisted ticker."""
+    return dmc.Modal(
+        id='scr-confirm-modal', title='Confirm', centered=True,
+        children=[
+            dmc.Text(id='scr-confirm-text'),
+            dmc.Textarea(id='scr-blacklist-reason', autosize=True, minRows=2, size='xs', mt=8,
+                         placeholder='Reason (stored against every ticker blacklisted)'),
+            dmc.Group([
+                dmc.Button('Cancel', id='scr-confirm-no', variant='default', size='xs'),
+                dmc.Button('Confirm', id='scr-confirm-yes', color='red', size='xs'),
+            ], justify='flex-end', mt=12),
+        ],
+    )
 
 
 dash.register_page(__name__, path='/screener', name='Screener', layout=layout)

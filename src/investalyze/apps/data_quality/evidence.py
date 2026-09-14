@@ -128,17 +128,35 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
                      + [html.Th(label, style={'padding': '0 8px', 'textAlign': 'right',
                                               'color': 'var(--mantine-color-orange-6)' if label == flagged_label else None})
                         for label in window_labels])
+    check = str(row.get('CheckName', ''))
+    used_columns = _used_columns(check, parsed, window_labels, flagged_label, periods)
+    involved = actions.involved_items(check, str(row.get('Details', '')))
+    body = _value_rows(line_items, periods, used_columns, involved)
+    filing_row = _filing_row(periods, cik)
+    caption = [_yahoo_finance_link(ticker), html.Span(f' {table}: {row.get("Details", "")}')]
+    return [
+        html.Div(caption, style={'fontSize': '13px', 'marginBottom': '6px'}),
+        html.Div(html.Table(html.Tbody([header, filing_row] + body), style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
+                 style={'overflowX': 'auto'}),
+    ]
+
+
+def _filing_row(periods: list[dict], cik: int | None) -> html.Tr:
+    """A row of EDGAR links, one per period: the restatement filing for a restated period, else the original filing."""
     filing_cells = [html.Td('SEC filing', style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
     for srow in periods:
         url = (_edgar_restated_url(cik, srow['Restated Date']) if srow['IsRestated']
               else _edgar_filing_url(cik, srow['Fiscal Period'], srow['Report Date']))
         cell = html.A('EDGAR', href=url, target='_blank') if url else '-'
         filing_cells.append(html.Td(cell, style={'padding': '0 8px', 'textAlign': 'right'}))
-    filing_row = html.Tr(filing_cells)
-    check = str(row.get('CheckName', ''))
-    involved = actions.involved_items(check, str(row.get('Details', '')))
+    return html.Tr(filing_cells)
+
+
+def _used_columns(check: str, parsed: dict | None, labels: list[str], flagged_label: str | None,
+                  periods: list[dict]) -> list[bool]:
+    """Whether each period column feeds the check: the flagged period, plus its quarters for `quarters_vs_fy`."""
     used_columns = []
-    for label, srow in zip(window_labels, periods):
+    for label, srow in zip(labels, periods):
         if label == flagged_label:
             used_columns.append(True)
         elif check == 'quarters_vs_fy' and parsed is not None:
@@ -146,7 +164,11 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
             used_columns.append(same_version and srow['Fiscal Year'] == parsed['fiscal_year'])
         else:
             used_columns.append(False)
+    return used_columns
 
+
+def _value_rows(line_items: list[str], periods: list[dict], used_columns: list[bool], involved: set[str]) -> list[html.Tr]:
+    """One row per line item, bold where the check reads it, then the report, publish and restated dates."""
     body = []
     for item in line_items:
         cells = [html.Td(item, style={'paddingRight': '12px', 'color': 'var(--mantine-color-dimmed)'})]
@@ -163,12 +185,7 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
             text = '' if pd.isna(value) else pd.Timestamp(value).strftime('%Y-%m-%d')
             cells.append(html.Td(text, style={'padding': '0 8px', 'textAlign': 'right'}))
         body.append(html.Tr(cells))
-    caption = [_yahoo_finance_link(ticker), html.Span(f' {table}: {row.get("Details", "")}')]
-    return [
-        html.Div(caption, style={'fontSize': '13px', 'marginBottom': '6px'}),
-        html.Div(html.Table(html.Tbody([header, filing_row] + body), style={'fontSize': '12px', 'borderCollapse': 'collapse'}),
-                 style={'overflowX': 'auto'}),
-    ]
+    return body
 
 
 def _flagged_position(statement: pd.DataFrame, parsed: dict | None) -> int:

@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -33,9 +34,8 @@ def _epilog() -> str:
     return '\n'.join(lines)
 
 
-def main() -> None:
-    """Parse CLI args and run the selected providers."""
-    load_dotenv()
+def _parser() -> argparse.ArgumentParser:
+    """The `python -m investalyze.ingest` argument parser."""
     parser = argparse.ArgumentParser(
         prog='python -m investalyze.ingest',
         description='Ingest market data from providers into the DuckDB.',
@@ -73,62 +73,97 @@ def main() -> None:
         help='housekeeping task to run; repeatable (default: all)',
     )
     parser.add_argument('--update', action='store_true', help='apply the daily update instead of a full load')
+    return parser
+
+
+def _argument_problem(args: argparse.Namespace) -> str | None:
+    """Why the parsed arguments cannot run their command, or None when they can."""
+    if args.command == 'blacklist-ticker':
+        if not args.reason or (not args.tickers and not args.universe) or (args.tickers and args.universe):
+            return 'blacklist-ticker requires --reason and exactly one of --ticker (repeatable) or --universe'
+    if args.command == 'add-listings' and not args.rows:
+        return 'add-listings requires --rows'
+    return None
+
+
+def _housekeeping(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Run the chosen housekeeping tasks and log each result."""
+    summary = housekeeping.run_housekeeping(cfg, args.tasks)
+    for name, result in summary.items():
+        log.info(f'{name}: {result}')
+
+
+def _scan_listings(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Scan the exchange listings for new and reactivated tickers and log the counts."""
+    with storage.connect(cfg.data_root, cfg.db, read_only=True) as con:
+        result = listings.scan(con, cfg.data_root)
+    counts = Counter(c.classification for c in result.candidates)
+    log.info(f'scan complete: {len(result.candidates)} candidate(s) -> {result.saved_to}')
+    for classification, n in sorted(counts.items()):
+        log.info(f'  {classification}: {n}')
+    new_tickers = sorted(c.ticker for c in result.candidates if c.classification == 'new')
+    if new_tickers:
+        log.info(f'  added: {", ".join(new_tickers)}')
+
+
+def _blacklist_tickers(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Delete the given tickers, or a saved universe's tickers, and block future scans from re-adding them."""
+    if args.universe:
+        tickers = universes.load_universe(args.universe, universe_dir=cfg.data_root / 'universes')
+    else:
+        tickers = args.tickers
+    with storage.connect(cfg.data_root, cfg.db) as con:
+        deleted = listings.blacklist_tickers(con, cfg.data_root, tickers, args.reason)
+    log.info(f'blacklisted {len(tickers)} ticker(s) ({", ".join(tickers)}): {deleted} row(s) deleted')
+
+
+def _add_listings(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Add the reviewed listing candidates to ticker.csv."""
+    rows = json.loads(args.rows)
+    with storage.connect(cfg.data_root, cfg.db) as con:
+        added, renamed, skipped = listings.add_listings(con, cfg.data_root, rows)
+    log.info(f'added {len(added)} ticker(s), {renamed} renamed first, {skipped} skipped (no new ticker given)')
+    if added:
+        log.info(f'  added: {", ".join(added)}')
+
+
+def _ingest(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Run the chosen providers and log the row count each one stored."""
+    summary = orchestrator.run(cfg, args.providers, update=args.update)
+    for name, rows in summary.items():
+        log.info(f'{name}: {rows} rows')
+
+
+def _setup(cfg: config.Config, args: argparse.Namespace) -> None:
+    """Create the data directories."""
+    orchestrator.create_data_dirs(cfg)
+    log.info(f'data dirs ready under {cfg.data_root}')
+
+
+_COMMANDS: dict[str | None, Callable[[config.Config, argparse.Namespace], None]] = {
+    'setup': _setup,
+    'housekeeping': _housekeeping,
+    'scan-listings': _scan_listings,
+    'blacklist-ticker': _blacklist_tickers,
+    'add-listings': _add_listings,
+    None: _ingest,
+}
+
+
+def main() -> None:
+    """Parse CLI args and run the selected command, or the ingest when none is given."""
+    load_dotenv()
+    parser = _parser()
     args = parser.parse_args()
+    problem = _argument_problem(args)
+    if problem:
+        parser.error(problem)
 
     cfg = config.read(args.config)
     if args.data_root is not None:
         cfg = replace(cfg, data_root=args.data_root)
     configure_logging(cfg.log_level)
-
-    if args.command == 'setup':
-        orchestrator.create_data_dirs(cfg)
-        log.info(f'data dirs ready under {cfg.data_root}')
-        return
-
-    if args.command == 'housekeeping':
-        summary = housekeeping.run_housekeeping(cfg, args.tasks)
-        for name, result in summary.items():
-            log.info(f'{name}: {result}')
-        return
-
-    if args.command == 'scan-listings':
-        with storage.connect(cfg.data_root, cfg.db, read_only=True) as con:
-            result = listings.scan(con, cfg.data_root)
-        counts = Counter(c.classification for c in result.candidates)
-        log.info(f'scan complete: {len(result.candidates)} candidate(s) -> {result.saved_to}')
-        for classification, n in sorted(counts.items()):
-            log.info(f'  {classification}: {n}')
-        new_tickers = sorted(c.ticker for c in result.candidates if c.classification == 'new')
-        if new_tickers:
-            log.info(f'  added: {", ".join(new_tickers)}')
-        return
-
-    if args.command == 'blacklist-ticker':
-        if not args.reason or (not args.tickers and not args.universe) or (args.tickers and args.universe):
-            parser.error('blacklist-ticker requires --reason and exactly one of --ticker (repeatable) or --universe')
-        if args.universe:
-            tickers = universes.load_universe(args.universe, universe_dir=cfg.data_root / 'universes')
-        else:
-            tickers = args.tickers
-        with storage.connect(cfg.data_root, cfg.db) as con:
-            deleted = listings.blacklist_tickers(con, cfg.data_root, tickers, args.reason)
-        log.info(f'blacklisted {len(tickers)} ticker(s) ({", ".join(tickers)}): {deleted} row(s) deleted')
-        return
-
-    if args.command == 'add-listings':
-        if not args.rows:
-            parser.error('add-listings requires --rows')
-        rows = json.loads(args.rows)
-        with storage.connect(cfg.data_root, cfg.db) as con:
-            added, renamed, skipped = listings.add_listings(con, cfg.data_root, rows)
-        log.info(f'added {len(added)} ticker(s), {renamed} renamed first, {skipped} skipped (no new ticker given)')
-        if added:
-            log.info(f'  added: {", ".join(added)}')
-        return
-
-    summary = orchestrator.run(cfg, args.providers, update=args.update)
-    for name, rows in summary.items():
-        log.info(f'{name}: {rows} rows')
+    _COMMANDS[args.command](cfg, args)
 
 
 if __name__ == '__main__':

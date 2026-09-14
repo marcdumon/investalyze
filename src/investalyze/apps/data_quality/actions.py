@@ -128,11 +128,17 @@ def fix_entries(action: str, rows: list[dict], column: str | None, value: float 
     table/date, spans merged per ticker). Raises ValueError with a user-facing message when the
     selection or inputs cannot express the action.
     """
+    reason = reason.strip()
+    _check_selection(action, rows, column, value, reason)
+    return _grouped_entries(action, rows, column, value, reason)
+
+
+def _check_selection(action: str, rows: list[dict], column: str | None, value: float | None, reason: str) -> None:
+    """Raise ValueError with a user-facing message when the selection or inputs cannot express `action`."""
     if action not in FIX_ACTIONS:
         raise ValueError('choose an action')
     if not rows:
         raise ValueError('check or click at least one anomaly row first')
-    reason = reason.strip()
     if not reason:
         raise ValueError('a reason is required (it is stored with the fix)')
 
@@ -157,6 +163,10 @@ def fix_entries(action: str, rows: list[dict], column: str | None, value: float 
     if action == 'rebuild_adjusted_close' and tables != ['prices']:
         raise ValueError('rebuild adjusted close works on prices rows only')
 
+
+def _grouped_entries(action: str, rows: list[dict], column: str | None, value: float | None,
+                     reason: str) -> list[tuple[str, dict]]:
+    """The cleaning.toml entries for a checked selection, each covering as many rows as its fix type allows."""
     entries: list[tuple[str, dict]] = []
 
     if action == 'delete_rows' or action == 'clear_value':
