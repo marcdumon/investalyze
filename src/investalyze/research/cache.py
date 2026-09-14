@@ -18,7 +18,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-VALUES, IC = 'values', 'ic'
+VALUES, IC, BACKTEST, SUMMARY = 'values', 'ic', 'backtest', 'summary'
 
 
 def _quoted(path: Path) -> str:
@@ -106,6 +106,26 @@ class Cache:
             if path.stem != current:
                 found.append(path)
         return sorted(found)
+
+    def _summary_path(self, factor: str, fingerprint: str) -> Path:
+        return self._folder(SUMMARY) / f'{factor}__{fingerprint}.json'
+
+    def get_summary(self, factor: str, fingerprint: str) -> dict:
+        """Headline results recorded for the current definition of a factor, empty when none."""
+        path = self._summary_path(factor, fingerprint)
+        return json.loads(path.read_text()) if path.is_file() else {}
+
+    def put_summary(self, factor: str, fingerprint: str, updates: dict) -> dict:
+        """Merge headline results into a factor's summary and delete summaries of earlier definitions."""
+        folder = self._folder(SUMMARY)
+        folder.mkdir(parents=True, exist_ok=True)
+        path = self._summary_path(factor, fingerprint)
+        merged = self.get_summary(factor, fingerprint) | updates
+        path.write_text(json.dumps(merged, indent=2, default=str))
+        for old in folder.glob(f'{factor}__*.json'):
+            if old != path:
+                old.unlink(missing_ok=True)
+        return merged
 
     def forget(self, factor: str) -> int:
         """Delete every result for one factor."""

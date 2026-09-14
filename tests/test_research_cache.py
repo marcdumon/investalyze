@@ -80,3 +80,20 @@ def test_the_same_params_always_hash_the_same(store):
 
 def test_different_params_hash_differently(store):
     assert cache.params_hash(horizon=21) != cache.params_hash(horizon=63)
+
+
+def test_a_summary_accumulates_results_for_one_definition(store):
+    store.put_summary('margin', 'fp1', {'ic': 0.02})
+    store.put_summary('margin', 'fp1', {'sharpe': 0.8})
+    assert store.get_summary('margin', 'fp1') == {'ic': 0.02, 'sharpe': 0.8}
+
+
+def test_a_new_definition_starts_with_no_summary(store):
+    store.put_summary('margin', 'fp1', {'ic': 0.02})
+    assert store.get_summary('margin', 'fp2') == {}
+
+
+def test_writing_a_summary_for_a_new_definition_deletes_the_old_one(store):
+    store.put_summary('margin', 'fp1', {'ic': 0.02})
+    store.put_summary('margin', 'fp2', {'ic': 0.03})
+    assert list((store.root / cache.SUMMARY).glob('margin__*.json')) == [store.root / cache.SUMMARY / 'margin__fp2.json']

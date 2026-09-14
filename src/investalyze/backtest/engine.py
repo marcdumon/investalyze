@@ -11,7 +11,6 @@ share count and the loop needs no corporate-action step. Dividends arrive as cas
 from collections.abc import Callable
 from typing import NamedTuple
 
-import duckdb
 import numpy as np
 import pandas as pd
 
@@ -43,7 +42,6 @@ class Decision(NamedTuple):
 HOLD = Decision(targets=None, orders=None)
 
 SignalStep = Callable[[int, Book], Decision]
-SignalFactory = Callable[[duckdb.DuckDBPyConnection, MarketData, dict], SignalStep]
 
 
 class LookAheadError(RuntimeError):
@@ -287,25 +285,18 @@ def _liquidate_delisted(book: Book, market: MarketData, marks: np.ndarray, last_
 
 
 def run_backtest(market: MarketData, step, *, starting_cash: float, costs: Costs, limits: Limits,
-                 check_accounting: bool = False, opening_shares: np.ndarray | None = None) -> Book:
+                 check_accounting: bool = False) -> Book:
     """Walk the calendar, filling each session's orders at its open and marking the book at its close.
 
     `step` is a signal's per-session function, taking the session index and the book and returning a
     `Decision`. Set `check_accounting` to assert cash and equity reconcile on every session, which is
-    slower and is what the accounting tests run with. `opening_shares` starts the run already holding
-    positions, which is how a walk-forward fold picks up where the previous one left off.
+    slower and is what the accounting tests run with.
     """
     sessions, assets = market.shape
     if sessions < 2:
         raise ValueError(f'a backtest needs at least 2 sessions, got {sessions}')
     marks = _marks(market)
     book = Book.start(starting_cash, assets, sessions)
-    if opening_shares is not None:
-        if len(opening_shares) != assets:
-            raise ValueError(f'opening_shares covers {len(opening_shares)} names, market has {assets}')
-        book.shares[:] = opening_shares
-        book.cost_basis[:] = np.nan_to_num(marks[0], nan=0.0)
-
     _mark_to_market(book, marks, 0)
     pending = _decide_orders(step(0, book), book, market, marks, 0, limits)
 

@@ -7,15 +7,12 @@ the latest quarter. Missing inputs or nonsensical denominators yield NaN. Factor
 natural raw values; consumers orient ranks with `HIGHER_IS_BETTER` so rank 100 always means best.
 """
 
-import os
-from pathlib import Path
 from typing import NamedTuple
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-from investalyze.analysis import custom_factors
 from investalyze.analysis.panels import MARKET_TICKER
 
 MIN_RISK_OBS = 200  # minimum daily return observations for vol_252 / beta_252
@@ -33,38 +30,12 @@ _LOWER_IS_BETTER = {'vol_252', 'beta_252', 'accruals', 'debt_to_equity', 'share_
 BUILTIN_HIGHER_IS_BETTER: dict[str, bool] = {factor: factor not in _LOWER_IS_BETTER
                                              for factor in BUILTIN_FACTORS}
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CUSTOM_FAMILY = 'custom'
-
 # balance columns the built-in factors already pull, so a ratio term naming one reuses it
 BALANCE_LATEST = {'Total Equity': 'equity', 'Total Assets': 'assets'}
 
-FACTORS_FILE_ENV = 'INVESTALYZE_FACTORS_FILE'
-
-
-def _custom_factors_path() -> Path | None:
-    """Where user factor definitions are read from, or None when they are switched off.
-
-    The environment variable points the loader at another file, and setting it empty leaves the
-    library at its built-in factors. Tests set it empty so a definition added to the repo's own
-    factors.toml cannot change what they assert.
-    """
-    override = os.environ.get(FACTORS_FILE_ENV)
-    if override is None:
-        return REPO_ROOT / custom_factors.FACTORS_FILE
-    return Path(override) if override else None
-
-
-# user definitions from factors.toml are merged in here, so every consumer of FACTORS,
-# FAMILIES and HIGHER_IS_BETTER sees them without knowing they were user-defined
-CUSTOM: dict[str, custom_factors.CustomFactor] = custom_factors.read(
-    _custom_factors_path(), BUILTIN_FACTORS)
-
 FAMILIES: dict[str, list[str]] = dict(BUILTIN_FAMILIES)
-if CUSTOM:
-    FAMILIES[CUSTOM_FAMILY] = list(CUSTOM)
-FACTORS: list[str] = [factor for family in FAMILIES.values() for factor in family]
-HIGHER_IS_BETTER: dict[str, bool] = custom_factors.orientation(CUSTOM, BUILTIN_HIGHER_IS_BETTER)
+FACTORS: list[str] = list(BUILTIN_FACTORS)
+HIGHER_IS_BETTER: dict[str, bool] = dict(BUILTIN_HIGHER_IS_BETTER)
 
 
 class FactorDoc(NamedTuple):
@@ -161,48 +132,6 @@ FACTOR_DOCS: dict[str, FactorDoc] = {
         'dividends last 365d / dividends prior 365d - 1'),
 }
 
-
-def _custom_docs() -> dict[str, FactorDoc]:
-    """A documentation entry per user-defined factor, from its own description and formula."""
-    entries = {}
-    for name, factor in CUSTOM.items():
-        formula = factor.expression if factor.kind == custom_factors.EXPRESSION \
-            else f'{factor.numerator} / {factor.denominator}'
-        what = factor.description or 'Defined in factors.toml.'
-        direction = 'Higher is better.' if factor.higher_is_better else 'Lower is better.'
-        entries[name] = FactorDoc(what=f'{what} {direction}', formula=formula)
-    return entries
-
-
-BUILTIN_FACTOR_DOCS: dict[str, FactorDoc] = dict(FACTOR_DOCS)
-FACTOR_DOCS |= _custom_docs()
-
-
-def reload_custom(path: Path | None = None) -> dict[str, custom_factors.CustomFactor]:
-    """Re-read the definitions file and update the library in place.
-
-    Every collection is mutated rather than rebound, so a module that imported FACTORS or
-    HIGHER_IS_BETTER by name sees the change without being reimported. That is what lets a factor
-    saved from the UI take effect without restarting the server.
-    """
-    global CUSTOM
-
-    reloaded = custom_factors.read(_custom_factors_path() if path is None else path, BUILTIN_FACTORS)
-    CUSTOM.clear()
-    CUSTOM.update(reloaded)
-
-    FAMILIES.clear()
-    FAMILIES.update(BUILTIN_FAMILIES)
-    if CUSTOM:
-        FAMILIES[CUSTOM_FAMILY] = list(CUSTOM)
-
-    FACTORS[:] = [factor for family in FAMILIES.values() for factor in family]
-    HIGHER_IS_BETTER.clear()
-    HIGHER_IS_BETTER.update(custom_factors.orientation(CUSTOM, BUILTIN_HIGHER_IS_BETTER))
-    FACTOR_DOCS.clear()
-    FACTOR_DOCS.update(BUILTIN_FACTOR_DOCS)
-    FACTOR_DOCS.update(_custom_docs())
-    return CUSTOM
 
 # source column -> short alias for the TTM aggregates; shared with the point-in-time panel
 INCOME_TTM = {
@@ -336,8 +265,7 @@ def fundamental_factors(con: duckdb.DuckDBPyConnection, identity: pd.DataFrame,
                         extras: dict[str, dict[str, str]] | None = None) -> pd.DataFrame:
     """Value, quality and growth factors joined onto the identity frame (div_growth comes separately).
 
-    `extras` carries the additional statement columns user-defined ratio factors need, keyed by
-    statement.
+    `extras` carries additional statement columns to read, keyed by statement.
     """
     extras = extras or {'income': {}, 'cashflow': {}, 'balance': {}}
     df = identity.merge(_ttm(con, 'income', INCOME_TTM | extras['income']), on='Ticker', how='left')
@@ -433,21 +361,10 @@ def dividend_growth(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
 
 
 def build_factors(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    """One row per ticker with identity columns and every factor in FACTORS.
-
-    User-defined expression factors are computed last, over the built-in columns and their
-    cross-sectional ranks, so they read the same way here as they do in the point-in-time panel.
-    """
-    existing = {'income': INCOME_TTM, 'cashflow': CASHFLOW_TTM, 'balance': BALANCE_LATEST}
-    resolved = custom_factors.resolve_terms(CUSTOM, custom_factors.statement_schema(con))
-    aliases = custom_factors.term_aliases(CUSTOM, resolved, existing)
-    extras = custom_factors.extra_columns(CUSTOM, resolved, aliases, existing)
-
-    df = fundamental_factors(con, _identity(con), extras)
+    """One row per ticker with identity columns and every factor in FACTORS."""
+    df = fundamental_factors(con, _identity(con))
     df = df.merge(price_factors(con), on='Ticker', how='left')
     df = df.merge(dividend_growth(con), on='Ticker', how='left')
     df['div_growth'] = growth(df['div_ttm'], df['div_prior'])
-    df = custom_factors.apply_ratios(df, CUSTOM, resolved, aliases)
-    df = custom_factors.apply_expressions(df, CUSTOM, BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER)
     keep = ['Ticker', 'name', 'sector', 'industry', 'last_close', 'mcap', 'mcap_bn'] + FACTORS
     return df[keep].sort_values('Ticker', ignore_index=True)

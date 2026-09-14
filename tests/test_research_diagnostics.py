@@ -86,3 +86,21 @@ def test_a_reversing_ranking_has_negative_autocorrelation():
         for position, ticker in zip(order, ('AAA', 'BBB', 'CCC')):
             rows.append({'Ticker': ticker, 'Date': when, 'value': float(position)})
     assert diagnostics.rank_autocorrelation(pd.DataFrame(rows), 'value') == pytest.approx(-1.0)
+
+
+def test_coverage_counts_only_names_in_the_universe(frame):
+    marked = frame.assign(in_universe=[True, True, False, True, True, True])
+    table = diagnostics.coverage(marked, 'value').set_index('year')
+    assert table.loc[2020, 'universe'] == 2
+    assert table.loc[2020, 'share'] == pytest.approx(100.0)
+
+
+def test_coverage_averages_names_per_date_rather_than_counting_rows():
+    """Seen on the page: 400 names over 12 month-ends was reported as 4,754 names."""
+    rows = []
+    for month in (1, 2):
+        for ticker in ('AAA', 'BBB', 'CCC', 'DDD'):
+            rows.append({'Ticker': ticker, 'Date': pd.Timestamp(2024, month, 28), 'value': 1.0 if ticker != 'DDD' else np.nan})
+    table = diagnostics.coverage(pd.DataFrame(rows), 'value').set_index('year')
+    assert table.loc[2024, 'names'] == 3
+    assert table.loc[2024, 'universe'] == 4

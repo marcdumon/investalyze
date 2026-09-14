@@ -1,6 +1,6 @@
 """Database page: what every table holds, what wrote it, and a query box for the rest.
 
-The app names `factor_panel`, `factor_ic` and `backtest_runs` on screen without ever saying what
+The app names `prices`, `anomalies` and `backtest_runs` on screen without ever saying what
 they are. This page answers that, from a hand-written catalogue rather than a schema, because no
 amount of column metadata explains what a row means.
 

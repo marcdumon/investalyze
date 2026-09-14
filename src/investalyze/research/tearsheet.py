@@ -13,7 +13,7 @@ of this size would pass p<0.05 by chance (multiple testing).
 import numpy as np
 import pandas as pd
 
-from investalyze.analysis import panels
+from investalyze.analysis import factors_pit, panels
 from investalyze.backtest import evaluation
 from investalyze.research import cache, factors
 
@@ -27,7 +27,9 @@ def _closes(con, tickers: list[str], first, last, horizon: int) -> pd.DataFrame:
     padded = pd.Timestamp(last) + pd.Timedelta(days=2 * horizon + 10)
     calendar = panels.trading_calendar(con, start=pd.Timestamp(first).date().isoformat(),
                                        end=padded.date().isoformat())
-    return panels.close_panel(con, tickers, calendar)
+    # keep names that listed or delisted inside the range: requiring a complete series would
+    # drop them and bias the IC towards survivors
+    return panels.close_panel(con, tickers, calendar, min_obs_frac=factors_pit.MIN_PRICE_COVERAGE)
 
 
 def ic_series(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON) -> pd.DataFrame:
@@ -54,6 +56,34 @@ def ic_summary(ic_frame: pd.DataFrame, *, higher_is_better: bool = True) -> dict
     summary['names_median'] = float(counted.median()) if len(counted) else np.nan
     summary['names_min'] = float(counted.min()) if len(counted) else np.nan
     return summary
+
+
+def _oriented_summary(values: pd.DataFrame, higher_is_better: bool) -> dict:
+    summary = ic_summary(values, higher_is_better=higher_is_better)
+    return {'mean_ic': summary['oriented_ic'], 't_stat': summary['oriented_t'], 'n_periods': summary['n_periods']}
+
+
+def ic_by_year(ic_frame: pd.DataFrame, *, higher_is_better: bool = True) -> pd.DataFrame:
+    """Mean IC and t-statistic per calendar year, signed by factor direction."""
+    years = pd.to_datetime(ic_frame['Date']).dt.year
+    rows = []
+    for year, group in ic_frame.groupby(years):
+        rows.append({'year': int(year)} | _oriented_summary(group, higher_is_better))
+    return pd.DataFrame(rows, columns=['year', 'mean_ic', 't_stat', 'n_periods'])
+
+
+def ic_split(ic_frame: pd.DataFrame, holdout_start: pd.Timestamp, *, higher_is_better: bool = True) -> pd.DataFrame:
+    """Mean IC and t-statistic in-sample (before `holdout_start`) and out-of-sample (from it)."""
+    dates = pd.to_datetime(ic_frame['Date'])
+    rows = []
+    for label, part in (('In-sample', ic_frame[dates < holdout_start]), ('Out-of-sample', ic_frame[dates >= holdout_start])):
+        scored = part.dropna(subset=['ic'])
+        if scored.empty:
+            continue
+        span = pd.to_datetime(scored['Date'])
+        rows.append({'period': label, 'start': span.min().date().isoformat(), 'end': span.max().date().isoformat()}
+                    | _oriented_summary(part, higher_is_better))
+    return pd.DataFrame(rows, columns=['period', 'start', 'end', 'mean_ic', 't_stat', 'n_periods'])
 
 
 def ic_decay(con, name: str, frame: pd.DataFrame, *, horizons: tuple = HORIZONS,
@@ -120,7 +150,7 @@ def cached_ic(con, name: str, frame: pd.DataFrame, *, horizon: int = DEFAULT_HOR
 
 
 def tearsheet(con, name: str, library: dict, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
-              store: cache.Cache | None = None) -> dict:
+              store: cache.Cache | None = None, holdout_start: pd.Timestamp | None = None) -> dict:
     """The full tear sheet for one factor: IC summary, IC decay, quantile returns, multiple testing."""
     fingerprint = factors.fingerprint(name, library) if name in library else ''
     higher = library[name].higher_is_better if name in library else True
@@ -133,6 +163,8 @@ def tearsheet(con, name: str, library: dict, frame: pd.DataFrame, *, horizon: in
         'summary': ic_summary(series, higher_is_better=higher),
         'decay': ic_decay(con, name, frame, store=store, fingerprint=fingerprint),
         'quantiles': quantiles,
+        'by_year': ic_by_year(series, higher_is_better=higher),
+        'split': ic_split(series, holdout_start, higher_is_better=higher) if holdout_start is not None else pd.DataFrame(),
         'monotonic': is_monotonic(quantiles, higher_is_better=higher),
         'tested': len(library),
         'expected_false_positives': expected_false_positives(len(library)),

@@ -53,38 +53,17 @@ key expired or rotated rather than the request being wrong.
 Fundamentals cannot be refreshed until it is replaced. The stored zips are from July, so nothing has
 broken yet, only stopped moving.
 
-## 3. Old evaluations have their periods fragmented, one per factor's warm-up boundary
+## 3. Banks, insurers and several large listings have no financial statements
 
-**Fixed 2026-09-09** for evaluations run from now on: `factor_ic`, `factor_quantiles` and the new
-`factor_ic_decay` are keyed by version, universe, factor, horizon and period, and the Factors tab
-carries a period picker (defaulting to the newest, poolable by clearing it).
+Found 2026-09-13 building the Factors page. Of the 1,500 most liquid tickers, 353 have no balance
+sheet, including JPM, BAC, GS, WFC, MS, C, AXP, SCHW and COF. SimFin publishes banks and insurers under
+separate statement templates, and only the general template is ingested. The rest are share-class
+tickers (GOOGL, BRK-B), foreign filers (ASML, BABA, SHOP, PDD, NU) and recent listings (GEV, CRWV,
+CRCL, OKLO).
 
-Every evaluation stored before that date had its period backfilled per `(version, universe, factor,
-horizon)` from that factor's own rows, and different factors within the same historical run often
-covered slightly different date ranges (a growth ratio needing warm-up data starts later than the
-rest), reading as several near-duplicate periods per old scope instead of one. The backfill also ran
-independently per table, so `factor_ic` and `factor_quantiles` fragments for the same historical run
-did not even share an `EndDate` (`factor_quantiles` trailed `factor_ic` by about five weeks in every
-scope cleaned up so far).
+Every fundamental factor therefore excludes the financial sector, which biases value and quality
+factors in particular. Price-based factors are unaffected.
 
-**Cleaned up 2026-09-10** for `as_reported`/`all` (re-evaluated, fragments deleted),
-`as_reported`/`mid_large_mega_non_fin_realest` (re-evaluated, fragments deleted), and
-`as_reported`/`unrecorded` (deleted outright: a pre-migration label for rows written before the
-`Universe` column existed, not a real universe to re-evaluate).
-
-**Still open:** `solar_small_mid_large`, both `as_reported` (2 periods in `factor_ic`) and `restated`
-(4 periods). These are not warm-up fragmentation: every period there covers the same factor count but
-genuinely different `EndDate`s (one stops 2024-12-31, another 2022-06-30), so they read as separate
-deliberate evaluate calls, not pieces of one run. `as_reported`'s `factor_ic_decay` is messier still:
-it holds two extra fragments (2020-01-03 to 2023-07-21, and 2021-11-12 to 2024-12-31) that don't even
-align with either `factor_ic` period. Consolidating this scope needs a decision about whether the
-distinct periods were meant to stay separate, not just a re-run.
-
-## 4. `delete-evaluation` still clears a whole version-and-universe scope
-
-**Fixed 2026-09-10.** `delete-evaluation` now narrows to the period picked on the Factors tab (all
-its horizons), and stays scope-wide only when the picker is blank, pooled the same way the grid
-reads. The CLI carries this through `--start`/`--end`, already shared flags. Fixing this also
-surfaced that `delete_evaluation` never deleted `factor_ic_decay` rows: `EVALUATION_TABLES` predated
-that table and was never updated, so decay rows outlived every earlier delete. Both are fixed
-together in `writer.delete_evaluation`.
+What "done" looks like: the SimFin bank and insurance templates ingested and mapped onto the general
+line items, and share-class tickers resolved to the filer that reports them. Depends on item 2 (the
+SimFin key) for a fresh download.

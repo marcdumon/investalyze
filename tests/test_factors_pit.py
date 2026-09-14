@@ -6,7 +6,6 @@ that disagree. `OK` and `LATE` carry identical revenue and differ only in when o
 published, so any test comparing the two isolates publication timing from the numbers themselves.
 """
 
-import time
 from pathlib import Path
 
 import duckdb
@@ -218,16 +217,6 @@ def test_a_ticker_filter_narrows_the_panel(fundamentals):
     assert sorted(df['Ticker'].unique()) == ['OK']
 
 
-def test_the_share_extras_carry_the_current_and_year_earlier_counts(fundamentals):
-    df = factors_pit.quarterly_ttm(fundamentals, 'income', {'Revenue': 'revenue'},
-                                   as_of=pd.DatetimeIndex(['2021-02-15']),
-                                   extras=factors_pit._INCOME_EXTRAS)
-    row = df.set_index('Ticker').loc['OK']
-    assert row['shares_latest'] == 1_000
-    assert row['shares_prior'] == 1_000
-    assert row['shares_mcap'] == 1_000
-
-
 # --- balance sheet ---
 
 def test_the_balance_panel_uses_the_latest_published_quarter(fundamentals):
@@ -301,51 +290,6 @@ def test_identity_panel_labels_a_ticker_with_no_company_row_unknown(priced):
     assert df.iloc[0]['name'] == ''
 
 
-def test_market_cap_multiplies_the_reported_share_count_by_that_close(priced):
-    as_of = pd.DatetimeIndex([_LAST_SESSION])
-    panel = factors_pit.build_factor_panel(priced, as_of, tickers=['OK'])
-    row = panel.iloc[0]
-    assert row['mcap'] == pytest.approx(row['last_close'] * 1_000)
-
-
-def test_momentum_is_null_when_the_calendar_offset_row_is_missing(priced):
-    as_of = pd.DatetimeIndex([_LAST_SESSION])
-    panel = factors_pit.build_factor_panel(priced, as_of, tickers=_PRICED_TICKERS).set_index('Ticker')
-    assert not np.isnan(panel.loc['OK', 'ret_6m'])
-    assert np.isnan(panel.loc['GAPPY', 'ret_6m'])
-
-
-def test_dividend_growth_compares_the_trailing_year_with_the_one_before(priced):
-    panel = factors_pit.build_factor_panel(priced, pd.DatetimeIndex([_LAST_SESSION]),
-                                           tickers=['OK']).set_index('Ticker')
-    assert panel.loc['OK', 'div_growth'] == pytest.approx(1.0 / 0.5 - 1)
-
-
-def test_build_factor_panel_returns_the_declared_columns_and_version(priced):
-    panel = factors_pit.build_factor_panel(priced, pd.DatetimeIndex([_LAST_SESSION]), tickers=['OK'])
-    assert list(panel.columns) == factors_pit.PANEL_KEY + factors_pit.IDENTITY_COLS + factors_pit.FACTORS
-    assert set(panel['Version']) == {factors_pit.AS_REPORTED}
-
-
-def test_build_factor_panel_rejects_an_empty_grid(priced):
-    with pytest.raises(ValueError, match='as_of is empty'):
-        factors_pit.build_factor_panel(priced, pd.DatetimeIndex([]), tickers=['OK'])
-
-
-def test_the_stored_panel_is_keyed_so_a_rerun_replaces_rather_than_duplicates(priced):
-    as_of = pd.DatetimeIndex([_LAST_SESSION])
-    panel = factors_pit.build_factor_panel(priced, as_of, tickers=['OK'])
-    factors_pit.store_factor_panel(priced, panel)
-    first = priced.execute('SELECT count(*) FROM factor_panel').fetchone()[0]
-    factors_pit.store_factor_panel(priced, panel)
-    assert priced.execute('SELECT count(*) FROM factor_panel').fetchone()[0] == first
-
-
-def test_store_factor_panel_rejects_a_frame_with_the_wrong_columns(priced):
-    with pytest.raises(ValueError, match='panel columns must be'):
-        factors_pit.store_factor_panel(priced, pd.DataFrame({'Ticker': ['OK']}))
-
-
 # --- against the live database ---
 
 _DB = Path('data') / 'investalyze.duckdb'
@@ -366,34 +310,6 @@ def live_db() -> duckdb.DuckDBPyConnection:
         connection.close()
 
 
-def test_market_cap_is_continuous_across_a_real_four_for_one_split(live_db):
-    """Guards the assumption the panel rests on: vendor share counts are already in current split units.
-
-    NVDA split 4:1 on 2021-07-20. Prices are back-adjusted into current units, so if share counts were
-    in the units of their own filing date, market cap would jump by the split ratio here.
-    """
-    grid = pd.DatetimeIndex(['2021-06-30', '2021-08-31'])
-    panel = factors_pit.build_factor_panel(live_db, grid, tickers=['NVDA']).set_index('Date')
-    before, after = panel.loc['2021-06-30', 'mcap'], panel.loc['2021-08-31', 'mcap']
-    assert 0.5 < after / before < 2.0, f'market cap moved {after / before:.2f}x across the split'
-
-
-def test_the_panel_builds_for_a_hundred_tickers_over_five_years(live_db):
-    tickers = [row[0] for row in live_db.execute("""
-        SELECT Ticker FROM income WHERE Period = 'Q' AND NOT IsRestated
-        GROUP BY Ticker HAVING count(*) >= 20 ORDER BY Ticker LIMIT 100
-    """).fetchall()]
-    grid = factors_pit.rebalance_dates(live_db, start='2019-01-01', end='2023-12-31', freq='M')
-
-    started = time.perf_counter()
-    panel = factors_pit.build_factor_panel(live_db, grid, tickers=tickers)
-    elapsed = time.perf_counter() - started
-
-    assert list(panel.columns) == factors_pit.PANEL_KEY + factors_pit.IDENTITY_COLS + factors_pit.FACTORS
-    assert panel['Date'].nunique() == len(grid)
-    assert elapsed < 30, f'building the panel took {elapsed:.1f}s'
-
-
 def test_every_rebalance_date_is_a_real_trading_session(live_db):
     grid = factors_pit.rebalance_dates(live_db, start='2020-01-01', end='2020-12-31', freq='M')
     sessions = set(panels.trading_calendar(live_db, start='2020-01-01', end='2020-12-31'))
@@ -401,39 +317,7 @@ def test_every_rebalance_date_is_a_real_trading_session(live_db):
     assert set(grid) <= sessions
 
 
-def test_a_point_in_time_value_factor_never_uses_a_filing_published_later(live_db):
-    """AAPL's fiscal Q1 2021 published on 2021-01-28, so a 2021-01-15 panel must predate it."""
-    published = live_db.execute("""
-        SELECT "Publish Date"::DATE FROM income
-        WHERE Ticker = 'AAPL' AND Period = 'Q' AND NOT IsRestated AND "Report Date" = DATE '2020-12-31'
-    """).fetchone()
-    if published is None:
-        pytest.skip('the live DB has no as-reported AAPL quarter ending 2020-12-31')
-    assert published[0] > pd.Timestamp('2021-01-15').date()
-
-    grid = pd.DatetimeIndex(['2021-01-15', '2021-02-15'])
-    panel = factors_pit.build_factor_panel(live_db, grid, tickers=['AAPL']).set_index('Date')
-    assert panel.loc['2021-01-15', 'earnings_yield'] != panel.loc['2021-02-15', 'earnings_yield']
-
-
 # --- reading back what the stored panel covers ---
-
-def test_the_frequency_is_read_off_the_spacing_of_the_dates():
-    monthly = pd.DatetimeIndex(['2020-01-31', '2020-02-28', '2020-03-31', '2020-04-30'])
-    weekly = pd.bdate_range('2020-01-03', periods=8, freq='W-FRI')
-    assert factors_pit.infer_frequency(monthly) == 'M'
-    assert factors_pit.infer_frequency(weekly) == 'W'
-    assert factors_pit.infer_frequency(pd.bdate_range('2020-01-01', periods=10)) == 'D'
-
-
-def test_a_single_date_says_nothing_about_frequency():
-    assert factors_pit.infer_frequency(pd.DatetimeIndex(['2020-01-31'])) is None
-
-
-def test_coverage_of_a_database_with_no_panel_is_nothing():
-    import duckdb
-
-    assert factors_pit.panel_coverage(duckdb.connect()) is None
 
 
 # --- an empty universe is not every universe ---
@@ -451,110 +335,5 @@ def test_an_empty_ticker_list_means_no_names_rather_than_all_of_them():
 
 # --- a rank is not a property of a ticker and a date ---
 
-def _customs(**expressions):
-    """Expression definitions parsed the way the file would give them."""
-    from investalyze.analysis import custom_factors
-    from investalyze.analysis.factors import BUILTIN_FACTORS
-
-    text = '\n'.join(custom_factors.serialize_factor(
-        name, {'expression': expression, 'higher_is_better': True, 'description': ''})
-        for name, expression in expressions.items())
-    return custom_factors.parse(text, BUILTIN_FACTORS)
-
-
-def test_a_factor_referencing_a_rank_is_not_storable():
-    """Its value depends on the names it was ranked against, which the key cannot record."""
-    from investalyze.analysis import custom_factors
-
-    customs = _customs(blend='0.5 * rank_roe + 0.5 * rank_roa')
-    assert custom_factors.population_dependent(customs) == ['blend']
-
-
-def test_an_expression_without_ranks_stays_stored():
-    """`ret_12_1 / vol_252` is an absolute quantity, so it means the same whoever else is present."""
-    from investalyze.analysis import custom_factors
-
-    customs = _customs(rar='ret_12_1 / vol_252')
-    assert custom_factors.population_dependent(customs) == []
-
-
-def test_every_factor_is_either_stored_or_derived_at_read_time():
-    assert set(factors_pit.STORED_FACTORS) | set(factors_pit.POPULATION_DEPENDENT) == set(factors_pit.FACTORS)
-    assert not set(factors_pit.STORED_FACTORS) & set(factors_pit.POPULATION_DEPENDENT)
-
-
-def test_a_reader_ranks_over_its_own_cross_section(monkeypatch):
-    """The same ticker and date score differently against one peer than against four."""
-    from investalyze.analysis import custom_factors
-    from investalyze.analysis.factors import BUILTIN_FACTORS, BUILTIN_HIGHER_IS_BETTER
-
-    customs = _customs(blend='0.5 * rank_roe + 0.5 * rank_roa')
-    wide = pd.DataFrame({'Date': [pd.Timestamp('2020-01-31')] * 5, 'Ticker': list('ABCDE'),
-                         'roe': [0.1, 0.2, 0.3, 0.4, 0.5], 'roa': [0.1, 0.2, 0.3, 0.4, 0.5]})
-    narrow = wide.iloc[:2].reset_index(drop=True)
-
-    def ranked(frame):
-        return custom_factors.apply_expressions(frame, customs, BUILTIN_FACTORS,
-                                                BUILTIN_HIGHER_IS_BETTER, by='Date')
-
-    assert ranked(wide).set_index('Ticker')['blend']['A'] != \
-        ranked(narrow).set_index('Ticker')['blend']['A']
-
-
-def test_dropping_a_rank_column_leaves_the_absolute_ones_alone():
-    """An older table holds ranks from whatever universe wrote them; they are not comparable."""
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute('CREATE TABLE factor_panel (Ticker VARCHAR, Date DATE, Version VARCHAR, '
-                'roe DOUBLE, quality_blend DOUBLE)')
-    con.execute("INSERT INTO factor_panel VALUES ('AAA', DATE '2020-01-31', 'as_reported', 0.2, 37.5)")
-
-    monkeypatch_dependent = ['quality_blend']
-    original = factors_pit.POPULATION_DEPENDENT
-    factors_pit.POPULATION_DEPENDENT = monkeypatch_dependent
-    try:
-        factors_pit._widen_stored_panel(con, pd.DataFrame(columns=['Ticker', 'Date', 'Version', 'roe']))
-    finally:
-        factors_pit.POPULATION_DEPENDENT = original
-
-    columns = {row[0] for row in con.execute('DESCRIBE factor_panel').fetchall()}
-    assert 'roe' in columns
-    assert 'quality_blend' not in columns
-
 
 # --- dates a name could not have had a row on ---
-
-def test_dates_before_a_name_first_traded_are_not_buildable():
-    """A panel row comes from a close, so a date before the name listed has nothing to hold."""
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
-    con.execute("INSERT INTO prices VALUES ('FSLR', DATE '2006-11-17', 24.0)")
-    grid = pd.DatetimeIndex(['2000-01-31', '2006-10-31', '2006-11-30', '2007-01-31'])
-
-    buildable = factors_pit.buildable_dates(con, grid, ['FSLR'])
-
-    assert list(buildable) == [pd.Timestamp('2006-11-30'), pd.Timestamp('2007-01-31')]
-
-
-def test_a_ticker_list_with_no_prices_can_build_nothing():
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
-    grid = pd.DatetimeIndex(['2020-01-31'])
-
-    assert len(factors_pit.buildable_dates(con, grid, ['NOPE'])) == 0
-
-
-def test_the_whole_database_keeps_every_date_it_was_asked_for():
-    import duckdb
-
-    con = duckdb.connect()
-    con.execute('CREATE TABLE prices (Ticker VARCHAR, Date DATE, C DOUBLE)')
-    con.execute("INSERT INTO prices VALUES ('AAA', DATE '1990-01-02', 1.0)")
-    grid = pd.DatetimeIndex(['2000-01-31', '2020-01-31'])
-
-    assert list(factors_pit.buildable_dates(con, grid, None)) == list(grid)

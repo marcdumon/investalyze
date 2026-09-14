@@ -12,15 +12,18 @@ import pandas as pd
 from investalyze.analysis.factors import FACTORS, HIGHER_IS_BETTER
 
 
-def compute_ranks(df: pd.DataFrame, factor_cols: list[str] = FACTORS) -> pd.DataFrame:
+def compute_ranks(df: pd.DataFrame, factor_cols: list[str] = FACTORS,
+                  higher_is_better: dict[str, bool] | None = None) -> pd.DataFrame:
     """Add a rank_<factor> column (0 to 100) per factor, oriented so 100 is always best.
 
     Ranks are percentile ranks over the rows of `df` (the currently selected pool); NaN factor
-    values get NaN ranks.
+    values get NaN ranks. `higher_is_better` gives each factor's direction, defaulting to the built-in
+    factors'.
     """
+    orientation = HIGHER_IS_BETTER if higher_is_better is None else higher_is_better
     ranked = df.copy()
     for factor in factor_cols:
-        values = ranked[factor] if HIGHER_IS_BETTER[factor] else -ranked[factor]
+        values = ranked[factor] if orientation[factor] else -ranked[factor]
         ranked[f'rank_{factor}'] = values.rank(pct=True) * 100
     return ranked
 

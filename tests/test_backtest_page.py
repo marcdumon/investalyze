@@ -1,10 +1,6 @@
-"""Tests for the backtest page's pure shaping and the control panel's backtest argv builders.
+"""Tests for the Backtest page: job commands, run settings, periods, and the callbacks that launch and delete."""
 
-The orientation test is the one that matters: the stored coefficient is on raw factor values, so a
-factor whose lower values are better reads negative, and a table that ranked on the raw column would
-put the working factors at the bottom.
-"""
-
+import json
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -13,936 +9,382 @@ import pandas as pd
 import pytest
 from dash.exceptions import PreventUpdate
 
-from investalyze.analysis.factors import BUILTIN_FACTORS as BUILTIN
 from investalyze.apps.backtest import logic
 
 
-def _ic_table() -> pd.DataFrame:
-    """Stored IC rows for one factor read the good way up and one read the other way."""
-    return pd.DataFrame({
-        'Factor': ['roe', 'vol_252', 'accruals'],
-        'Horizon': [21, 21, 21],
-        'Periods': [100, 100, 100],
-        'MeanIc': [0.05, -0.05, -0.01],
-        'StdIc': [0.10, 0.10, 0.10],
-        'HitRate': [0.60, 0.40, 0.48],
-        'MeanNames': [500, 500, 500],
+def _page():
+    from investalyze.apps.backtest import page
+    return page
+
+
+# --- curves ---
+
+def test_rebase_starts_every_column_at_100():
+    curve = pd.DataFrame({'Equity': [50.0, 75.0], 'BenchmarkEquity': [200.0, 100.0]})
+    rebased = logic.rebase(curve, ['Equity', 'BenchmarkEquity'])
+    assert rebased['Equity'].tolist() == [100.0, 150.0]
+    assert rebased['BenchmarkEquity'].tolist() == [100.0, 50.0]
+
+
+def test_rebase_leaves_an_all_missing_column_alone():
+    curve = pd.DataFrame({'Equity': [50.0, 75.0], 'BenchmarkEquity': [np.nan, np.nan]})
+    assert logic.rebase(curve, ['Equity', 'BenchmarkEquity'])['BenchmarkEquity'].isna().all()
+
+
+def test_drawdown_is_measured_from_the_running_peak():
+    assert logic.drawdown_from_equity(pd.Series([100.0, 120.0, 90.0])).tolist() == pytest.approx([0.0, 0.0, -0.25])
+
+
+# --- job commands ---
+
+def test_a_factor_portfolio_runs_the_research_backtest_command():
+    title, argv = logic.factor_portfolio_argv(['momentum_12_1', 'earnings_yield'], '2016-01-31', '2024-12-31',
+                                              'Q', 5, 1000, '2022-01-01')
+    assert argv == ['-m', 'investalyze.research', 'backtest', 'momentum_12_1,earnings_yield',
+                    '--start', '2016-01-31', '--end', '2024-12-31', '--rebalance', 'Q', '--quantiles', '5',
+                    '--size', '1000', '--holdout', '2022-01-01']
+    assert 'momentum_12_1 + earnings_yield' in title
+
+
+def test_a_blank_holdout_means_no_out_of_sample_split():
+    _title, argv = logic.factor_portfolio_argv(['value'], '2016-01-31', '2024-12-31', 'M', 5, 1000, None)
+    assert argv[-2:] == ['--holdout', '']
+
+
+def _timing_rule(**overrides) -> tuple[str, list[str]]:
+    settings = dict(exit_factor=None, exit_on_entry_false=True, trailing_stop_percent=15.0, max_positions=20,
+                    priority_factor=None, universe=None, universe_size=500, start='2016-01-01', end='2024-12-31',
+                    holdout='2022-01-01')
+    return logic.timing_rule_argv('new_252d_high', **(settings | overrides))
+
+
+def test_a_timing_rule_runs_the_research_timing_command():
+    title, argv = _timing_rule()
+    assert argv == ['-m', 'investalyze.research', 'timing', 'new_252d_high', '--start', '2016-01-01',
+                    '--end', '2024-12-31', '--max-positions', '20', '--size', '500', '--holdout', '2022-01-01',
+                    '--trailing-stop', '0.15']
+    assert 'new_252d_high, exit on entry false, trailing stop 15%' in title
+
+
+def test_a_timing_rule_passes_its_exit_priority_and_universe():
+    _title, argv = _timing_rule(exit_factor='close_above_prior_high', exit_on_entry_false=False,
+                                trailing_stop_percent=None, priority_factor='momentum_12_1', universe='solar')
+    assert argv[-7:] == ['--exit-factor', 'close_above_prior_high', '--keep-on-entry-false',
+                         '--priority-factor', 'momentum_12_1', '--universe', 'solar']
+
+
+def test_a_timing_rule_without_any_exit_is_refused():
+    problem = logic.timing_rule_problem(exit_factor=None, exit_on_entry_false=False, trailing_stop_percent=None)
+    assert 'at least one exit' in problem
+
+
+def test_a_trailing_stop_of_100_percent_or_more_is_refused():
+    problem = logic.timing_rule_problem(exit_factor=None, exit_on_entry_false=True, trailing_stop_percent=100.0)
+    assert 'between 0 and 100' in problem
+
+
+def test_a_timing_rule_with_an_exit_can_run():
+    assert logic.timing_rule_problem(exit_factor='close_above_prior_high', exit_on_entry_false=False,
+                                     trailing_stop_percent=None) is None
+
+
+def test_deleting_several_runs_is_one_command():
+    title, argv = logic.delete_argv(['aaa', 'bbb'])
+    assert argv == ['-m', 'investalyze.backtest', 'delete', '--run-id', 'aaa', 'bbb']
+    assert '2 runs' in title
+
+
+def test_the_delete_confirmation_names_each_run_and_totals_the_fills():
+    runs = [{'Created': '2026-09-13 10:00', 'Signal': 'value', 'StartDate': '2016-01-31', 'EndDate': '2024-12-31',
+             'NTrades': 1200, 'RunId': 'aaa'},
+            {'Created': '2026-09-13 11:00', 'Signal': 'new_252d_high, trailing stop 15%', 'StartDate': '2016-01-01',
+             'EndDate': '2024-12-31',
+             'NTrades': 300, 'RunId': 'bbb'}]
+    text = logic.delete_prompt(runs)
+    assert '1,500 fills in total' in text and 'run aaa' in text and 'run bbb' in text
+
+
+# --- what a stored run was made with ---
+
+def _factor_config(holdout: str | None = '2022-01-01') -> str:
+    return json.dumps({
+        'signal': 'value + momentum', 'benchmark': '^NDX',
+        'params': {'factors': ['value', 'momentum'], 'n_quantiles': 5, 'rebalance': 'Q', 'universe_size': 1000,
+                   'holdout': holdout, 'expressions': {'value': 'income_net_income / market_cap', 'momentum': 'ret_12_1'}},
+        'costs': {'slippage_bps': 5.0, 'commission_bps': 2.0, 'impact_coef': 0.1},
     })
 
 
-# --- factor orientation ---
+def test_run_settings_list_each_factor_with_its_expression():
+    rows = {row['setting']: row['value'] for row in logic.run_settings_rows(_factor_config())}
+    assert rows['Factor value'] == 'income_net_income / market_cap'
+    assert rows['Factor momentum'] == 'ret_12_1'
 
-def test_orienting_flips_the_factors_whose_lower_values_are_better():
-    oriented = logic.orient_ic(_ic_table()).set_index('Factor')
-    assert oriented.loc['roe', 'OrientedIc'] == pytest.approx(0.05)
-    assert oriented.loc['vol_252', 'OrientedIc'] == pytest.approx(0.05)     # raw -0.05, lower is better
-    assert oriented.loc['accruals', 'OrientedIc'] == pytest.approx(0.01)
 
+def test_run_settings_describe_the_portfolio_rules():
+    rows = {row['setting']: row['value'] for row in logic.run_settings_rows(_factor_config())}
+    assert rows['Quantiles'] == '5'
+    assert rows['Rebalance'] == 'quarterly'
+    assert rows['Universe size'] == '1000'
+    assert rows['Out-of-sample from'] == '2022-01-01'
+    assert rows['Benchmark'] == '^NDX'
+    assert '5 bps slippage' in rows['Costs']
 
-def test_the_oriented_table_ranks_the_strongest_factor_first():
-    oriented = logic.orient_ic(_ic_table())
-    assert oriented.iloc[0]['Factor'] in {'roe', 'vol_252'}
-    assert oriented.iloc[-1]['Factor'] == 'accruals'
 
+def test_run_settings_describe_the_timing_rule():
+    config = json.dumps({'benchmark': '^NDX', 'params': {
+        'entry_factor': 'new_252d_high', 'exit_on_entry_false': False, 'exit_factor': 'close_above_prior_high',
+        'trailing_stop': 0.15, 'max_positions': 20, 'rebalance': 'D'}})
+    rows = {row['setting']: row['value'] for row in logic.run_settings_rows(config)}
+    assert rows['Entry factor'] == 'new_252d_high'
+    assert rows['Exit when entry is false'] == 'no'
+    assert rows['Exit factor'] == 'close_above_prior_high'
+    assert rows['Trailing stop'] == '15%'
+    assert rows['Max positions'] == '20'
+    assert rows['Rebalance'] == 'daily'
 
-def test_the_t_statistic_is_the_oriented_mean_over_its_standard_error():
-    oriented = logic.orient_ic(_ic_table()).set_index('Factor')
-    expected = 0.05 / (0.10 / np.sqrt(100))
-    assert oriented.loc['roe', 'TStat'] == pytest.approx(expected)
 
+def test_a_run_without_a_config_has_no_settings():
+    assert logic.run_settings_rows(None) == []
 
-def test_orienting_an_empty_table_returns_it_unchanged():
-    assert logic.orient_ic(pd.DataFrame()).empty
 
+def test_the_holdout_is_read_from_the_run_config():
+    assert logic.holdout_of(_factor_config()) == pd.Timestamp('2022-01-01')
+    assert logic.holdout_of(_factor_config(holdout=None)) is None
+    assert logic.holdout_of(None) is None
 
-def test_orienting_flips_a_joined_decay_column_the_same_way():
-    table = _ic_table()
-    table['Ic5d'] = [0.03, -0.03, -0.02]   # same sign convention as the raw MeanIc column
-    oriented = logic.orient_ic(table).set_index('Factor')
-    assert oriented.loc['roe', 'Ic5d'] == pytest.approx(0.03)
-    assert oriented.loc['vol_252', 'Ic5d'] == pytest.approx(0.03)   # raw -0.03, lower is better
-    assert oriented.loc['accruals', 'Ic5d'] == pytest.approx(0.02)
 
+def test_run_periods_split_a_stored_curve_at_the_holdout():
+    dates = pd.bdate_range('2021-01-01', '2023-12-29')
+    curve = pd.DataFrame({'Date': dates, 'Equity': np.linspace(100, 150, len(dates)), 'BenchmarkEquity': np.nan})
+    table = logic.run_periods(curve, pd.Timestamp('2023-01-01'))
+    assert table['period'].tolist() == ['Full sample', 'In-sample', 'Out-of-sample']
 
-def test_orienting_adds_no_decay_column_when_none_was_joined():
-    oriented = logic.orient_ic(_ic_table())
-    assert 'Ic5d' not in oriented.columns
 
+# --- choosing factors, including arriving from the Factors page ---
 
-# --- curve shaping ---
+ROWS = [{'name': 'value', 'status': 'accepted'}, {'name': 'momentum', 'status': 'candidate'}]
 
-def test_rebasing_starts_every_named_column_at_one_hundred():
-    curve = pd.DataFrame({'Date': pd.bdate_range('2020-01-01', periods=3),
-                          'Equity': [200.0, 220.0, 240.0], 'BenchmarkEquity': [50.0, 55.0, 60.0]})
-    rebased = logic.rebase(curve, ['Equity', 'BenchmarkEquity'])
-    assert rebased['Equity'].tolist() == pytest.approx([100.0, 110.0, 120.0])
-    assert rebased['BenchmarkEquity'].tolist() == pytest.approx([100.0, 110.0, 120.0])
 
+def test_the_factor_library_is_listed_as_table_rows(monkeypatch):
+    page = _page()
+    monkeypatch.setattr(page.data, 'factor_rows', lambda: ROWS)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-runs-tick'))
+    rows, _selected = page.load_factor_library(0, '', None)
+    assert [row['name'] for row in rows] == ['value', 'momentum']
 
-def test_rebasing_a_column_that_starts_with_gaps_uses_its_first_real_value():
-    curve = pd.DataFrame({'Equity': [np.nan, 200.0, 220.0]})
-    assert logic.rebase(curve, ['Equity'])['Equity'].tolist()[1:] == pytest.approx([100.0, 110.0])
 
+def test_a_factor_in_the_url_is_ticked_on_the_first_load(monkeypatch):
+    """The first load reports no trigger, and that is when a link from the Factors page arrives."""
+    page = _page()
+    monkeypatch.setattr(page.data, 'factor_rows', lambda: ROWS)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id=None))
+    assert page.load_factor_library(0, '?factor=momentum', None)[1] == {'ids': ['momentum']}
 
-def test_rebasing_an_all_empty_column_leaves_it_empty():
-    curve = pd.DataFrame({'BenchmarkEquity': [np.nan, np.nan]})
-    assert logic.rebase(curve, ['BenchmarkEquity'])['BenchmarkEquity'].isna().all()
 
+def test_a_job_finishing_does_not_retick_the_linked_factor(monkeypatch):
+    page = _page()
+    monkeypatch.setattr(page.data, 'factor_rows', lambda: ROWS)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-runs-tick'))
+    assert page.load_factor_library(1, '?factor=momentum', [])[1] == {'ids': []}
 
-def test_rebasing_ignores_a_column_the_curve_does_not_have():
-    curve = pd.DataFrame({'Equity': [100.0, 110.0]})
-    assert list(logic.rebase(curve, ['Missing']).columns) == ['Equity']
 
+def test_an_unknown_factor_in_the_url_is_ignored(monkeypatch):
+    page = _page()
+    monkeypatch.setattr(page.data, 'factor_rows', lambda: ROWS)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='url'))
+    assert page.load_factor_library(0, '?factor=deleted_factor', [])[1] == {'ids': []}
 
-def test_the_drawdown_band_is_zero_at_a_new_high():
-    equity = pd.Series([100.0, 110.0, 99.0, 120.0])
-    drawdown = logic.drawdown_from_equity(equity)
-    assert drawdown.tolist() == pytest.approx([0.0, 0.0, 99 / 110 - 1, 0.0])
 
+def test_a_reload_keeps_the_ticked_factors_that_still_exist(monkeypatch):
+    page = _page()
+    monkeypatch.setattr(page.data, 'factor_rows', lambda: ROWS)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-runs-tick'))
+    current = [{'name': 'value'}, {'name': 'gone'}]
+    assert page.load_factor_library(1, '', current)[1] == {'ids': ['value']}
 
-def test_the_run_summary_names_the_signal_and_the_span():
-    run = pd.Series({'Signal': 'factor_composite', 'NTickers': 500, 'StartDate': '2015-01-01',
-                     'EndDate': '2024-12-31', 'Benchmark': '^NDX'})
-    summary = logic.run_summary_text(run)
-    assert 'factor_composite' in summary and '500' in summary and '^NDX' in summary
 
+def test_a_selection_still_in_id_form_is_read():
+    """Seen in the browser: right after a load the grid reports {'ids': [...]}, which crashed the label."""
+    page = _page()
+    assert 'Single factor: momentum' in str(page.show_selected_factors({'ids': ['momentum']}))
 
-# --- the control panel buttons ---
 
-def test_the_factors_button_builds_the_cli_argv():
-    title, argv = logic.factors_argv('2015-01-01', '2024-12-31', 'M', 'as_reported')
-    assert argv[:3] == ['-m', 'investalyze.backtest', 'factors']
-    assert '--start' in argv and '2015-01-01' in argv
-    assert 'as_reported' in title
+def test_the_ticked_factors_are_named_above_the_run_button():
+    page = _page()
+    assert 'No factor ticked' in str(page.show_selected_factors([]))
+    assert 'Single factor: value' in str(page.show_selected_factors([{'name': 'value'}]))
+    assert 'value + momentum' in str(page.show_selected_factors([{'name': 'value'}, {'name': 'momentum'}]))
 
 
-def test_the_evaluate_button_builds_the_cli_argv():
-    title, argv = logic.evaluate_argv(63, 'restated')
-    assert argv[:3] == ['-m', 'investalyze.backtest', 'evaluate']
-    assert '63' in argv
-    assert 'restated' in title
+def test_the_factors_page_links_to_the_backtest_with_the_factor_selected():
+    from investalyze.apps.research import page as research_page
+    assert research_page.backtest_link('momentum_12_1') == '/backtest?factor=momentum_12_1'
+    assert research_page.backtest_link(None) == '/backtest'
 
 
-def test_the_run_button_builds_the_cli_argv():
-    title, argv = logic.run_argv('sma_cross', '2018-01-01', '2020-12-31', 'W')
-    assert argv[:3] == ['-m', 'investalyze.backtest', 'run']
-    assert 'sma_cross' in argv and '--freq' in argv and 'W' in argv
-    assert 'sma_cross' in title
+# --- launching ---
 
+def _launch_args(**overrides) -> dict:
+    args = dict(_factor_run=1, _timing_run=None, selected_factors=[{'name': 'value'}], fp_start='2016-01-31',
+                fp_end='2024-12-31', rebalance='M', quantiles='5', size='1000', fp_holdout='2022-01-01',
+                entry='new_252d_high', exit_factor=None, stop=15, exit_on_false=True, max_positions=20, priority=None,
+                universe=None, tr_size=500, tr_start='2016-01-01', tr_end='2024-12-31', tr_holdout='2022-01-01')
+    return args | overrides
 
-def test_every_registered_signal_is_offered_by_the_backtest_card():
-    from investalyze.apps.backtest import page
-    from investalyze.backtest import registry
 
-    rendered = str(page._backtest_panel())
-    for name in registry.SIGNALS:
-        assert name in rendered
+def _call_launch(page, **overrides):
+    values = _launch_args(**overrides)
+    return page.launch(*values.values())
 
 
-def test_each_card_owns_its_own_fields():
-    """Duplicated on purpose: editing the research range must not stale a backtest."""
-    from investalyze.apps.backtest import page
-
-    research, backtest = str(page._research_panel()), str(page._backtest_panel())
-    for field in ('start', 'end', 'universe', 'version'):
-        assert f'bt-res-{field}' in research
-        assert f'bt-run-{field}' in backtest
-        assert f'bt-run-{field}' not in research
-        assert f'bt-res-{field}' not in backtest
-
-
-def test_the_research_card_carries_only_what_an_evaluation_needs():
-    from investalyze.apps.backtest import page
-
-    research = str(page._research_panel())
-    assert 'bt-res-horizon' in research
-    assert 'signal' not in research.lower().replace('bt-res', '')
-    assert 'bt-res-freq' not in research
-    assert 'bt-res-ntop' not in research
-
-
-def test_the_backtest_card_carries_the_sizing_an_evaluation_has_no_use_for():
-    from investalyze.apps.backtest import page
-
-    backtest = str(page._backtest_panel())
-    assert 'bt-run-ntop' in backtest
-    assert 'bt-run-rankby' in backtest
-    assert 'bt-run-horizon' not in backtest
-
-
-def test_both_universe_pickers_list_the_saved_universes():
-    from investalyze.apps import universes
-    from investalyze.apps.backtest import page
-
-    saved = universes.list_universes()
-    assert page.load_universe_options(0) == (saved, saved)
-
-
-def test_the_backtest_page_layout_builds():
-    from investalyze.apps.backtest import page
-
-    assert page.layout() is not None
-
-
-# --- the factor editor ---
-
-def _fields(**overrides) -> dict:
-    """Form values for a valid expression factor, with overrides applied."""
-    base = dict(kind='expression', expression='0.5 * roe + 0.5 * roa', numerator=None,
-                denominator=None, higher_is_better=True, description='a blend')
-    base |= overrides
-    return logic.definition_fields(base['kind'], base['expression'], base['numerator'],
-                                   base['denominator'], base['higher_is_better'], base['description'])
-
-
-def test_definition_rows_describe_each_factor():
-    from investalyze.analysis import custom_factors
-
-    defined = custom_factors.parse("[factors.blend]\nexpression = 'roe + roa'\n"
-                                   "higher_is_better = false\ndescription = 'mine'", BUILTIN)
-    row = logic.definition_rows(defined)[0]
-    assert row == {'name': 'blend', 'kind': 'expression', 'formula': 'roe + roa',
-                   'direction': 'lower', 'description': 'mine'}
-
-
-def test_a_ratio_definition_shows_its_two_terms():
-    from investalyze.analysis import custom_factors
-
-    defined = custom_factors.parse("[factors.turn]\nnumerator = 'Revenue'\ndenominator = 'Total Assets'",
-                                   BUILTIN)
-    assert logic.definition_rows(defined)[0]['formula'] == 'Revenue / Total Assets'
-
-
-def test_a_valid_form_reports_no_problem():
-    assert logic.validate_definition('my_blend', _fields(), {}) is None
-
-
-def test_a_form_with_no_name_is_refused():
-    assert logic.validate_definition('  ', _fields(), {}) == 'give the factor a name'
-
-
-def test_a_name_already_defined_is_refused():
-    from investalyze.analysis import custom_factors
-
-    existing = custom_factors.parse("[factors.taken]\nexpression = 'roe'", BUILTIN)
-    problem = logic.validate_definition('taken', _fields(), existing)
-    assert 'already defined' in problem
-
-
-def test_a_form_referencing_an_unknown_column_is_refused():
-    problem = logic.validate_definition('x', _fields(expression='roe + nonsense'), {})
-    assert 'references unknown column' in problem
-
-
-def test_a_ratio_form_needs_both_terms():
-    fields = _fields(kind='ratio', expression=None, numerator='Revenue', denominator=None)
-    assert 'needs either an expression' in logic.validate_definition('x', fields, {})
-
-
-def test_the_preview_is_the_toml_that_would_be_written():
-    preview = logic.preview_definition('my_blend', _fields())
-    assert preview.startswith('[factors.my_blend]')
-    assert "expression = '0.5 * roe + 0.5 * roa'" in preview
-    assert 'higher_is_better = true' in preview
-
-
-def test_the_form_switches_fields_with_the_chosen_kind():
-    from investalyze.analysis import custom_factors
-    from investalyze.apps.screener import page as screener_page
-
-    expression_style, ratio_style = screener_page.switch_definition_form(custom_factors.EXPRESSION)
-    assert expression_style == {'display': 'block'} and ratio_style == {'display': 'none'}
-    expression_style, ratio_style = screener_page.switch_definition_form(custom_factors.RATIO)
-    assert expression_style == {'display': 'none'} and ratio_style == {'display': 'block'}
-
-
-def test_the_factor_editor_lives_on_the_screener_page():
-    from investalyze.apps.screener import page as screener_page
-
-    rendered = str(screener_page.define_panel())
-    assert 'bt-def-name' in rendered
-    assert 'bt-btn-save-factor' in rendered
-
-
-def test_the_backtest_page_no_longer_carries_the_editor():
-    from investalyze.apps.backtest import page
-
-    assert 'bt-def-name' not in str(page.layout())
-
-
-def test_the_control_panel_no_longer_carries_a_backtest_card():
-    from investalyze.apps.control_panel import page as control_panel
-
-    assert not hasattr(control_panel, 'backtest_card')
-    assert 'cp-btn-bt-run' not in str(control_panel.layout())
-
-
-# --- the universe picker on the control panel ---
-
-def test_the_run_button_passes_the_chosen_universe_and_sizing():
-    _, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M', 'my_universe', 300, 'mcap')
-    assert '--universe' in argv and 'my_universe' in argv
-    assert '--n-top' in argv and '300' in argv
-    assert '--rank-by' in argv and 'mcap' in argv
-
-
-def test_the_factors_button_passes_the_chosen_universe():
-    title, argv = logic.factors_argv('2015-01-01', '2024-12-31', 'M', 'as_reported', 'my_universe', 100, 'ticker')
-    assert '--universe' in argv and 'my_universe' in argv
-    assert 'my_universe' in title
-
-
-def test_leaving_the_universe_blank_runs_over_the_whole_database():
-    title, argv = logic.run_argv('hold_cash', '2020-01-01', '2020-12-31', 'M')
-    assert '--universe' not in argv
-    assert 'whole database' in title
-
-
-# --- deleting a run ---
-
-def _selected(**overrides) -> list[dict]:
-    """The grid's selection payload for one stored run, with overrides applied."""
-    row = {'RunId': 'abc123def456', 'Signal': 'sma_cross', 'StartDate': '2015-01-02',
-           'EndDate': '2020-12-31', 'NTrades': 2538, 'Created': '2026-09-03 08:15'}
-    return [row | overrides]
-
-
-def test_the_delete_button_builds_the_cli_argv():
-    title, argv = logic.delete_argv(['abc123def456'])
-    assert argv == ['-m', 'investalyze.backtest', 'delete', '--run-id', 'abc123def456']
-    assert 'abc123def456' in title
-
-
-def test_deleting_several_runs_builds_one_command_naming_them_all():
-    title, argv = logic.delete_argv(['aaa', 'bbb', 'ccc'])
-    assert argv == ['-m', 'investalyze.backtest', 'delete', '--run-id', 'aaa', 'bbb', 'ccc']
-    assert '3 runs' in title
-
-
-def test_the_runs_panel_offers_a_delete_button():
-    from investalyze.apps.backtest import page
-
-    assert 'bt-btn-delete-run' in str(page.layout())
-
-
-def test_the_delete_button_is_dead_until_a_run_is_selected():
-    from investalyze.apps.backtest import page
-
-    assert page.toggle_delete([]) is True
-    assert page.toggle_delete(_selected()) is False
-
-
-def test_the_confirmation_names_the_run_and_what_goes_with_it():
-    from investalyze.apps.backtest import page
-
-    opened, text, pending = page.ask_delete(1, _selected())
-    assert opened is True
-    assert pending == {'kind': 'runs', 'ids': ['abc123def456']}
-    assert 'abc123def456' in text
-    assert 'sma_cross' in text
-    assert '2,538 fills' in text
-    assert '2026-09-03 08:15' in text
-
-
-def test_the_confirmation_totals_the_fills_of_every_selected_run():
-    from investalyze.apps.backtest import page
-
-    selection = _selected() + _selected(RunId='def456abc123', NTrades=1_000)
-    opened, text, pending = page.ask_delete(1, selection)
-    assert pending['ids'] == ['abc123def456', 'def456abc123']
-    assert 'these 2 runs' in text
-    assert '3,538 fills in total' in text
-    assert 'def456abc123' in text
-
-
-def test_confirming_starts_the_delete_job(monkeypatch):
-    from investalyze.apps.backtest import page
-
+def test_a_factor_backtest_needs_at_least_one_factor(monkeypatch):
+    page = _page()
     started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    opened, pending = page.resolve_delete(1, None, {'kind': 'runs', 'ids': ['abc123def456']})
-    assert (opened, pending) == (False, None)
-    assert started == [['-m', 'investalyze.backtest', 'delete', '--run-id', 'abc123def456']]
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    note = _call_launch(page, selected_factors=[])
+    assert started == [] and 'Tick at least one factor' in str(note)
 
 
-def test_cancelling_leaves_the_run_where_it_is(monkeypatch):
-    from investalyze.apps.backtest import page
-
+def test_pressing_run_starts_the_factor_backtest(monkeypatch):
+    page = _page()
     started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    opened, pending = page.resolve_delete(None, 1, {'kind': 'runs', 'ids': ['abc123def456']})
-    assert (opened, pending) == (False, None)
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    assert _call_launch(page) is None
+    assert started[0][:4] == ['-m', 'investalyze.research', 'backtest', 'value']
+
+
+def _started_timing_rule(monkeypatch, **overrides) -> tuple[list, object]:
+    """Press Run on the timing rule card and return the started argv list and the note shown."""
+    page = _page()
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-timing-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    note = _call_launch(page, _factor_run=None, _timing_run=1, **overrides)
+    return started, note
+
+
+def test_pressing_run_on_the_timing_card_starts_that_rule(monkeypatch):
+    started, _note = _started_timing_rule(monkeypatch)
+    assert started[0][:4] == ['-m', 'investalyze.research', 'timing', 'new_252d_high']
+
+
+def test_a_timing_rule_needs_an_entry_factor(monkeypatch):
+    started, note = _started_timing_rule(monkeypatch, entry=None)
+    assert started == [] and 'Pick an entry factor' in str(note)
+
+
+def test_a_timing_rule_without_an_exit_does_not_start(monkeypatch):
+    started, note = _started_timing_rule(monkeypatch, stop=None, exit_on_false=False)
+    assert started == [] and 'at least one exit' in str(note)
+
+
+def test_pressing_run_while_a_job_runs_says_so_instead_of_doing_nothing(monkeypatch):
+    page = _page()
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
+    monkeypatch.setattr(page.MANAGER, 'current', object())
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    assert 'already running' in str(_call_launch(page))
     assert started == []
 
 
-def test_the_tables_reload_once_a_job_has_finished(monkeypatch):
-    from investalyze.apps.backtest import page
+# --- runs and deleting them ---
 
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 3, 12, 0, 0))])
-    assert page.refresh_after_job(1, 0) == '2026-09-03T12:00:00'
+def test_the_delete_button_is_dead_until_a_run_is_selected():
+    page = _page()
+    assert page.toggle_delete([]) is True
+    assert page.toggle_delete([{'RunId': 'aaa'}]) is False
 
 
-def test_a_finished_job_reloads_the_tables_once_and_not_on_every_poll(monkeypatch):
-    from investalyze.apps.backtest import page
+def test_asking_to_delete_names_the_selected_runs():
+    page = _page()
+    run = {'Created': '2026-09-13 10:00', 'Signal': 'value', 'StartDate': '2016-01-31', 'EndDate': '2024-12-31',
+           'NTrades': 10, 'RunId': 'aaa'}
+    opened, text, pending = page.ask_delete(1, [run])
+    assert opened is True and 'run aaa' in text and pending == {'ids': ['aaa']}
 
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 3, 12, 0, 0))])
+
+def test_asking_to_delete_with_nothing_selected_does_nothing():
     with pytest.raises(PreventUpdate):
-        page.refresh_after_job(2, '2026-09-03T12:00:00')
+        _page().ask_delete(1, [])
 
 
-def test_the_tables_are_left_alone_while_a_job_is_still_running(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    monkeypatch.setattr(page.MANAGER, 'current', SimpleNamespace(title='backtest run'))
-    with pytest.raises(PreventUpdate):
-        page.refresh_after_job(1, 0)
-
-
-def test_the_runs_grid_offers_a_checkbox_on_every_row():
-    from investalyze.apps.backtest import page
-
-    assert page._MULTI_SELECT['mode'] == 'multiRow'
-    assert page._MULTI_SELECT['checkboxes'] is True
-    assert page._MULTI_SELECT['headerCheckbox'] is True
-
-
-def test_the_run_columns_are_sized_to_their_contents():
-    from investalyze.apps.backtest import page
-
-    grid = page._grid('bt-runs', logic.RUN_COLUMNS, 220, selectable=True)
-    assert grid.columnSize == 'autoSize'
-    assert not any('width' in column for column in logic.RUN_COLUMNS)
-
-
-def test_the_run_table_leads_with_when_the_run_was_made_and_ends_with_its_id():
-    fields = [column['field'] for column in logic.RUN_COLUMNS]
-    assert fields[0] == 'Created'
-    assert fields[-1] == 'RunId'
-
-
-# --- following the theme ---
-
-def test_a_figure_carries_the_template_of_the_mode_the_switch_is_on():
-    from investalyze.apps import theming
-
-    assert theming.figure_layout(True)['template'] == 'plotly_dark'
-    assert theming.figure_layout(False)['template'] == 'plotly_white'
-
-
-def test_a_figure_lets_the_page_behind_it_show_through():
-    from investalyze.apps import theming
-
-    for dark in (True, False):
-        layout = theming.figure_layout(dark)
-        assert layout['paper_bgcolor'] == 'rgba(0,0,0,0)'
-        assert layout['plot_bgcolor'] == 'rgba(0,0,0,0)'
-
-
-def test_the_empty_chart_follows_the_theme():
-    from investalyze.apps.backtest import page
-
-    assert page._empty_figure('select a run', True).layout.template.layout.paper_bgcolor is not None
-    assert page._empty_figure('select a run', False).layout.paper_bgcolor == 'rgba(0,0,0,0)'
-
-
-def test_the_run_chart_follows_the_theme():
-    from investalyze.apps.backtest import page
-
-    curve = pd.DataFrame({'Date': pd.bdate_range('2020-01-01', periods=4),
-                          'Equity': [100.0, 101.0, 102.0, 103.0],
-                          'BenchmarkEquity': [100.0, 100.5, 101.0, 101.5]})
-    drawdown = logic.drawdown_from_equity(curve['Equity'])
-    run = {'Signal': 'sma_cross', 'Benchmark': '^NDX'}
-    dark = page._curve_figure(curve, drawdown, run, True)
-    light = page._curve_figure(curve, drawdown, run, False)
-    assert dark.layout.template is not light.layout.template
-    assert light.layout.paper_bgcolor == 'rgba(0,0,0,0)'
-
-
-def test_the_run_chart_is_redrawn_when_the_theme_switch_moves():
-    """The switch is an input of the chart callback, so a toggle redraws rather than leaves it behind."""
-    from dash._callback import GLOBAL_CALLBACK_MAP
-
-    from investalyze.apps.backtest import page  # noqa: F401  registers the callback
-
-    key = next(name for name in GLOBAL_CALLBACK_MAP if 'bt-curve.figure' in name)
-    assert 'theme-switch' in [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
-
-
-def test_the_quality_evidence_is_redrawn_when_the_theme_switch_moves():
-    """It used to read the switch as State, which left an open chart in the mode it was drawn in."""
-    from dash._callback import GLOBAL_CALLBACK_MAP
-
-    from investalyze.apps.data_quality import page as quality_page  # noqa: F401  registers the callback
-
-    key = next(name for name in GLOBAL_CALLBACK_MAP if 'dq-evidence.children' in name
-               and 'allow_duplicate' not in name)
-    assert 'theme-switch' in [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
+def test_confirming_starts_the_delete(monkeypatch):
+    page = _page()
+    started = []
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    opened, pending, _note = page.resolve_delete(1, None, {'ids': ['aaa']})
+    assert (opened, pending) == (False, None)
+    assert started == [['-m', 'investalyze.backtest', 'delete', '--run-id', 'aaa']]
 
 
 def test_a_delete_button_that_reports_no_click_starts_nothing(monkeypatch):
-    """A remounted button fires the callback with no clicks; deleting must need a real one."""
-    from investalyze.apps.backtest import page
-
+    page = _page()
     started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    assert page.resolve_delete(None, None, {'kind': 'runs', 'ids': ['abc']}) == (False, None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    page.resolve_delete(None, None, {'ids': ['aaa']})
     assert started == []
 
 
-def test_the_selection_is_cleared_once_the_dialog_closes(monkeypatch):
-    """Clearing it stops a payload from a closed dialog being spent by a later firing."""
-    from investalyze.apps.backtest import page
-
+def test_cancelling_leaves_the_run_where_it_is(monkeypatch):
+    page = _page()
+    started = []
     monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-no'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: None)
-    _opened, pending = page.resolve_delete(None, 1, {'kind': 'runs', 'ids': ['abc', 'def']})
-    assert pending is None
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    opened, pending, _note = page.resolve_delete(None, 1, {'ids': ['aaa']})
+    assert (opened, pending, started) == (False, None, [])
 
 
-def test_the_evaluate_button_passes_the_chosen_universe():
-    title, argv = logic.evaluate_argv(21, 'as_reported', 'my_universe')
-    assert '--universe' in argv and 'my_universe' in argv
-    assert 'my_universe' in title
+def test_deleting_while_a_job_runs_says_nothing_was_deleted(monkeypatch):
+    page = _page()
+    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: False)
+    _opened, _pending, note = page.resolve_delete(1, None, {'ids': ['aaa']})
+    assert 'nothing was deleted' in str(note)
 
 
-def test_evaluating_without_a_universe_covers_the_whole_database():
-    title, argv = logic.evaluate_argv(21, 'as_reported')
-    assert '--universe' not in argv
-    assert 'whole database' in title
-
-
-def test_the_factors_tab_offers_the_universes_an_evaluation_was_stored_for():
-    from investalyze.apps.backtest import page
-
-    assert 'bt-factors-universe' in str(page.layout())
-
-
-
-
-# --- what a card says a press will do ---
-
-def _gaps(**overrides) -> dict:
-    """A request the stored panel can answer in full, with overrides applied."""
-    base = {'requested_dates': 120, 'missing_dates': 0, 'n_tickers': 7, 'missing_factors': [],
-            'changed_factors': [], 'seconds_estimate': None, 'has_panel': True,
-            'build_frequency': 'M', 'panel_frequency': 'M', 'rebalance': 'M', 'empty_factors': []}
-    return base | overrides
-
-
-def test_a_covered_evaluation_says_it_reads_the_stored_panel():
-    ready, sentence = logic.research_plan(_gaps(), 'solar')
-    assert ready is True
-    assert 'from the stored panel' in sentence
-    assert '7 names in solar' in sentence
-
-
-def test_an_evaluation_missing_dates_says_what_it_builds_and_how_long():
-    ready, sentence = logic.research_plan(_gaps(missing_dates=42, seconds_estimate=15.0), 'solar')
-    assert ready is False
-    assert 'Builds the as reported panel: 42 monthly dates for 7 names in solar' in sentence
-    assert 'about 15 seconds' in sentence
-    assert '42 of the 120 monthly dates it needs do not exist yet' in sentence
-
-
-def test_a_version_with_no_panel_says_so_rather_than_counting_to_itself():
-    _ready, sentence = logic.research_plan(_gaps(missing_dates=120), 'solar', 'restated')
-    assert 'Builds the restated panel: 120 monthly dates' in sentence
-    assert 'holds nothing for this version' in sentence
-    assert '120 of the 120' not in sentence
-
-
-def test_a_redefined_factor_makes_a_card_ask_for_a_rebuild():
-    """The dates are all there; only the fingerprint says the values came from another formula."""
-    ready, sentence = logic.research_plan(_gaps(changed_factors=['quality_blend']), 'solar')
-    assert ready is False
-    assert 'Quality_blend was redefined since the last build' in sentence
-
-
-def test_a_factor_with_no_inputs_is_a_caveat_rather_than_a_reason_to_build():
-    """None of seven solar names pays a dividend, so no build will produce a dividend growth."""
-    ready, sentence = logic.research_plan(_gaps(empty_factors=['div_growth']), None)
-    assert ready is True
-    assert 'div_growth has no values for these names' in sentence
-    assert 'building will not change that' in sentence
-
-
-def test_two_empty_factors_read_as_a_plural():
-    _ready, sentence = logic.research_plan(_gaps(empty_factors=['div_growth', 'accruals']), None)
-    assert 'div_growth, accruals have no values' in sentence
-
-
-def test_a_build_says_that_pressing_is_what_does_it():
-    """'Do not exist yet' invites the question of who makes them exist."""
-    _ready, sentence = logic.research_plan(_gaps(missing_dates=42), None)
-    assert 'pressing this is what builds them' in sentence
-
-
-def test_one_second_is_not_one_seconds():
-    assert logic._estimate_words(1.2) == ', about 1 second'
-    assert logic._estimate_words(15.0) == ', about 15 seconds'
-    assert logic._estimate_words(100.0) == ', about 2 minutes'
-    assert logic._estimate_words(200.0) == ', about 3 minutes'
-
-
-def test_a_timing_signal_never_mentions_the_panel():
-    """It has no use for one, so naming it would only invite the question of whether to build it."""
-    ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar')
-    assert ready is True
-    assert sentence == 'sma_cross reads prices only. Nothing to build.'
-
-
-def test_a_covered_backtest_names_the_signal_it_will_run():
-    ready, sentence = logic.backtest_plan(_gaps(), 'cross_sectional', 'factor_composite', None)
-    assert ready is True
-    assert 'factor_composite' in sentence
-
-
-def test_a_backtest_past_the_panel_is_not_ready():
-    ready, _ = logic.backtest_plan(_gaps(missing_dates=9), 'cross_sectional', 'factor_composite', None)
-    assert ready is False
-
-
-# --- the build travels with the command, never on its own ---
-
-def test_neither_command_builds_unless_asked():
-    _t, evaluate = logic.evaluate_argv(21, 'as_reported', 'solar', '2015-01-01', '2024-12-31')
-    _t2, run = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M')
-    assert '--build-panel' not in evaluate
-    assert '--build-panel' not in run
-
-
-def test_a_confirmed_build_travels_with_the_command_and_shows_in_its_title():
-    title, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'M',
-                                 build_panel=True)
-    assert '--build-panel' in argv
-    assert 'build panel, then run' in title
-
-
-def test_a_confirmed_build_travels_with_an_evaluation_too():
-    title, argv = logic.evaluate_argv(21, 'as_reported', build_panel=True)
-    assert '--build-panel' in argv
-    assert 'build panel, then evaluate' in title
-
-
-def test_a_rebalance_finer_than_the_panel_runs_and_says_what_it_trades_on():
-    """As-of reading makes this work, so it is a note about staleness, not a reason to rebuild."""
-    ready, sentence = logic.backtest_plan(_gaps(rebalance='W'), 'cross_sectional',
-                                          'factor_composite', None)
-    assert ready is True
-    assert 'panel updates monthly' in sentence
-
-
-def test_a_rebalance_matching_the_panel_says_nothing_extra():
-    _ready, sentence = logic.backtest_plan(_gaps(), 'cross_sectional', 'factor_composite', None)
-    assert 'panel updates' not in sentence
-
-
-def test_a_press_that_needs_a_build_launches_one_command_that_does_both(monkeypatch):
-    """The line under the button already said this would happen, so it happens on one press."""
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-run'))
+def test_the_tables_reload_once_a_job_has_finished(monkeypatch):
+    page = _page()
     monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps(missing_dates=42))
-
-    page.launch(None, 1, '2015-01-01', '2024-12-31', None, 'as_reported', 21, 'M',
-                'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
-                'as_reported', 'M')
-
-    assert len(started) == 1
-    assert '--build-panel' in started[0]
+    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 13, 12, 0, 0))])
+    assert page.refresh_after_job(1, 0) == '2026-09-13T12:00:00'
 
 
-def test_a_press_that_needs_nothing_built_leaves_the_flag_off(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-evaluate'))
+def test_a_finished_job_reloads_the_tables_only_once(monkeypatch):
+    page = _page()
     monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    monkeypatch.setattr(page, '_gaps_for', lambda *args: _gaps())
+    monkeypatch.setattr(page.MANAGER, 'history', [SimpleNamespace(finished=datetime(2026, 9, 13, 12, 0, 0))])
+    with pytest.raises(PreventUpdate):
+        page.refresh_after_job(2, '2026-09-13T12:00:00')
 
-    page.launch(1, None, '2015-01-01', '2024-12-31', 'solar', 'as_reported', 21, 'M',
-                'factor_composite', '2015-01-01', '2024-12-31', 'M', None, 500, 'liquidity',
-                'as_reported', 'M')
 
-    assert '--build-panel' not in started[0]
+def test_no_run_selected_shows_an_empty_chart():
+    figure, trades, caveats, periods, settings = _page().show_run([], True)
+    assert (trades, caveats, periods, settings) == ([], None, [], [])
 
 
-def test_a_running_job_offers_a_way_out_of_it(monkeypatch):
-    from investalyze.apps.backtest import page
+# --- the retired factor workflow stays gone ---
 
-    monkeypatch.setattr(page.MANAGER, 'current', SimpleNamespace(title='backtest run', lines=[]))
-    assert 'bt-btn-cancel' in str(page.show_job_status(1))
+def test_the_page_has_no_factor_evaluation_controls():
+    layout = str(_page().layout())
+    for retired in ('bt-btn-evaluate', 'bt-factors-period', 'bt-btn-delete-evaluation', 'bt-res-'):
+        assert retired not in layout
+    assert 'bt-factor-library' in layout
 
 
-def test_cancelling_stops_the_running_job(monkeypatch):
-    from investalyze.apps.backtest import page
+def test_the_layout_accepts_the_factor_query_parameter():
+    """Seen in the browser: /backtest?factor=momentum_12_1 crashed, since Dash passes query parameters to the layout."""
+    assert 'bt-factor-library' in str(_page().layout(factor='momentum_12_1'))
 
-    cancelled = []
-    monkeypatch.setattr(page.MANAGER, 'cancel', lambda: cancelled.append(True))
-    page.cancel_job(1)
-    assert cancelled == [True]
 
-
-def test_a_cancel_button_that_reports_no_click_stops_nothing(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    cancelled = []
-    monkeypatch.setattr(page.MANAGER, 'cancel', lambda: cancelled.append(True))
-    page.cancel_job(None)
-    assert cancelled == []
-
-
-# --- throwing a stored evaluation away ---
-
-def _scope(**overrides) -> dict:
-    """One stored evaluation, shaped as `get_evaluation_scopes` returns it."""
-    base = {'version': 'as_reported', 'universe': 'unrecorded', 'factors': 29, 'ic_rows': 9128,
-            'quantile_rows': 43895, 'decay_rows': 116, 'first': '2000-01-31', 'last': '2026-09-02'}
-    return base | overrides
-
-
-def test_deleting_an_evaluation_builds_the_cli_argv():
-    title, argv = logic.delete_evaluation_argv('as_reported', 'unrecorded')
-    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', 'as_reported',
-                    '--universe', 'unrecorded']
-    assert 'unrecorded' in title
-
-
-def test_deleting_an_evaluation_with_a_period_builds_the_cli_argv():
-    title, argv = logic.delete_evaluation_argv('as_reported', 'unrecorded', '2020-01-31', '2020-02-29')
-    assert argv == ['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version', 'as_reported',
-                    '--universe', 'unrecorded', '--start', '2020-01-31', '--end', '2020-02-29']
-    assert '2020-01-31 to 2020-02-29' in title
-
-
-def test_the_confirmation_names_the_evaluation_and_what_it_holds():
-    body = logic.delete_evaluation_prompt(_scope())
-    assert 'the whole as reported evaluation stored under unrecorded' in body
-    assert '29 factors, 2000-01-31 to 2026-09-02' in body
-    assert '9,128 IC rows, 43,895 quantile rows and 116 decay rows' in body
-    assert 'rebuilds it' in body
-
-
-def test_the_confirmation_names_a_narrowed_period():
-    body = logic.delete_evaluation_prompt(_scope(), narrowed=True)
-    assert 'this period of the as reported evaluation stored under unrecorded' in body
-    assert 'same universe and period rebuilds it' in body
-
-
-def test_the_delete_evaluation_button_is_dead_until_one_is_picked():
-    from investalyze.apps.backtest import page
-
-    assert page.toggle_delete_evaluation(None) is True
-    assert page.toggle_delete_evaluation('unrecorded') is False
-
-
-def test_asking_to_delete_reads_the_period_picker(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    asked = []
-    monkeypatch.setattr(page.data, 'get_evaluation_scopes',
-                        lambda version, universe, start, end: asked.append((version, universe, start, end))
-                        or [_scope(first='2020-02-15', last='2020-02-20')])
-
-    opened, text, pending = page.ask_delete_evaluation(1, 'unrecorded', 'as_reported',
-                                                        '2020-01-31|2020-02-29')
-
-    assert asked == [('as_reported', 'unrecorded', '2020-01-31', '2020-02-29')]
-    assert pending == {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded',
-                       'start': '2020-01-31', 'end': '2020-02-29'}
-    assert opened is True
-    assert 'this period of' in text
-    assert '2020-01-31 to 2020-02-29' in text
-    assert '2020-02-15' not in text and '2020-02-20' not in text
-
-
-def test_asking_to_delete_with_no_period_picked_covers_the_whole_scope(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    monkeypatch.setattr(page.data, 'get_evaluation_scopes',
-                        lambda version, universe, start, end: [_scope()])
-
-    opened, text, pending = page.ask_delete_evaluation(1, 'unrecorded', 'as_reported', None)
-
-    assert pending == {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded'}
-    assert 'the whole' in text
-
-
-def test_asking_to_delete_reads_the_period_picker_as_a_state():
-    """Wiring, not just the function's own logic: the picker's Dash id must actually reach the callback."""
-    from dash._callback import GLOBAL_CALLBACK_MAP
-
-    from investalyze.apps.backtest import page
-
-    assert page.ask_delete_evaluation
-    key = next(name for name in GLOBAL_CALLBACK_MAP
-              if 'bt-delete-modal.opened' in name and 'bt-delete-text.children' in name
-              and 'bt-pending-delete.data' in name and '@' in name)
-    states = [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['state']]
-    assert 'bt-factors-period' in states
-
-
-def test_confirming_starts_the_evaluation_delete(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    pending = {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded'}
-
-    assert page.resolve_delete(1, None, pending) == (False, None)
-    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version',
-                        'as_reported', '--universe', 'unrecorded']]
-
-
-def test_confirming_starts_the_evaluation_delete_narrowed_to_a_period(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv))
-    pending = {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'unrecorded',
-              'start': '2020-01-31', 'end': '2020-02-29'}
-
-    assert page.resolve_delete(1, None, pending) == (False, None)
-    assert started == [['-m', 'investalyze.backtest', 'delete-evaluation', '--data-version',
-                        'as_reported', '--universe', 'unrecorded', '--start', '2020-01-31',
-                        '--end', '2020-02-29']]
-
-
-def test_one_dialog_tells_the_two_kinds_of_delete_apart(monkeypatch):
-    from investalyze.apps.backtest import page
-
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-delete-yes'))
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv[2]))
-
-    page.resolve_delete(1, None, {'kind': 'runs', 'ids': ['abc']})
-    page.resolve_delete(1, None, {'kind': 'evaluation', 'version': 'as_reported', 'universe': 'x'})
-
-    assert started == ['delete', 'delete-evaluation']
-
-
-# --- both cadences are the card's, never the file's ---
-
-def test_both_cards_carry_a_panel_cadence():
-    """The research card used to have none, so its builds took a value from backtest.toml."""
-    from investalyze.apps.backtest import page
-
-    assert 'bt-res-panel-freq' in str(page._research_panel())
-    assert 'bt-run-panel-freq' in str(page._backtest_panel())
-
-
-def test_only_the_backtest_card_carries_a_rebalance():
-    from investalyze.apps.backtest import page
-
-    assert 'bt-run-freq' in str(page._backtest_panel())
-    assert 'bt-res-freq' not in str(page._research_panel())
-
-
-def test_the_two_frequencies_reach_a_run_separately():
-    _title, argv = logic.run_argv('factor_composite', '2015-01-01', '2024-12-31', 'W',
-                                  panel_freq='Q')
-    assert argv[argv.index('--freq') + 1] == 'W'
-    assert argv[argv.index('--panel-freq') + 1] == 'Q'
-
-
-def test_an_evaluation_states_the_cadence_it_would_build_at():
-    _title, argv = logic.evaluate_argv(21, 'as_reported', panel_freq='W')
-    assert argv[argv.index('--panel-freq') + 1] == 'W'
-
-
-def test_the_build_wording_uses_the_cadence_being_built_not_the_one_stored():
-    _ready, sentence = logic.research_plan(_gaps(missing_dates=42, build_frequency='W',
-                                                 panel_frequency='M'), None)
-    assert '42 weekly dates' in sentence
-
-
-def test_a_version_with_no_panel_still_counts_the_names_a_build_would_cover():
-    """The count used to come from the panel, so a version with none reported no names at all."""
-    _ready, sentence = logic.research_plan(_gaps(missing_dates=120, n_tickers=6470), None, 'restated')
-    assert 'for 6,470 names' in sentence
-    assert 'for 0 names' not in sentence
-
-
-def test_an_uncounted_scope_names_itself_rather_than_saying_zero():
-    assert logic._scope_words(None, 0) == 'the whole database'
-    assert logic._scope_words('solar', None) == 'the names in solar'
-    assert logic._scope_words('solar', 7) == '7 names in solar'
-
-
-# --- how much of a universe a run actually trades ---
-
-def test_a_universe_fully_priced_across_the_range_says_nothing_extra():
-    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(7, 7))
-    assert 'Trades' not in sentence
-
-
-def test_a_universe_thinned_by_the_range_says_how_much_survived():
-    """Sixteen years of a seven-name solar universe leaves one stock, which is worth knowing first."""
-    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(1, 7))
-    assert 'Trades 1 of the 7 names in solar' in sentence
-    assert 'the other 6 were not priced across the whole range' in sentence
-
-
-def test_one_dropped_name_reads_as_a_singular():
-    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(6, 7))
-    assert 'the other 1 was not priced' in sentence
-
-
-def test_a_universe_nothing_survives_says_to_start_later():
-    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', 'solar', tradable=(0, 7))
-    assert 'None of the names in solar traded across this whole range' in sentence
-    assert 'start later' in sentence
-
-
-def test_the_whole_database_needs_no_such_note():
-    _ready, sentence = logic.backtest_plan(_gaps(), 'timing', 'sma_cross', None, tradable=(500, None))
-    assert 'Trades' not in sentence
-
-
-# --- a scope is a version and a universe together ---
-
-def test_the_universe_picker_never_offers_the_same_name_twice(monkeypatch):
-    """Evaluating one universe on both versions gives two scopes and one name."""
-    from investalyze.apps.backtest import data as backtest_data
-
-    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes', lambda version=None: [
-        {'version': 'as_reported', 'universe': 'solar'},
-        {'version': 'restated', 'universe': 'solar'},
-        {'version': 'as_reported', 'universe': 'all'},
-    ])
-    offered = backtest_data.get_evaluated_universes()
-    assert offered == ['solar', 'all']
-
-
-def test_the_picker_is_scoped_to_one_version(monkeypatch):
-    from investalyze.apps.backtest import data as backtest_data
-
-    asked = []
-    monkeypatch.setattr(backtest_data, 'get_evaluation_scopes',
-                        lambda version=None: asked.append(version) or [])
-    backtest_data.get_evaluated_universes('restated')
-    assert asked == ['restated']
-
-
-def test_the_factor_table_reads_the_version_from_the_research_card():
-    """Reading a universe without its version pools two measurements of different things."""
-    from dash._callback import GLOBAL_CALLBACK_MAP
-
-    from investalyze.apps.backtest import page  # noqa: F401  registers the callback
-
-    key = next(name for name in GLOBAL_CALLBACK_MAP if 'bt-factors.rowData' in name)
-    inputs = [item['id'] for item in GLOBAL_CALLBACK_MAP[key]['inputs']]
-    assert 'bt-res-version' in inputs
-    assert 'bt-factors-universe' in inputs
+def test_the_factors_layout_accepts_query_parameters():
+    from investalyze.apps.research import page as research_page
+    assert 'rs-library' in str(research_page.layout(anything='x'))

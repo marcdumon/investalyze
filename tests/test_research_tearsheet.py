@@ -113,3 +113,29 @@ def test_a_larger_library_expects_more_false_positives():
 
 def test_an_empty_library_expects_none():
     assert tearsheet.expected_false_positives(0) == 0.0
+
+
+# --- robustness ---
+
+def _dated_ic(dates: list, values: list) -> pd.DataFrame:
+    return pd.DataFrame({'Date': pd.to_datetime(dates), 'ic': values, 'names': [500] * len(values)})
+
+
+def test_ic_by_year_groups_the_series_by_calendar_year():
+    frame = _dated_ic(['2020-01-31', '2020-02-28', '2021-01-29'], [0.02, 0.04, -0.01])
+    table = tearsheet.ic_by_year(frame).set_index('year')
+    assert table.loc[2020, 'mean_ic'] == pytest.approx(0.03)
+    assert table.loc[2021, 'n_periods'] == 1
+
+
+def test_ic_by_year_is_signed_by_direction():
+    frame = _dated_ic(['2020-01-31', '2020-02-28'], [-0.02, -0.04])
+    assert tearsheet.ic_by_year(frame, higher_is_better=False).iloc[0]['mean_ic'] == pytest.approx(0.03)
+
+
+def test_ic_split_separates_in_sample_from_out_of_sample():
+    frame = _dated_ic(['2020-01-31', '2021-12-31', '2022-01-31', '2022-02-28'], [0.05, 0.05, -0.01, -0.03])
+    table = tearsheet.ic_split(frame, pd.Timestamp('2022-01-01')).set_index('period')
+    assert table.loc['In-sample', 'mean_ic'] == pytest.approx(0.05)
+    assert table.loc['Out-of-sample', 'mean_ic'] == pytest.approx(-0.02)
+    assert table.loc['Out-of-sample', 'start'] == '2022-01-31'

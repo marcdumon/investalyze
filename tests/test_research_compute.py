@@ -1,5 +1,6 @@
 """Tests for resolving the data fields a factor needs before any query runs."""
 
+import pandas as pd
 import pytest
 
 from investalyze.research import compute, factors, fields
@@ -38,3 +39,34 @@ def test_an_unknown_name_is_refused_naming_the_factor_that_reads_it():
     library = {'margin': _factor('margin', 'income_net_income / wibble')}
     with pytest.raises(ValueError, match="factor 'margin' reads unknown name 'wibble'"):
         compute.required_fields(['margin'], library, CATALOG)
+
+
+def test_apply_universe_marks_members_per_date():
+    frame = pd.DataFrame({'Date': pd.to_datetime(['2020-01-31', '2020-01-31', '2020-02-28']),
+                          'Ticker': ['AAA', 'BBB', 'AAA']})
+    members = pd.DataFrame({'Date': pd.to_datetime(['2020-01-31', '2020-02-28']), 'Ticker': ['AAA', 'AAA']})
+    assert compute.apply_universe(frame, members)['in_universe'].tolist() == [True, False, True]
+
+
+def test_membership_holds_until_the_next_rebalance_date():
+    frame = pd.DataFrame({'Date': pd.to_datetime(['2020-01-30', '2020-01-31', '2020-02-03', '2020-02-28', '2020-03-02']),
+                          'Ticker': ['AAA'] * 5})
+    members = pd.DataFrame({'Date': pd.to_datetime(['2020-01-31']), 'Ticker': ['AAA']})
+    marked = compute.apply_universe(frame, members)
+    # before the first rebalance date the name is outside; afterwards membership carries forward
+    assert marked['in_universe'].tolist() == [False, True, True, True, True]
+
+
+def test_a_name_dropped_at_a_rebalance_leaves_the_universe_from_that_date():
+    frame = pd.DataFrame({'Date': pd.to_datetime(['2020-02-03', '2020-03-02']), 'Ticker': ['AAA', 'AAA']})
+    members = pd.DataFrame({'Date': pd.to_datetime(['2020-01-31', '2020-02-28']), 'Ticker': ['AAA', 'BBB']})
+    assert compute.apply_universe(frame, members)['in_universe'].tolist() == [True, False]
+
+
+def test_lookback_counts_windows_through_referenced_factors():
+    library = {'trend': _factor('trend', 'mean(revenue, 50)'), 'signal': _factor('signal', 'trend > lag(trend, 20)')}
+    assert compute.lookback_days(['signal'], library) == 70
+
+
+def test_a_factor_without_time_series_functions_needs_no_history():
+    assert compute.lookback_days(['margin'], {'margin': _factor('margin', 'income_net_income / revenue')}) == 0

@@ -19,7 +19,7 @@ from investalyze.backtest.book import Book
 from investalyze.backtest.config import Costs, Limits
 from investalyze.backtest.market import MarketData
 from investalyze.backtest.orders import LIMIT, MARKET, STOP, OrderBatch
-from investalyze.backtest.registry import Decision
+from investalyze.backtest.engine import Decision
 
 FREE = Costs(slippage_bps=0.0, commission_bps=0.0, min_commission=0.0, impact_coef=0.0,
              borrow_bps_annual=0.0, cash_bps_annual=0.0)

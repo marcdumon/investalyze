@@ -16,10 +16,13 @@ DATE, TICKER = 'Date', 'Ticker'
 
 
 def coverage(frame: pd.DataFrame, column: str) -> pd.DataFrame:
-    """Per year: how many names carry a value, out of how many were present."""
-    years = pd.to_datetime(frame[DATE]).dt.year
-    grouped = frame.groupby(years)[column]
-    table = pd.DataFrame({'names': grouped.count(), 'universe': grouped.size()})
+    """Per year: average names per date with a value, against average names per date in the universe."""
+    if 'in_universe' in frame.columns:
+        frame = frame[frame['in_universe']]
+    per_date = frame.groupby(DATE)[column].agg(['count', 'size'])
+    years = pd.to_datetime(per_date.index).year
+    table = pd.DataFrame({'names': per_date['count'].groupby(years).mean(),
+                          'universe': per_date['size'].groupby(years).mean()})
     table['share'] = (table['names'] / table['universe'] * 100.0).round(1)
     return table.reset_index(names='year')
 

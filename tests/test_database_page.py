@@ -65,8 +65,8 @@ def test_every_table_in_the_database_has_a_catalogue_entry():
 # --- shaping ---
 
 def test_a_table_row_carries_the_area_from_its_catalogue_entry():
-    frame = pd.DataFrame([{'name': 'factor_panel', 'rows': 10, 'columns': 38}])
-    assert logic.table_rows(frame)[0]['area'] == catalog.TABLES['factor_panel'].area
+    frame = pd.DataFrame([{'name': 'backtest_runs', 'rows': 10, 'columns': 20}])
+    assert logic.table_rows(frame)[0]['area'] == catalog.TABLES['backtest_runs'].area
 
 
 def test_a_table_with_no_entry_is_marked_rather_than_dropped():

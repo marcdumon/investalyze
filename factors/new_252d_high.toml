@@ -1,0 +1,6 @@
+name = 'new_252d_high'
+expression = 'adj_close >= max(adj_close, 252)'
+description = 'Adjusted close at its highest over the last 252 trading days.'
+higher_is_better = true
+status = 'candidate'
+notes = ''

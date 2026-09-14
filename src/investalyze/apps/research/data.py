@@ -1,29 +1,36 @@
 """Read side of the Factors page.
 
 Every read opens its own short-lived read-only connection, matching the other pages, so a running job
-holding the write lock is never blocked. Diagnostics run on a sample: the most liquid names on a
-monthly grid, which keeps a run around a second.
+holding the write lock is never blocked. The universe on each rebalance date is the most liquid names
+by trailing dollar volume known on that date. Diagnostics use a smaller universe than IC analysis,
+which keeps a diagnostics run to a few seconds.
 """
 
 from pathlib import Path
 
 import pandas as pd
 
+from investalyze.analysis import factors_pit
 from investalyze.ingest import storage
-from investalyze.research import cache, compute, diagnostics, factors, fields, tearsheet
+from investalyze.research import cache, compute, diagnostics, factors, fields, tearsheet, universe
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = ROOT / 'data'
 FACTORS_DIR = ROOT / 'factors'
 CACHE_DIR = DATA_ROOT / 'cache'
 
-SAMPLE_NAMES = 400
 SAMPLE_START, SAMPLE_END = '2016-01-31', '2024-12-31'
-TEARSHEET_NAMES = 1500
+HOLDOUT_START = pd.Timestamp('2022-01-01')
+DIAGNOSTICS_SIZE = 400
+RESEARCH_SIZE = 1000
 
 
 def _connect():
     return storage.connect(DATA_ROOT, read_only=True)
+
+
+def _store() -> cache.Cache:
+    return cache.Cache(CACHE_DIR)
 
 
 def library() -> dict:
@@ -54,29 +61,30 @@ def field_rows(search: str | None = None) -> list[dict]:
             continue
         field = available[alias]
         rows.append({'name': alias, 'statement': field.statement, 'period': field.window.upper(),
-                     'line_item': field.source})
+                     'description': field.source})
     return rows
 
 
-def liquid_tickers(con, limit: int) -> list[str]:
-    """The names with the highest average dollar volume over the last year."""
-    rows = con.execute("""
-        SELECT Ticker FROM (
-            SELECT Ticker, avg(C * V) AS dollar_volume
-            FROM prices WHERE Date > (SELECT max(Date) - INTERVAL 1 YEAR FROM prices) AND C IS NOT NULL
-            GROUP BY Ticker
-        ) ORDER BY dollar_volume DESC NULLS LAST LIMIT ?
-    """, [limit]).fetchall()
-    return [row[0] for row in rows]
+def summaries() -> dict:
+    """Recorded results for the current definition of every factor, keyed by factor name."""
+    working = library()
+    store = _store()
+    return {name: store.get_summary(name, factors.fingerprint(name, working)) for name in working}
 
 
-def _grid(start: str, end: str) -> pd.DatetimeIndex:
-    return pd.DatetimeIndex(pd.date_range(start, end, freq='ME'))
+def _panel(con, names: list[str], working: dict, size: int) -> pd.DataFrame:
+    """The factor panel over the research period for a point-in-time universe of `size` names."""
+    grid = factors_pit.rebalance_dates(con, start=SAMPLE_START, end=SAMPLE_END, freq='M')
+    members = universe.liquid_universe(con, grid, size=size)
+    return compute.compute(con, names, working, as_of=grid, members=members)
 
 
-def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True,
-                    names: int = SAMPLE_NAMES) -> dict:
-    """Compute a factor on the sample and return its diagnostics.
+def _is_saved(name: str, expression: str, working: dict) -> bool:
+    return name in working and working[name].expression == expression
+
+
+def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True) -> dict:
+    """Compute a factor over the diagnostics universe and return its diagnostics.
 
     The factor does not have to be saved: it is added to a copy of the library for this run only, so
     an unsaved expression can reference saved factors.
@@ -84,49 +92,63 @@ def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True
     con = _connect()
     try:
         available = fields.catalog(con)
+        saved = library()
         candidate = factors.Factor(name=name, expression=expression, higher_is_better=higher_is_better)
-        working = library() | {name: candidate}
+        working = saved | {name: candidate}
         factors.validate_library(working, set(available) | set(fields.IDENTITY))
 
-        tickers = liquid_tickers(con, names)
-        frame = compute.compute(con, [name], working, as_of=_grid(SAMPLE_START, SAMPLE_END), tickers=tickers)
+        # every library factor is computed alongside, so correlation covers the whole library
+        frame = _panel(con, sorted(working), working, DIAGNOSTICS_SIZE)
         if frame.empty or name not in frame.columns:
             return {'error': 'No factor values over the sample.'}
 
         others = [other for other in working if other != name and other in frame.columns]
-        return {
-            'coverage': diagnostics.coverage(frame, name),
+        coverage = diagnostics.coverage(frame, name)
+        result = {
+            'coverage': coverage,
             'distribution': diagnostics.distribution(frame[name]),
             'top_bottom': diagnostics.top_bottom(frame, name, n=8, inputs=sorted(candidate.dependencies)),
             'correlations': diagnostics.correlations(frame, name, others),
             'autocorrelation': diagnostics.rank_autocorrelation(frame, name),
-            'sample': {'names': int(frame['Ticker'].nunique()), 'dates': int(frame['Date'].nunique())},
+            'sample': {'size': DIAGNOSTICS_SIZE, 'dates': int(frame['Date'].nunique())},
         }
+        if _is_saved(name, expression, saved) and not coverage.empty:
+            _store().put_summary(name, factors.fingerprint(name, saved), {'coverage': float(coverage.iloc[-1]['share'])})
+        return result
     finally:
         con.close()
 
 
-def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON, names: int = TEARSHEET_NAMES) -> dict:
-    """IC analysis for one saved factor, using the cache."""
+def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON) -> dict:
+    """IC analysis for one saved factor over the research universe, using the cache."""
     con = _connect()
     try:
         working = library()
-        tickers = liquid_tickers(con, names)
-        frame = compute.compute(con, [name], working, as_of=_grid(SAMPLE_START, SAMPLE_END), tickers=tickers)
+        frame = _panel(con, [name], working, RESEARCH_SIZE)
         if frame.empty or name not in frame.columns:
             return {'error': 'No factor values, so there is nothing to analyse.'}
-        return tearsheet.tearsheet(con, name, working, frame, horizon=horizon, store=cache.Cache(CACHE_DIR))
+        store = _store()
+        result = tearsheet.tearsheet(con, name, working, frame, horizon=horizon, store=store, holdout_start=HOLDOUT_START)
+        split = result['split'].set_index('period') if not result['split'].empty else pd.DataFrame()
+        store.put_summary(name, factors.fingerprint(name, working), {
+            'ic': result['summary']['oriented_ic'], 't_stat': result['summary']['oriented_t'],
+            'oos_t_stat': float(split.loc['Out-of-sample', 't_stat']) if 'Out-of-sample' in split.index else None,
+        })
+        return result
     finally:
         con.close()
 
 
 def save(factor: factors.Factor) -> None:
-    """Write one factor to the library and clear cached results for its previous definition."""
+    """Write one factor to the library.
+
+    Cached results are keyed by fingerprint, so a changed expression is never served an old result,
+    and a change to status or rationale keeps the results it already has.
+    """
     factors.save(factor, FACTORS_DIR)
-    cache.Cache(CACHE_DIR).forget(factor.name)
 
 
 def delete(name: str) -> None:
     """Remove a factor and its cached results."""
     (FACTORS_DIR / f'{name}.toml').unlink(missing_ok=True)
-    cache.Cache(CACHE_DIR).forget(name)
+    _store().forget(name)

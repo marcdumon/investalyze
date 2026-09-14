@@ -1,0 +1,6 @@
+name = 'sma_50_above_sma_200'
+expression = 'mean(adj_close, 50) > mean(adj_close, 200)'
+description = '50-day average of the adjusted close above its 200-day average.'
+higher_is_better = true
+status = 'candidate'
+notes = ''

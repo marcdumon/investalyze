@@ -1,0 +1,6 @@
+name = 'close_above_prior_high'
+expression = 'close > lag(high, 1)'
+description = "Close above the previous session's high."
+higher_is_better = true
+status = 'candidate'
+notes = ''

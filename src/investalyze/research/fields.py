@@ -1,4 +1,4 @@
-"""Data fields available to factor expressions.
+"""Data fields available to factor expressions: statement line items and market data.
 
 Every line item on the three financial statements becomes a name an expression can use, so the
 whole of what has been ingested is reachable without anyone hand-listing it. Aliases are derived
@@ -20,8 +20,10 @@ from dataclasses import dataclass
 import pandas as pd
 
 from investalyze.analysis import factors_pit
+from investalyze.research import market
 
-TTM, MRQ = 'ttm', 'mrq'
+TTM, MRQ, DAILY = 'ttm', 'mrq', 'daily'
+MARKET = 'market'
 STATEMENT_WINDOWS = {'income': TTM, 'cashflow': TTM, 'balance': MRQ}
 
 # bookkeeping columns present on every statement, which describe the filing rather than
@@ -31,7 +33,7 @@ METADATA = frozenset({
     'Fiscal Year', 'Fiscal Period', 'Report Date', 'Publish Date', 'Restated Date',
 })
 
-IDENTITY = ('sector', 'industry', 'name', 'last_close', 'mcap', 'mcap_bn')
+IDENTITY = ('sector', 'industry', 'name')
 
 
 @dataclass(frozen=True)
@@ -44,8 +46,8 @@ class Field:
 
     @property
     def window(self) -> str:
-        """TTM for flow items summed over four quarters, MRQ for balance sheet items."""
-        return STATEMENT_WINDOWS[self.statement]
+        """TTM for flow items summed over four quarters, MRQ for balance sheet items, daily for market data."""
+        return STATEMENT_WINDOWS.get(self.statement, DAILY)
 
 
 def to_alias(heading: str) -> str:
@@ -87,8 +89,11 @@ def read_schema(con) -> dict:
 
 
 def catalog(con) -> dict:
-    """Every data field, taken from the live database schema."""
-    return build_catalog(read_schema(con))
+    """Every data field: statement line items from the live schema, plus the market data fields."""
+    available = build_catalog(read_schema(con))
+    for name, description in market.FIELDS.items():
+        available[name] = Field(name, description, MARKET)
+    return available
 
 
 def _requested_by_statement(names: set[str], available: dict) -> dict:
@@ -96,7 +101,7 @@ def _requested_by_statement(names: set[str], available: dict) -> dict:
     grouped: dict[str, dict[str, str]] = {statement: {} for statement in STATEMENT_WINDOWS}
     for name in sorted(names):
         field = available.get(name)
-        if field is not None:
+        if field is not None and field.statement in grouped:
             grouped[field.statement][field.source] = field.alias
     return grouped
 
@@ -129,13 +134,17 @@ def panel(con, names: set[str], *, as_of: pd.DatetimeIndex, version: str = facto
 
     if names & set(IDENTITY):
         identity = factors_pit.identity_panel(con, as_of=as_of, tickers=tickers)
-        wanted = [column for column in factors_pit.IDENTITY_COLS if column in names]
+        wanted = [column for column in IDENTITY if column in names]
         frames.append(identity[['Date', 'Ticker'] + wanted])
+
+    if names & set(market.FIELDS):
+        frames.append(market.panel(con, names, as_of=as_of, tickers=tickers))
 
     if not frames:
         return pd.DataFrame(columns=['Ticker', 'Date'])
 
-    merged = frames[0]
-    for frame in frames[1:]:
-        merged = merged.merge(frame, on=['Date', 'Ticker'], how='outer')
+    merged = None
+    for frame in frames:
+        frame = frame.assign(Date=pd.to_datetime(frame['Date']))
+        merged = frame if merged is None else merged.merge(frame, on=['Date', 'Ticker'], how='outer')
     return merged.sort_values(['Date', 'Ticker']).reset_index(drop=True)

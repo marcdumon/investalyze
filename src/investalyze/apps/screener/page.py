@@ -7,7 +7,6 @@ over the metadata-filtered candidates, so a percentile always means 'among my cu
 While a job holds the DB's write lock the page shows a busy notice instead of a traceback.
 """
 
-from pathlib import Path
 
 import dash
 import dash_ag_grid as dag
@@ -17,8 +16,8 @@ from dash import ALL, Input, Output, State, callback, clientside_callback, ctx, 
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
-from investalyze.analysis import custom_factors, factors
-from investalyze.apps.backtest import logic as backtest_logic
+from investalyze.analysis import factors
+from investalyze.apps.screener import data as pool_data
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.apps.control_panel.page import build_blacklist_argv
 from investalyze.apps.screener import metrics
@@ -28,8 +27,6 @@ from investalyze.apps.screener.logic import (apply_filters, apply_metadata_filte
                                              compute_ranks)
 from investalyze.apps.universes import list_universes, load_universe, save_universe
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-FACTORS_PATH = REPO_ROOT / custom_factors.FACTORS_FILE
 
 IDENTITY_FIELDS = ['Ticker', 'name', 'sector', 'industry', 'mcap_bn', 'mcap_bucket']
 IDENTITY_COLUMNS = [
@@ -90,8 +87,8 @@ def factor_help(factor: str) -> dmc.HoverCard:
     The name doubles as the hover target rather than adding a help icon, so the definition costs
     no width in a panel that already wraps.
     """
-    doc = factors.FACTOR_DOCS[factor]
-    best = 'higher is better' if factors.HIGHER_IS_BETTER[factor] else 'lower is better'
+    doc = pool_data.factor_docs()[factor]
+    best = 'higher is better' if pool_data.higher_is_better()[factor] else 'lower is better'
     return dmc.HoverCard([
         dmc.HoverCardTarget(
             dmc.Text(factor, size='xs',
@@ -151,66 +148,6 @@ def apply_action(
 
 
 
-def define_panel() -> dmc.Accordion:
-    """The factor editor: what is defined now, and a form to add another."""
-    form = dmc.Paper([
-        dmc.Text('Define a factor', fw=600, size='sm', mb=6),
-        dmc.SegmentedControl(id='bt-def-kind', value=custom_factors.EXPRESSION, size='xs', mb=8,
-                             data=[{'value': custom_factors.EXPRESSION, 'label': 'Combine factors'},
-                                   {'value': custom_factors.RATIO, 'label': 'Statement ratio'}]),
-        dmc.Group([
-            dmc.TextInput(id='bt-def-name', label='Name', placeholder='cheap_quality', size='xs', w=200),
-            dmc.Select(id='bt-def-direction', label='Good end', value='higher', size='xs', w=130,
-                       data=[{'value': 'higher', 'label': 'higher is better'},
-                             {'value': 'lower', 'label': 'lower is better'}]),
-        ], gap='xs', mb=8),
-        html.Div([
-            dmc.TextInput(id='bt-def-expression', label='Expression', size='xs',
-                          placeholder='(rank_fcf_yield + rank_roe) / 2'),
-            dmc.Text('Use any factor name, or rank_<factor> for its 0 to 100 percentile within the '
-                     'date, already turned so 100 is the good end.', size='xs', c='dimmed', mt=4),
-        ], id='bt-def-expression-block'),
-        html.Div([
-            dmc.Group([
-                dmc.TextInput(id='bt-def-numerator', label='Numerator', size='xs', w=260,
-                              placeholder='-Research & Development'),
-                dmc.TextInput(id='bt-def-denominator', label='Denominator', size='xs', w=260,
-                              placeholder='Revenue'),
-            ], gap='xs'),
-            dmc.Text('Statement line items. Income and cashflow terms sum over the trailing four '
-                     'published quarters, balance terms take the latest. Expenses are stored '
-                     'negative, so prefix with - to read the magnitude.', size='xs', c='dimmed', mt=4),
-        ], id='bt-def-ratio-block'),
-        dmc.TextInput(id='bt-def-description', label='Note', size='xs', mt=8,
-                      placeholder='what this measures, shown on hover in the screener'),
-        html.Div(id='bt-def-feedback', style={'marginTop': '8px'}),
-        dmc.Group([
-            dmc.Button('Save factor', id='bt-btn-save-factor', size='xs', color='orange'),
-            dmc.Button('Delete selected', id='bt-btn-delete-factor', size='xs', color='red',
-                       variant='light'),
-        ], gap='xs', mt=8),
-    ], p='sm', withBorder=True)
-
-    body = html.Div([
-        dmc.Text('Each one becomes a column and a rank here, a column in the backtest factor panel, '
-                 'and a name a backtest signal can trade on.', size='xs', c='dimmed', mb=6),
-        html.Div(id='bt-definitions-notice'),
-        dag.AgGrid(id='bt-definitions', columnDefs=backtest_logic.DEFINITION_COLUMNS, rowData=[],
-                   dashGridOptions={'rowSelection': 'single', 'theme': 'legacy', 'rowHeight': 26,
-                                    'headerHeight': 28},
-                   columnSize='sizeToFit', className='ag-theme-alpine-dark',
-                   style={'height': '200px'}),
-        html.Div(form, style={'marginTop': '10px'}),
-        dcc.Store(id='bt-definitions-tick', data=0),
-    ])
-    return dmc.Accordion([
-        dmc.AccordionItem([
-            dmc.AccordionControl('Your factors'),
-            dmc.AccordionPanel(body),
-        ], value='factors'),
-    ], value=None, chevronPosition='left', variant='contained')
-
-
 def layout() -> html.Div:
     """Build the screener page. The pool is loaded (and cached) on first visit."""
     try:
@@ -238,21 +175,25 @@ def layout() -> html.Div:
                            style={'height': '30px', 'display': 'flex', 'alignItems': 'center'})]),
     ], gap=8, align='flex-end', px=12, pt=4, pb=4, style={'flexWrap': 'wrap'})
 
+    shadowed = pool_data.shadowed_factors()
     factor_panel = dmc.Accordion([
         dmc.AccordionItem([
             dmc.AccordionControl('Factor value filters & composite score', py=2),
             dmc.AccordionPanel([
                 dmc.Group([
-                    dmc.MultiSelect(id='score-factors', data=factors.FACTORS, label='Composite score factors',
+                    dmc.MultiSelect(id='score-factors', data=pool_data.factor_names(), label='Composite score factors',
                                     size='xs', clearable=True, style={'width': '520px'}),
                     dmc.Button('Clear bounds', id='btn-clear-bounds', size='compact-xs', variant='default'),
                 ], gap=8, align='flex-end', mb=6),
                 dmc.Text(f'Hover a factor name for its definition and formula. {factors.TTM_NOTE}',
-                         size='xs', c='dimmed', mb=10),
+                         size='xs', c='dimmed', mb=4),
+                dmc.Text(f'Not shown, since a built-in factor has the same name: {", ".join(shadowed)}. '
+                         'Rename them in the factor library to screen on them.', size='xs', c='orange', mb=10)
+                if shadowed else html.Div(style={'marginBottom': '6px'}),
                 dmc.Group([
                     dmc.Stack([dmc.Text(family, size='xs', fw=700)]
                               + [factor_row(f, scales[f].step) for f in members], gap=4)
-                    for family, members in factors.FAMILIES.items()
+                    for family, members in pool_data.families().items()
                 ], gap=24, align='flex-start', style={'flexWrap': 'wrap'}),
             ]),
         ], value='factors'),
@@ -310,7 +251,6 @@ def layout() -> html.Div:
     return html.Div([
         dcc.Store(id='selection', data=[]),
         header,
-        html.Div(define_panel(), style={'padding': '0 12px 8px'}),
         filter_row,
         factor_panel,
         html.Div(id='notice'),
@@ -391,7 +331,7 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     undecided = pool[~pool['Ticker'].isin(selection)]
     candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
                                         min_dvol, min_years, active, max_anom)
-    ranked = compute_ranks(candidates)
+    ranked = compute_ranks(candidates, pool_data.factor_names(), pool_data.higher_is_better())
     passed = apply_filters(ranked, collect_bounds(ctx.inputs_list))
 
     chosen = score_factors or []
@@ -404,19 +344,19 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     if chosen:
         display['score'] = display['score'].round(1)
     if mode == 'rank':
-        for factor in factors.FACTORS:
+        for factor in pool_data.factor_names():
             display[factor] = display[f'rank_{factor}'].round(0)
     else:
-        for factor in factors.FACTORS:
+        for factor in pool_data.factor_names():
             display[factor] = display[factor].round(scales[factor].decimals)
 
-    fields = IDENTITY_FIELDS + (['score'] if chosen else []) + factors.FACTORS
+    fields = IDENTITY_FIELDS + (['score'] if chosen else []) + pool_data.factor_names()
     rows = display[fields].copy()
     rows.insert(0, 'sel', False)
     columns = list(IDENTITY_COLUMNS)
     if chosen:
         columns.append({'field': 'score', 'headerName': 'Score', 'width': 90, 'pinned': 'left'})
-    columns += [{'field': factor, 'headerName': factor} for factor in factors.FACTORS]
+    columns += [{'field': factor, 'headerName': factor} for factor in pool_data.factor_names()]
 
     sel_rows = pool.loc[pool['Ticker'].isin(selection), SEL_FIELDS].copy()
     sel_rows.insert(0, 'sel', True)
@@ -435,13 +375,13 @@ def update_grid(search, sectors, industries, buckets, min_dvol, min_years, activ
     prevent_initial_call=True,
 )
 def clear_bounds(_n_clicks):
-    """Blank every factor bound at once, since the panel holds two inputs for each of 24 factors.
+    """Blank every factor bound at once, since the panel holds two inputs for every factor.
 
     The inputs are blanked with '' rather than None: None leaves dmc.NumberInput showing its old
     text even though the callback has already dropped the bound, so the panel would contradict the
     grid. collect_bounds reads '' as no bound.
     """
-    blank = [''] * len(factors.FACTORS)
+    blank = [''] * len(pool_data.factor_names())
     return blank, blank
 
 
@@ -584,71 +524,3 @@ def poll_blacklist_job(_n_intervals, pending, selection):
     except duckdb.Error:
         return False, dmc.Text('blacklisted (refresh to update the grid)', size='xs', c='teal'), False, dash.no_update, True
     return False, dmc.Text('blacklisted', size='xs', c='teal'), False, [t for t in selection if t in remaining], True
-
-
-@callback(Output('bt-def-expression-block', 'style'), Output('bt-def-ratio-block', 'style'),
-          Input('bt-def-kind', 'value'))
-def switch_definition_form(kind):
-    """Show the fields the chosen kind of factor needs."""
-    hidden, shown = {'display': 'none'}, {'display': 'block'}
-    if kind == custom_factors.RATIO:
-        return hidden, shown
-    return shown, hidden
-
-
-@callback(Output('bt-definitions', 'rowData'), Output('bt-definitions-notice', 'children'),
-          Input('bt-definitions-tick', 'data'))
-def load_definitions(_tick):
-    """List the factors defined in the file."""
-    rows = backtest_logic.definition_rows(factors.CUSTOM)
-    return rows, None if rows else _note(EMPTY_DEFINITIONS)
-
-
-@callback(Output('bt-def-feedback', 'children'),
-          Input('bt-def-name', 'value'), Input('bt-def-kind', 'value'),
-          Input('bt-def-expression', 'value'), Input('bt-def-numerator', 'value'),
-          Input('bt-def-denominator', 'value'), Input('bt-def-direction', 'value'),
-          Input('bt-def-description', 'value'))
-def check_definition(name, kind, expression, numerator, denominator, direction, description):
-    """Say whether the form as it stands would be accepted, before anything is written."""
-    if not any((name, expression, numerator, denominator)):
-        return None
-    fields = backtest_logic.definition_fields(kind, expression, numerator, denominator,
-                                     direction == 'higher', description)
-    problem = backtest_logic.validate_definition(name, fields, factors.CUSTOM)
-    if problem:
-        return dmc.Alert(problem, color='red', variant='light')
-    return dmc.Alert(dmc.Code(backtest_logic.preview_definition(name, fields), block=True),
-                     title='ready to save', color='green', variant='light')
-
-
-@callback(Output('bt-definitions-tick', 'data'), Output('bt-def-name', 'value'),
-          Output('bt-def-expression', 'value'), Output('bt-def-numerator', 'value'),
-          Output('bt-def-denominator', 'value'), Output('bt-def-description', 'value'),
-          Input('bt-btn-save-factor', 'n_clicks'), Input('bt-btn-delete-factor', 'n_clicks'),
-          State('bt-def-name', 'value'), State('bt-def-kind', 'value'),
-          State('bt-def-expression', 'value'), State('bt-def-numerator', 'value'),
-          State('bt-def-denominator', 'value'), State('bt-def-direction', 'value'),
-          State('bt-def-description', 'value'), State('bt-definitions', 'selectedRows'),
-          State('bt-definitions-tick', 'data'),
-          prevent_initial_call=True)
-def edit_definitions(_save, _delete, name, kind, expression, numerator, denominator, direction,
-                     description, selected, tick):
-    """Write the form to factors.toml, or delete the selected factor, then reload the library."""
-    blank = (None, None, None, None, None)
-    if ctx.triggered_id == 'bt-btn-delete-factor':
-        if not selected:
-            raise PreventUpdate
-        custom_factors.remove_factor(FACTORS_PATH, selected[0]['name'])
-    else:
-        fields = backtest_logic.definition_fields(kind, expression, numerator, denominator,
-                                         direction == 'higher', description)
-        if backtest_logic.validate_definition(name, fields, factors.CUSTOM):
-            raise PreventUpdate
-        custom_factors.add_factor(FACTORS_PATH, name.strip(), fields, factors.BUILTIN_FACTORS)
-
-    # mutate the library in place and drop the screener's cached pool, so the change is live
-    # on the next page view rather than after a restart
-    factors.reload_custom(FACTORS_PATH)
-    clear_cache()
-    return (tick or 0) + 1, *blank

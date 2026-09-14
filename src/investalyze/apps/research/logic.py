@@ -20,7 +20,7 @@ FIELD_COLUMNS = [
     {'field': 'name', 'headerName': 'Field', 'width': 240},
     {'field': 'statement', 'headerName': 'Statement', 'width': 110},
     {'field': 'period', 'headerName': 'Period', 'width': 90},
-    {'field': 'line_item', 'headerName': 'Line item', 'flex': 1},
+    {'field': 'description', 'headerName': 'Description', 'flex': 1},
 ]
 
 
@@ -35,15 +35,20 @@ def validate_expression(expression: str, known: set) -> tuple[bool, str]:
     return True, 'Expression is valid.'
 
 
-def library_rows(library: dict) -> list[dict]:
-    """One row per factor: accepted first, then candidates, then rejected."""
+def library_rows(library: dict, summaries: dict | None = None) -> list[dict]:
+    """One row per factor with its recorded results: accepted first, then candidates, then rejected."""
     order = {'accepted': 0, 'candidate': 1, 'rejected': 2}
+    summaries = summaries or {}
     rows = []
     for name in sorted(library):
         factor = library[name]
+        recorded = summaries.get(name, {})
         rows.append({'name': name, 'status': factor.status, 'description': factor.description,
                      'direction': 'higher' if factor.higher_is_better else 'lower',
-                     'expression': factor.expression, '_order': order.get(factor.status, 3)})
+                     'expression': factor.expression, 'coverage': recorded.get('coverage'),
+                     't_stat': recorded.get('t_stat'), 'oos_t_stat': recorded.get('oos_t_stat'),
+                     'sharpe': recorded.get('sharpe'), 'oos_sharpe': recorded.get('oos_sharpe'),
+                     '_order': order.get(factor.status, 3)})
     rows.sort(key=lambda row: (row['_order'], row['name']))
     for row in rows:
         row.pop('_order')
@@ -56,7 +61,7 @@ def coverage_note(table: pd.DataFrame) -> tuple[str, str]:
         return 'No coverage.', 'red'
     latest = table.iloc[-1]
     share = float(latest['share'])
-    text = (f'Coverage: {int(latest["names"]):,} of {int(latest["universe"]):,} names '
+    text = (f'Coverage: {latest["names"]:,.0f} of {latest["universe"]:,.0f} names per date '
             f'in {int(latest["year"])} ({share:.0f}%).')
     if share < LOW_COVERAGE:
         return text + ' Low coverage: results describe a subset of the universe.', 'orange'
@@ -147,3 +152,23 @@ def ic_decay_note(decay: pd.DataFrame, *, higher_is_better: bool = True) -> str:
     if reversed_at:
         text += f' IC turns negative at {", ".join(f"{h}-day" for h in reversed_at)}.'
     return text
+
+
+def holdout_note(split: pd.DataFrame) -> tuple[str, str] | None:
+    """In-sample against out-of-sample t-statistic, and whether the IC holds out of sample."""
+    if split is None or split.empty or set(split['period']) != {'In-sample', 'Out-of-sample'}:
+        return None
+    table = split.set_index('period')
+    inside, outside = float(table.loc['In-sample', 't_stat']), float(table.loc['Out-of-sample', 't_stat'])
+    text = (f'In-sample t-stat {inside:+.2f} ({table.loc["In-sample", "start"]} to {table.loc["In-sample", "end"]}), '
+            f'out-of-sample t-stat {outside:+.2f} ({table.loc["Out-of-sample", "start"]} to '
+            f'{table.loc["Out-of-sample", "end"]}).')
+    if inside != inside or outside != outside:
+        return text, 'gray'
+    if outside <= 0 < inside:
+        return text + ' IC reverses sign out of sample.', 'red'
+    if abs(inside) >= SIGNIFICANT_T and abs(outside) < SIGNIFICANT_T:
+        return text + ' Significant in-sample only.', 'orange'
+    if abs(outside) >= SIGNIFICANT_T:
+        return text + ' Significant out of sample.', 'green'
+    return text, 'gray'

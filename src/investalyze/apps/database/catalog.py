@@ -108,52 +108,20 @@ TABLES: dict[str, Table] = {
         'python -m investalyze.quality',
         'CheckName, SrcTable, Ticker, Date, Key'),
 
-    'factor_panel': Table(
-        BACKTEST,
-        'The precomputed factor table: one row per ticker per as-of date, holding each factor as it '
-        'was knowable on that date. This is what a cross-sectional signal ranks. Rank-based factors '
-        'are absent on purpose, since their value depends on which names were in the cross-section.',
-        'python -m investalyze.backtest factors',
-        'Ticker, Date, Version'),
-    'factor_panel_builds': Table(
-        BACKTEST,
-        'One row per build of the factor panel: what was asked for, how long it took, and a '
-        'fingerprint of the factor formulas in force, which is how a redefined factor is noticed.',
-        'python -m investalyze.backtest factors',
-        'append-only'),
-    'factor_ic': Table(
-        BACKTEST,
-        'Information coefficient per date: the rank correlation between a factor and the return that '
-        'followed it. Averaged, this is the Mean IC column on the Factors tab.',
-        'python -m investalyze.backtest evaluate',
-        'Version, Universe, Factor, Date, Horizon'),
-    'factor_quantiles': Table(
-        BACKTEST,
-        'Forward return of each score bucket per date, as a mean and as a median. The two part '
-        'company on a universe that was never filtered for price.',
-        'python -m investalyze.backtest evaluate',
-        'Version, Universe, Factor, Date, Horizon, Quantile'),
-    'factor_ic_decay': Table(
-        BACKTEST,
-        'Mean IC and its t-statistic at each of a fixed set of forward horizons, one row per horizon: '
-        "how quickly a factor loses its edge, which is what the Factors tab's IC 5d/21d/63d/126d "
-        'columns show.',
-        'python -m investalyze.backtest evaluate',
-        'Version, Universe, Factor, StartDate, EndDate, Horizon'),
     'backtest_runs': Table(
         BACKTEST,
         'One row per stored run: the settings behind it and its headline statistics.',
-        'python -m investalyze.backtest run',
+        'python -m investalyze.research backtest, python -m investalyze.research timing',
         'RunId'),
     'backtest_equity': Table(
         BACKTEST,
         'A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it.',
-        'python -m investalyze.backtest run',
+        'python -m investalyze.research backtest, python -m investalyze.research timing',
         'RunId, Date'),
     'backtest_trades': Table(
         BACKTEST,
         'Every fill a stored run made, with the price it paid and what the trade cost.',
-        'python -m investalyze.backtest run',
+        'python -m investalyze.research backtest, python -m investalyze.research timing',
         'RunId, Date, Ticker'),
 }
 

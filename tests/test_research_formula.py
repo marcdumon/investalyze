@@ -170,3 +170,38 @@ def test_a_factor_referencing_another_factor_reads_its_column(panel):
     # AAA and BBB both margin 0.2 on the first date, so they share the averaged rank
     assert formula.evaluate('rank(margin)', enriched).tolist() == pytest.approx(
         [75.0, 75.0, 0.0, 50.0, 100.0, 0.0])
+
+
+# --- point-in-time universe ---
+
+def test_rank_compares_only_names_in_that_dates_universe(panel):
+    marked = panel.assign(in_universe=[True, True, False, True, True, True])
+    result = formula.evaluate('rank(revenue)', marked)
+    assert np.isnan(result.iloc[2])
+    assert result.iloc[:2].tolist() == pytest.approx([0.0, 100.0])
+
+
+def test_lag_still_reads_history_outside_the_universe(panel):
+    """A name outside the universe last month still has a value to lag from."""
+    marked = panel.assign(in_universe=[False, False, False, True, True, True])
+    assert formula.evaluate('lag(revenue, 1)', marked).iloc[3:].tolist() == pytest.approx([10.0, 20.0, 30.0])
+
+
+# --- rolling extremes and window lengths ---
+
+def test_max_is_the_rolling_high_of_the_same_name(panel):
+    result = formula.evaluate('max(revenue, 2)', panel)
+    assert result.tolist()[3:] == pytest.approx([11.0, 25.0, 30.0])
+
+
+def test_min_is_the_rolling_low_of_the_same_name(panel):
+    result = formula.evaluate('min(revenue, 2)', panel)
+    assert result.tolist()[3:] == pytest.approx([10.0, 20.0, 30.0])
+
+
+def test_time_series_windows_lists_every_window():
+    assert sorted(formula.time_series_windows('mean(close, 50) > mean(close, 200) and lag(high, 1) > 0')) == [1, 50, 200]
+
+
+def test_an_expression_without_time_series_functions_has_no_windows():
+    assert formula.time_series_windows('rank(revenue) + zscore(income)') == []

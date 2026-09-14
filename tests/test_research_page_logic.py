@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from investalyze.apps.research import logic
 from investalyze.research import factors
@@ -173,3 +172,44 @@ def test_ic_negative_everywhere_says_the_factor_is_reversed():
 def test_ic_decay_with_no_readable_horizon_says_so():
     decay = pd.DataFrame({'horizon': [5], 'mean_ic': [np.nan]})
     assert 'no readable horizon' in logic.ic_decay_note(decay)
+
+
+# --- library results ---
+
+def test_library_rows_carry_recorded_results():
+    library = {'a': factors.Factor(name='a', expression='revenue')}
+    rows = logic.library_rows(library, {'a': {'t_stat': 2.4, 'sharpe': 0.9}})
+    assert rows[0]['t_stat'] == 2.4 and rows[0]['sharpe'] == 0.9
+
+
+def test_a_factor_never_analysed_has_empty_results():
+    rows = logic.library_rows({'a': factors.Factor(name='a', expression='revenue')}, {})
+    assert rows[0]['t_stat'] is None
+
+
+# --- holdout ---
+
+def _split(inside: float, outside: float) -> pd.DataFrame:
+    return pd.DataFrame([
+        {'period': 'In-sample', 'start': '2016-02-29', 'end': '2021-12-31', 'mean_ic': 0.02, 't_stat': inside, 'n_periods': 70},
+        {'period': 'Out-of-sample', 'start': '2022-01-31', 'end': '2024-12-31', 'mean_ic': 0.01, 't_stat': outside, 'n_periods': 36},
+    ])
+
+
+def test_significant_in_sample_only_reads_orange():
+    text, colour = logic.holdout_note(_split(2.8, 0.6))
+    assert colour == 'orange' and 'in-sample only' in text
+
+
+def test_a_sign_reversal_out_of_sample_reads_red():
+    _text, colour = logic.holdout_note(_split(2.8, -1.1))
+    assert colour == 'red'
+
+
+def test_significant_out_of_sample_reads_green():
+    _text, colour = logic.holdout_note(_split(2.8, 2.3))
+    assert colour == 'green'
+
+
+def test_no_split_means_no_holdout_note():
+    assert logic.holdout_note(pd.DataFrame()) is None

@@ -9,7 +9,8 @@ Three kinds of function, distinguished by what they group over:
 
 - cross-sectional, comparing names to each other on one date: `rank`, `zscore`, `winsorize`,
   `neutralize`
-- time-series, comparing a name to its own past: `lag`, `delta`, `pct_change`, `mean`, `std`
+- time-series, comparing a name to its own past: `lag`, `delta`, `pct_change`, `mean`, `std`, `max`,
+  `min`. Windows count trading days: an expression is evaluated on the daily grid whenever it uses one.
 - elementwise, row by row: `where`, `mask`, `safe_div`, `abs`, `log`, `clip`, `sign`
 
 `mask(x, condition)` restricts a factor to names meeting a condition. It sets excluded names to NaN,
@@ -26,9 +27,11 @@ import numpy as np
 import pandas as pd
 
 TICKER, DATE = 'Ticker', 'Date'
+# boolean column marking the names in the universe on each date, when the panel has one
+IN_UNIVERSE = 'in_universe'
 
 CROSS_SECTIONAL = ('rank', 'zscore', 'winsorize', 'neutralize')
-TIME_SERIES = ('lag', 'delta', 'pct_change', 'mean', 'std')
+TIME_SERIES = ('lag', 'delta', 'pct_change', 'mean', 'std', 'max', 'min')
 ELEMENTWISE = ('where', 'mask', 'safe_div', 'abs', 'log', 'clip', 'sign')
 FUNCTIONS = frozenset(CROSS_SECTIONAL + TIME_SERIES + ELEMENTWISE)
 
@@ -70,6 +73,18 @@ def dependencies(expression: str) -> set[str]:
         if isinstance(node, ast.Name) and node.id not in called:
             names.add(node.id)
     return names
+
+
+def time_series_windows(expression: str) -> list[int]:
+    """The window length of every time-series function call in an expression, in trading days."""
+    windows = []
+    for node in ast.walk(_parse(expression)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in TIME_SERIES:
+            window = 1
+            if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, (int, float)):
+                window = int(node.args[1].value)
+            windows.append(window)
+    return windows
 
 
 def validate(expression: str, known: set[str]) -> None:
@@ -225,6 +240,10 @@ class _Evaluator(ast.NodeVisitor):
         return values.clip(lower=arguments[1], upper=arguments[2])
 
     def _cross_sectional(self, name: str, values: pd.Series, arguments: list, keywords: dict) -> pd.Series:
+        # a cross-section compares the names in that date's universe only; time-series
+        # functions still read a name's full history
+        if IN_UNIVERSE in self.frame.columns:
+            values = values.where(self.frame[IN_UNIVERSE].astype(bool))
         if name == 'rank':
             return _by_date(self.frame, values, _percentile)
         if name == 'zscore':
@@ -247,6 +266,10 @@ class _Evaluator(ast.NodeVisitor):
             return _finite(values / previous.replace(0.0, np.nan) - 1.0)
         if name == 'mean':
             return _by_ticker(self.frame, values, lambda group: group.rolling(periods).mean())
+        if name == 'max':
+            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).max())
+        if name == 'min':
+            return _by_ticker(self.frame, values, lambda group: group.rolling(periods).min())
         return _by_ticker(self.frame, values, lambda group: group.rolling(periods).std())
 
 

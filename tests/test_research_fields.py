@@ -1,7 +1,5 @@
 """Tests for the data field catalog: how statement columns become expression names."""
 
-import pytest
-
 from investalyze.research import fields
 
 SCHEMA = {
@@ -58,3 +56,15 @@ def test_flow_items_are_ttm_and_balance_items_are_mrq():
 def test_the_catalog_reports_which_statement_a_field_came_from():
     catalog = fields.build_catalog(SCHEMA)
     assert {field.statement for field in catalog.values()} == {'income', 'balance', 'cashflow'}
+
+
+def test_a_market_field_is_not_grouped_as_a_statement_field():
+    """Seen on real data: requesting ret_12_1 raised KeyError 'market' before any query ran."""
+    available = fields.build_catalog(SCHEMA) | {'ret_12_1': fields.Field('ret_12_1', 'momentum', fields.MARKET)}
+    grouped = fields._requested_by_statement({'ret_12_1', 'revenue'}, available)
+    assert grouped['income'] == {'Revenue': 'revenue'}
+    assert 'market' not in grouped
+
+
+def test_a_market_field_reports_a_daily_window():
+    assert fields.Field('ret_12_1', 'momentum', fields.MARKET).window == fields.DAILY

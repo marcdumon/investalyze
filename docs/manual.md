@@ -5,12 +5,12 @@ User guide for the `investalyze` repo, built in parts and documented here as eac
 **Part 1, the CLIs**: **ingest** (getting market data into the DB), **cleaning** (persistent
 manual fixes for bad vendor data) and **quality** (anomaly detection over the ingested data).
 
-**Part 2, the apps**: a five-page Dash UI over the same data. See
+**Part 2, the apps**: a six-page Dash UI over the same data. See
 [Apps: the Dash UI](#apps-the-dash-ui), which is also the easier way to drive everything in
 Part 1.
 
-**Part 3, the backtest**: point-in-time factors, factor evaluation and an event-driven engine.
-See [Backtest](#backtest-signals-evaluation-and-simulated-portfolios). For the actual formula
+**Part 3, factors and backtests**: a factor library, IC analysis and an event-driven engine.
+See [Factors and backtests](#factors-and-backtests). For the actual formula
 behind a number (IC, Sharpe, fill price, ...), see
 [`docs/backtest_metrics.md`](backtest_metrics.md) instead of this file.
 
@@ -216,130 +216,120 @@ worst tickers and sample rows. Confirmed data bug → quirks-log entry → `clea
 
 ---
 
-## Backtest: signals, evaluation and simulated portfolios
+## Factors and backtests
 
-The **Backtest** page is the easier way to drive all of this; these are the commands behind it.
+Two pages, one flow. On **Factors** you define a factor, check its diagnostics and run IC analysis,
+which answers whether it predicts. On **Backtest** you trade it, which answers whether it pays after
+costs. **Backtest this factor** on the Factors page opens the Backtest page with the factor selected.
 
 ```bash
-# score every factor against forward returns, over one universe or over everything
-python -m investalyze.backtest evaluate --horizon 21 --universe mid_large_mega_non_fin_realest
+python -m investalyze.research list                                  # the factor library
+python -m investalyze.research fields research                       # search the data fields
+python -m investalyze.research diagnostics momentum_12_1             # coverage, distribution, top and bottom names
+python -m investalyze.research tearsheet momentum_12_1               # IC analysis
+python -m investalyze.research backtest momentum_12_1,earnings_yield \
+    --rebalance Q --quantiles 5 --size 1000 --holdout 2022-01-01       # store a factor portfolio run
+python -m investalyze.research timing new_252d_high --trailing-stop 0.15 \
+    --max-positions 20 --size 500                                      # store a timing rule run
 
-# run a signal through the engine
-python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 --end 2024-12-31
-
-# build the point-in-time factor panel both of those read. Add --build-panel to either command
-# above to have it built first when the stored one does not cover what was asked for
-python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M
-
-# or run a signal fold by fold, out of sample
-python -m investalyze.backtest walkforward --signal factor_composite --start 2014-01-01 \
-    --end 2024-12-31 --train 756 --test 252 --embargo 21
-
-# what signals exist
-python -m investalyze.backtest list
-
-# print what a finished run wrote
 python -m investalyze.backtest report --run-id 8894ca7dc4f0
-
-# throw stored runs away
 python -m investalyze.backtest delete --run-id 8894ca7dc4f0 b9da938b2434
 ```
 
-Settings live in `backtest.toml`: starting cash, benchmark, rebalance frequency, the universe
-rule, the cost model (slippage, commission, market impact, borrow) and the position limits.
-Every key is optional.
+Costs, limits, starting cash and benchmark live in `backtest.toml`. For the formula behind a number,
+see [`docs/backtest_metrics.md`](backtest_metrics.md).
 
-**Read "Delisted companies" below before trusting any number.** No run carries a per-run
-survivorship note any more: `prices` holds no history for names that delisted before this database
-started tracking them, so the note could only ever say the same thing, every time, for every run.
-That gap is real and open; see
-[Delisted companies, and the bias they leave behind](#delisted-companies-and-the-bias-they-leave-behind).
+### The factor library
 
-### Defining your own factors
-
-**Screener page -> "Your factors"** at the top. The panel lists what is defined, and the form below
-adds one, checking the formula as you type and showing the exact TOML it will write. Saving makes the
-factor live in the Screener immediately; giving it values in backtests takes one press of "1. Build
-factor panel" on the Backtest page.
-
-It is stored in `factors.toml` at the repo root, which you can also edit by hand. Either way a
-factor behaves like a built-in: a Screener column, a rank and a composite-score option, a column in
-`factor_panel`, a row in the `evaluate` output, and a name a signal can trade on.
-
-Two kinds share the file.
-
-**Expression** factors combine columns the panel already holds:
+One TOML file per factor under `factors/`, in git:
 
 ```toml
-[factors.cheap_quality]
-expression = '(rank_fcf_yield + rank_roe + rank_op_margin) / 3'
+name = 'momentum_12_1'
+expression = 'ret_12_1'
+description = '12-1 month price momentum: winners keep winning over the next months.'
 higher_is_better = true
-description = 'A name has to be cheap on free cash flow and profitable, not just one of the two.'
+status = 'candidate'
+notes = ''
 ```
 
-Alongside every built-in factor `x` you may use `rank_x`, its percentile from 0 to 100 within that
-date's cross-section, already oriented so 100 is the good end. Ranking before combining is what puts
-factors measured in different units on one scale. `last_close`, `mcap` and `mcap_bn` are available
-too. Arithmetic and comparisons only: a function call is refused when the file is read.
+Status is `candidate`, `accepted` or `rejected`. Rejecting keeps the definition, so a dead end stays
+recorded.
 
-**Ratio** factors read the statements directly, reaching quantities the built-in library does not
-hold:
+Results are cached under `data/cache`, keyed by the factor's fingerprint: a hash of its expression and
+of every factor it references. Changing an expression invalidates its results and those of every
+factor built on it. Changing the description, status or notes keeps them. The cache is safe to delete.
 
-```toml
-[factors.rd_intensity]
-numerator = '-Research & Development'
-denominator = 'Revenue'
-higher_is_better = true
-```
+### Expressions
 
-The statement is inferred from the column name, and a name appearing in two statements is refused as
-ambiguous rather than resolved by guesswork. Income and cashflow terms are summed over the trailing
-four published quarters; balance terms take the latest published quarter. A denominator of zero or
-less yields NaN, matching how every built-in ratio guards its scale term.
+An expression reads data fields, other factors and functions.
 
-SimFin stores expenses as negative numbers, so prefix a term with `-` to read its magnitude:
-`-Research & Development` gives research spend as a positive share of revenue.
+**Statement line items**, named from their headings (`Research & Development` is
+`research_development`). Income and cash flow items are TTM, balance sheet items MRQ, both read
+point-in-time. A heading on two statements has only prefixed names, such as `income_net_income` and
+`cashflow_net_income`.
 
-A new factor adds a column to `factor_panel` rather than needing the table rebuilt.
+**Market data**: `open`, `high`, `low`, `close`, `adj_close`, `volume`, `adv20`, `market_cap`, `ret_1m`, `ret_3m`, `ret_6m`, `ret_12m`,
+`ret_12_1`, `vol_63`, `vol_252`, `beta_252`, `high_52w`, `div_yield`. **Reference**: `sector`,
+`industry`, `name`.
 
-Errors are raised when the file is read, naming the factor and the offending term, so a typo fails
-at startup rather than producing a column of NaN much later. Setting `INVESTALYZE_FACTORS_FILE` to
-another path reads definitions from there; setting it empty leaves the library at its built-in 24,
-which is what the test suite does so nobody's own factors can change what it asserts.
+**Functions**:
 
-### Selecting the stocks a run trades
-
-The **Universe** picker on the Backtest page lists every universe saved from the Screener. Leaving
-it blank uses the whole database.
-
-The two commands treat it differently, on purpose. **Building a panel uses the universe whole**: a
-panel row exists as soon as a ticker has a close, so a name that listed halfway through the range
-belongs in it. **A run keeps only the names priced across its entire range**, capped at Top N and
-ordered by Ranked by, because a run needs one tradable set for its whole span.
-
-That makes a longer range stricter, not looser, which is counterintuitive enough that the card now
-says how much of the universe survives before you press:
-
-| range | of 7 solar names |
+| kind | functions |
 |---|---|
-| 2022 to 2026 | Trades 6, the other 1 was not priced across the whole range |
-| 2016 to 2026 | Trades 4 |
-| 2010 to 2026 | Trades 1 |
-| 2000 to 2026 | None of them traded across this whole range; start later |
+| cross-sectional, within a date's universe | `rank`, `zscore`, `winsorize(x, p)`, `neutralize(x, by=sector)` |
+| time series, per ticker | `lag(x, n)`, `delta(x, n)`, `pct_change(x, n)`, `mean(x, n)`, `std(x, n)`, `max(x, n)`, `min(x, n)` |
+| elementwise | `where(cond, a, b)`, `mask(x, cond)`, `safe_div`, `abs`, `log`, `clip`, `sign` |
 
-Without that, a sixteen-year backtest of a seven-name universe silently becomes a one-stock
-backtest. Refusing outright, the CLI names the earliest start that would keep something: *the
-earliest start that keeps one is 2006-11-17, when FSLR first traded*.
+Comparisons, `and`, `or` and `a if cond else b` work too. Division by zero gives NaN. A comparison gives 1
+or 0, so a factor can be a condition, such as `adj_close >= max(adj_close, 252)`.
 
-The same settings live in `backtest.toml` as defaults for a run started from the command line:
+Time-series windows count trading days. A factor that uses one is computed on every session, starting
+far enough before the first requested date to fill its longest window.
 
-```toml
-[universe]
-name = 'mid_large_mega_non_fin_realest'
-n_top = 300
-rank_by = 'mcap'                          # or 'liquidity', 'ticker'
-require_sector = true
-```
+Use `mask(x, cond)` to restrict a factor to some names: excluded names become NaN and leave the
+ranking. `where(cond, x, 0)` gives them zero instead, which still takes part in every ranking.
+
+### The Factors page
+
+**Diagnostics** run on the 400 most liquid names on each month-end from 2016 to 2024, without saving:
+coverage (names per date with a value), distribution, top and bottom names with their inputs,
+highest correlation with the rest of the library, and rank autocorrelation as a turnover proxy.
+
+**IC analysis** runs a saved factor on the 1,000 most liquid names on each month-end: IC, t-stat and
+hit rate at a 21-day horizon, in-sample against out-of-sample split at 2022-01-01, IC decay at 5, 21, 63
+and 126 days, quintile returns, IC by year, and the number of false positives expected at p<0.05 for
+a library of this size.
+
+The factor library table shows each factor's t-stat, out-of-sample t-stat and Sharpe ratio from its
+latest IC analysis and single-factor backtest.
+
+### The Backtest page
+
+**Factor portfolio**: pick one or more factors from the library. Several factors are combined as the
+average of their percentile ranks, over names with a value for every factor. On each rebalance date
+the universe is the most liquid names by trailing dollar volume known on that date. The portfolio is
+long the top quantile, equal weight capped at `max_weight` per name, decided at the close and filled
+at the next open. A single-factor portfolio holds the names IC analysis puts in the top quantile.
+
+**Timing rule**: each name is entered and exited on its own conditions, all factors from the library.
+A name is entered when its **entry factor** is above zero. It is exited on the first session one of the
+chosen exits applies:
+
+- the entry factor is no longer above zero (on by default),
+- an **exit factor** is above zero,
+- the close falls the **trailing stop** percentage below the highest close since entry.
+
+At least one exit is required. At most **Max positions** names are held, each at `1 / max positions`
+of equity. When more names qualify than there are free positions, the highest **priority factor**
+values go first, or the most liquid names when none is picked. Decisions are made at every close and
+filled at the next open.
+
+The rule trades a saved Screener universe, or when none is picked, the most liquid names by trailing
+dollar volume on each month-end. To change a rule, edit or add its factors on the Factors page.
+
+Both run as a job and are stored in the same run tables. Selecting a stored run shows its equity
+against the benchmark with drawdown, the in-sample and out-of-sample split, its settings (including
+each factor's expression) and its fills.
 
 
 ### Delisted companies, and the bias they leave behind
@@ -377,195 +367,19 @@ close is the honest figure when the reason is unknown: a takeover paid close to 
 already fallen to near nothing. Before this the position stayed frozen at that price to the end of
 the run, untradeable and unusable, with the capital trapped.
 
-
-### Two frequencies, two names
-
-They used to be one setting. They answer different questions and no longer have to agree:
-
-| | means | set on |
-|---|---|---|
-| **Panel cadence** | how often factor values are recomputed | both cards, used only when one would build |
-| **Rebalance** | how often the portfolio trades | the Backtest card |
-
-A session between panel dates reads the most recent one before it, so a monthly panel drives a
-weekly run correctly and the card says the scores repeat between panel dates.
-
-Neither is read from `backtest.toml` any more. That key had exactly one live effect, silently
-choosing the cadence of a panel built from the Research card, which had no such field. A setting
-that changes a result without appearing on the page that asked for it is worse than no setting.
-
-### What the panel can and cannot hold
-
-A factor like `0.5 * rank_roe + 0.5 * rank_roa` is a percentile, so its value depends on which names
-were in the cross-section. That makes it a property of a ticker, a date **and a population**, and
-`factor_panel` is keyed by the first two only. A build over seven solar names wrote those tickers
-ranks against seven peers, into the same column that held ranks against six thousand.
-
-So rank-based factors are not stored. They are computed by whoever reads the panel, over the names
-that reader is working with, which is also the more correct answer: a signal choosing among 500
-names should rank within those 500. Everything else is an absolute quantity and is stored as before.
-
-The columns an earlier build left behind are dropped the next time one runs, since the numbers in
-them are not comparable with each other.
-
-### What a build actually costs
-
-Measured on a 6,465-name database: about 4.5 seconds fixed, plus 0.13 seconds per as-of date. The
-fixed part is six SQL joins over the whole fundamentals history, paid once whatever comes out of
-them, which is why building only the factors a signal uses would save nothing worth having.
-
-So a build computes only the dates not already stored for that version and those names. Refreshing
-2000 to 2026 after a month passes builds one date in about 5 seconds instead of 321 in 46. Two
-things override that: `--rebuild`, and a factor definition edited since the last build, whose stored
-values came from a formula that no longer exists.
-
-```bash
-python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M
-python -m investalyze.backtest factors --start 2015-01-01 --end 2024-12-31 --panel-freq M --rebuild
-```
-
-
-### Two cards, one button each
-
-The page has two cards because there are two jobs, and the factor panel is not one of them:
-
-- **Research factors** scores the library against forward returns. From, To, Universe, Version, IC horizon.
-- **Backtest a strategy** walks one signal through the engine. Signal, From, To, Rebalance, Universe, Top N, Ranked by, Version.
-
-Each card owns its own copy of the fields it shares with the other. Editing the research range
-cannot stale a backtest, and nothing on the page depends on the order you press things in.
-
-`factor_panel` is a cache, not a task. Neither card asks you to build it. Each says under its button
-what pressing it will do:
-
-```
-Scores 29 factors over 6,465 names from the stored panel.
-Runs factor_composite over 7 names in solar_small_mid_large from the stored panel.
-sma_cross reads prices only. Nothing to build.
-```
-
-When the panel cannot answer, the line names what would be built and why:
-
-```
-Builds the restated panel: 321 monthly dates for 7 names in solar_small_mid_large.
-The panel holds nothing for this version and these names yet.
-```
-
-Pressing then does exactly that, in one job and one press. There is no confirmation, because the
-line has already said what will happen. What a press cannot promise is how long a build takes, so
-a **Cancel** appears beside the running job instead.
-
-Two things make a build necessary, and both are detected: dates that were never built, and a factor
-whose formula changed since the build. The second is invisible in the panel rows, so every build
-records a fingerprint of the definitions it used and the card compares against it. The line says
-that pressing is what builds them, because "do not exist yet" otherwise leaves open who is meant to
-act.
-
-A third case is reported but is not a reason to build: a factor with no values **for these names**,
-where the inputs do not exist. None of seven solar companies has ever paid a dividend, so
-`div_growth` is empty for them and no amount of building will produce one. Listing that among the
-reasons to press a button said something untrue, so it is now a caveat and does not hold the card
-up.
-
-A rebalance finer than the panel's own cadence is not a gap. A session between panel dates reads the
-most recent one before it, so a weekly run on a monthly panel works; the card says the scores repeat
-between panel dates rather than asking you to rebuild.
-
-A run the panel genuinely cannot reach is refused rather than traded flat: if fewer than half its
-rebalance dates carry a score, or a factor it needs has no values, it stops and says so.
-
-Nothing is ever built implicitly. The CLI only builds behind `--build-panel`, and the page passes
-that flag only when its line said it would:
-
-```bash
-python -m investalyze.backtest run --signal factor_composite --start 2015-01-01 \
-    --end 2024-12-31 --build-panel
-```
-
-### Reading a factor evaluation
-
-Button 2 scores every factor against forward returns and stores the result under the version,
-universe, horizon and period it ran over, so evaluating on the S&P 500 and then on everything
-leaves two readings rather than one overwriting the other, and so does evaluating the same scope a
-second time over a different date range or `--horizon`. The period stored is the range the panel
-actually had rows for, which can differ from what `--start`/`--end` asked for.
-
-Two pickers on the Factors tab choose what to read: universe, and period. The period picker
-defaults to the newest one stored; clearing it pools every period of that scope together, which is
-worth doing deliberately rather than by default, since two periods that do not even cover the same
-names being averaged into one row says less than either alone. A factor with no dates paired with a
-forward return over the chosen range (too few names, or every value missing) is skipped rather than
-stored; the evaluate log says so per factor.
-
-**IC horizon** is how far forward that scoring looks, in trading sessions: 21 asks "did this factor
-predict the next month," 63 asks about the next quarter. The exact formula behind IC and Mean IC is
-in [`docs/backtest_metrics.md`](backtest_metrics.md#factor-evaluation).
-
-The **IC 5d/21d/63d/126d** columns are the same measurement at four fixed horizons regardless of
-the one Evaluate factors was run at, computed and stored automatically on every run. They answer how
-quickly a factor's edge decays, which is the question behind choosing a **Rebalance** frequency: a
-factor whose IC peaks at 21 days is an argument against rebalancing weekly.
-
-Two figures are stored per score bucket: the mean forward return and the median. They part company
-badly on an unfiltered universe, where a handful of sub-dollar names carry a bucket's mean far from
-what its typical member did. Measured on the whole database, `ret_12_1`'s bottom bucket averaged
-+22.6% while its median was +1.5%, with 11% of the rows under $5. Evaluate on a named universe when
-you want the mean to mean anything. The Mean IC and t columns are rank-based and unaffected.
-
-
-### Throwing an evaluation away
-
-Re-running Evaluate replaces the horizon and period it ran over for that version and universe,
-leaving every other stored period of that same scope untouched. Deleting follows the period shown:
-on the Factors tab, pick the universe, pick a period (or leave it blank to mean every period), and
-press **Delete evaluation**. The confirmation names what goes:
-
-```
-Delete this period of the as reported evaluation stored under solar_small_mid_large?
-
-  28 factors, 2020-01-03 to 2024-12-31
-  8,025 IC rows, 28,437 quantile rows and 112 decay rows
-
-Evaluate factors over the same universe and period rebuilds it.
-```
-
-Leaving the period blank instead deletes the whole version-and-universe scope, every period and
-horizon it holds. That is what clears a scope that should not be there any more, such as a stale
-label from before evaluations recorded the universe they covered.
-
-```bash
-python -m investalyze.backtest delete-evaluation --data-version as_reported --universe unrecorded
-python -m investalyze.backtest delete-evaluation --data-version as_reported --universe solar_small_mid_large \
-    --start 2020-01-03 --end 2024-12-31
-```
-
-`--start`/`--end` match the period's exact stored bounds, the same `StartDate`/`EndDate` stamp the
-Factors tab's period picker offers, not a date range filter.
-
-
 ### Throwing runs away
 
 Tick the runs in the Stored runs table and press **Delete selected**; the header checkbox ticks all
 of them. The confirmation lists each run and what goes with it: its summary row, its equity curve,
-its fills, and the report written under `data/backtests/<run id>/`. Nothing else is touched, so the
-runs left unticked and the factor evaluation stay where they are.
+its fills, and the report written under `data/backtests/<run id>/`. Nothing else is touched.
 
 The whole selection goes in one command, so an unknown run id among good ones still deletes the
 good ones and then says which id was not found.
 
-A run is reproducible: the same signal, dates and universe give the same run id and rebuild it.
+A run is reproducible: the same settings give the same run id and rebuild it. A factor portfolio's
+run id includes each factor's fingerprint, so redefining a factor makes a new run.
 Deleting is for clearing out trial runs, not for protecting a result.
 
-
-### What the pieces do
-
-| Step | Module | Produces |
-|------|--------|----------|
-| Factor panel | `analysis/factors_pit.py` | `factor_panel`, one row per ticker and as-of date |
-| Evaluation | `backtest/evaluation.py` | `factor_ic`, `factor_quantiles` |
-| Weights | `backtest/portfolio.py` | Target weights from a cross-section of scores |
-| Engine | `backtest/engine.py` | `backtest_runs`, `backtest_equity`, `backtest_trades` |
-| Walk-forward | `backtest/walkforward.py` | Per-fold out-of-sample statistics |
 
 ### Point-in-time rules
 
@@ -574,8 +388,8 @@ visible only once its newest filing was published. Publish lag runs a median 43 
 percentile of 397, so quarters do arrive out of order; each window carries the publish date of
 its latest member, which is what holds a window back until all of it was knowable.
 
-`--data-version restated` reads the same rows the screener reads. That is look-ahead for any
-historical date and exists so the two can be compared on the latest one.
+Market data fields read the last session on or before each as-of date. The universe on each date is
+chosen from trailing dollar volume known on that date, never from today's liquidity.
 
 ### Two rules the engine holds to
 
@@ -633,14 +447,9 @@ and a test fails when a table exists in the database without a line here.
 
 | Table | Holds | Written by |
 |---|---|---|
-| `factor_panel` | The precomputed factor table: one row per ticker per as-of date, holding each factor as it was knowable on that date. This is what a cross-sectional signal ranks. Rank-based factors are absent on purpose, since their value depends on which names were in the cross-section. | `python -m investalyze.backtest factors` |
-| `factor_panel_builds` | One row per build of the factor panel: what was asked for, how long it took, and a fingerprint of the factor formulas in force, which is how a redefined factor is noticed. | `python -m investalyze.backtest factors` |
-| `factor_ic` | Information coefficient per date: the rank correlation between a factor and the return that followed it. Averaged, this is the Mean IC column on the Factors tab. | `python -m investalyze.backtest evaluate` |
-| `factor_quantiles` | Forward return of each score bucket per date, as a mean and as a median. The two part company on a universe that was never filtered for price. | `python -m investalyze.backtest evaluate` |
-| `factor_ic_decay` | Mean IC and its t-statistic at a fixed set of forward horizons, one row per horizon: how quickly a factor loses its edge, shown as the Factors tab's IC 5d/21d/63d/126d columns. | `python -m investalyze.backtest evaluate` |
-| `backtest_runs` | One row per stored run: the settings behind it and its headline statistics. | `python -m investalyze.backtest run` |
-| `backtest_equity` | A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it. | `python -m investalyze.backtest run` |
-| `backtest_trades` | Every fill a stored run made, with the price it paid and what the trade cost. | `python -m investalyze.backtest run` |
+| `backtest_runs` | One row per stored run: the settings behind it and its headline statistics. | `python -m investalyze.research backtest`, `python -m investalyze.research timing` |
+| `backtest_equity` | A stored run day by day: equity, gross and net exposure, cash, and the benchmark beside it. | `python -m investalyze.research backtest`, `python -m investalyze.research timing` |
+| `backtest_trades` | Every fill a stored run made, with the price it paid and what the trade cost. | `python -m investalyze.research backtest`, `python -m investalyze.research timing` |
 
 The query box runs on a read-only connection, so DuckDB itself refuses anything that writes:
 `DELETE FROM prices` comes back as *Cannot execute statement of type "DELETE" ... attached in
@@ -652,7 +461,7 @@ read-only mode*. Results stop at 500 rows and a query is interrupted after 20 se
 python -m investalyze.apps          # then open http://127.0.0.1:8050
 ```
 
-One server, five pages, a shared shell with a light/dark toggle in the sidebar. Every page
+One server, six pages, a shared shell with a light/dark toggle in the sidebar. Every page
 reads through a short-lived read-only connection.
 
 DuckDB allows a single writer, so a running job locks the DB. Pages that hit it show a
@@ -662,10 +471,11 @@ jobs started from the UI. Close them first.
 | Page | Path | For |
 |------|------|-----|
 | Control Panel | `/` | Run ingest, housekeeping, quality and cleaning; watch the job log. |
-| Screener | `/screener` | Define your own factors, then filter the universe down to a saved list of tickers. |
+| Screener | `/screener` | Filter the universe down to a saved list of tickers. |
 | Data Quality | `/quality` | Triage anomalies into the quality log or a staged cleaning fix. |
 | Stock | `/ticker` | One ticker in depth: performance, fundamentals, statements, peers, risk. |
-| Backtest | `/backtest` | Research the factor library or backtest one signal, then read what they stored. |
+| Factors | `/factors` | Define factors, run diagnostics and IC analysis. |
+| Backtest | `/backtest` | Backtest factor portfolios and timing rules, and read the stored runs. |
 | Database | `/database` | What every table holds, its columns and first rows, and a read-only query box. |
 
 ---
@@ -706,7 +516,9 @@ Filtering happens in two layers.
 2. **Factor value filters** (the accordion): a min and a max per factor, in the factor's own
    units. Hover a factor name for what it measures and the expression it is computed from.
    Spinner steps and displayed precision are sized per factor, so `interest_coverage` steps by
-   1 while `margin_trend` steps by 0.001. "Clear bounds" blanks all 48 inputs.
+   1 while `margin_trend` steps by 0.001. "Clear bounds" blanks every input. Factors from the factor
+   library appear as their own group, computed at the latest trading session; one named like a
+   built-in factor is left out, and the panel says which.
 
 Ranks are percentiles over the metadata-filtered candidates, so a percentile always means
 "among my current candidates". They drive two things: the Rank display mode, and the composite
