@@ -172,7 +172,7 @@ def trade_weights(con: duckdb.DuckDBPyConnection, market: market_data.MarketData
 def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, portfolio: FactorPortfolio, library: dict,
              cfg: backtest_config.Config | None = None) -> Simulation:
     """Run the top-quantile portfolio through the engine."""
-    cfg = cfg or backtest_config.read()
+    cfg = cfg or backtest_config.read(backtest_config.CONFIG_PATH)
     scores = composite_scores(frame, list(portfolio.names), library)
     tickers = sorted(scores.columns[scores.notna().any()])
     if not tickers:

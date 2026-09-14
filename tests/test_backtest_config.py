@@ -63,3 +63,7 @@ def test_a_partial_file_keeps_the_defaults_for_everything_it_omits(tmp_path: Pat
 def test_the_repo_backtest_toml_reads_cleanly():
     cfg = config.read(Path('backtest.toml'))
     assert cfg.costs.slippage_bps > 0
+
+
+def test_runs_read_the_project_backtest_toml():
+    assert config.CONFIG_PATH.name == 'backtest.toml' and config.CONFIG_PATH.exists()

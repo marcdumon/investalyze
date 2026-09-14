@@ -95,7 +95,7 @@ def _date_fields(prefix: str, start: str, end: str) -> list:
 
 def _factor_panel() -> dmc.Paper:
     """A factor portfolio: the top quantile of factors from the factor library."""
-    cfg = backtest_config.read()
+    cfg = backtest_config.read(backtest_config.CONFIG_PATH)
     costs = cfg.costs
     return dmc.Paper([
         dmc.Group([dmc.Text('Factor portfolio', fw=600, size='sm'),

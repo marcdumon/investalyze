@@ -9,6 +9,10 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from investalyze import paths
+
+CONFIG_PATH = paths.REPO_ROOT / 'backtest.toml'
+
 _DEFAULT_STARTING_CASH = 1_000_000.0
 _DEFAULT_BENCHMARK = '^NDX'  # current to the last price date, unlike ^SPX and ^DJI
 _DEFAULT_LONG_ONLY = True

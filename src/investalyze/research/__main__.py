@@ -151,7 +151,7 @@ def _backtest(library: dict, args: argparse.Namespace) -> None:
         raise SystemExit(str(error)) from None
     names = list(portfolio.names)
     _check_known(names, library)
-    cfg = backtest_config.read()
+    cfg = backtest_config.read(backtest_config.CONFIG_PATH)
     with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
         grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=portfolio.rebalance)
@@ -184,7 +184,7 @@ def _timing(library: dict, args: argparse.Namespace) -> None:
     except ValueError as error:
         raise SystemExit(str(error)) from None
     _check_known(rule.factors, library)
-    cfg = backtest_config.read()
+    cfg = backtest_config.read(backtest_config.CONFIG_PATH)
     with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
         sessions = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=factors_pit.Rebalance.DAILY)

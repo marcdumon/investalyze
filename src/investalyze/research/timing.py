@@ -140,7 +140,7 @@ def _wide(frame: pd.DataFrame, name: str, market: market_data.MarketData) -> pd.
 def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, rule: TimingRule, *, start: str, end: str,
              cfg: backtest_config.Config | None = None) -> factor_backtest.Simulation:
     """Run a timing rule through the engine over `start` to `end`."""
-    cfg = cfg or backtest_config.read()
+    cfg = cfg or backtest_config.read(backtest_config.CONFIG_PATH)
     tickers = sorted(frame.loc[frame[rule.entry_factor].notna(), 'Ticker'].unique())
     if not tickers:
         raise ValueError(f'{rule.entry_factor!r} has no values over this range, so there is nothing to trade')
