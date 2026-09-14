@@ -90,6 +90,8 @@ def _download_file(url: str, headers: dict, dest: Path) -> None:
     try:
         r = requests.get(url, headers=headers, allow_redirects=False, timeout=30)
         if r.status_code in (301, 302, 303, 307, 308):
+            if 'Location' not in r.headers:
+                raise requests.RequestException(f'{r.status_code} redirect without a Location header', response=r)
             download_url, extra = r.headers['Location'], {}
         else:
             r.raise_for_status()
@@ -101,9 +103,8 @@ def _download_file(url: str, headers: dict, dest: Path) -> None:
                     f.write(chunk)
         tmp.rename(dest)
         log.info(f'downloaded {dest.name}')
-    except Exception:
+    finally:
         tmp.unlink(missing_ok=True)
-        raise
 
 
 def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
@@ -119,7 +120,7 @@ def _acquire(raw_dir: Path, settings: dict, api_key: str) -> None:
         log.info(f'downloading {spec.filename}')
         try:
             _download_file(spec.url, headers, dest)
-        except Exception as e:  # one bad file must not abort the rest
+        except (requests.RequestException, OSError) as e:  # one bad file must not abort the rest
             log.error(f'failed {spec.filename}: {e}')
 
 

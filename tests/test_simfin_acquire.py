@@ -1,6 +1,9 @@
 """Tests for SimFin acquire: redirect handling + refresh-by-age orchestration."""
 from pathlib import Path
 
+import pytest
+import requests
+
 from investalyze.ingest.providers.simfin import fundamental_data as provider
 
 
@@ -60,9 +63,17 @@ def test_acquire_downloads_stale_skips_fresh(tmp_path: Path, monkeypatch):
 def test_acquire_continues_after_one_download_error(tmp_path: Path, monkeypatch):
     def flaky(url, headers, dest):
         if 'balance' in dest.name:
-            raise RuntimeError('boom')
+            raise requests.ConnectionError('boom')
         dest.write_bytes(b'z')
     monkeypatch.setattr(provider, '_download_file', flaky)
     monkeypatch.setattr(provider, '_needs_download', lambda dest, days: True)
     provider._acquire(tmp_path, {'refresh_days_fundamentals': 90, 'refresh_days_meta': 30}, 'K')
     assert (tmp_path / 'us-income-annual-full.zip').exists()      # others still written
+
+
+def test_a_redirect_without_a_location_is_a_download_error(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(provider.requests, 'get', lambda url, **kwargs: _Resp(302))
+    dest = tmp_path / 'us-income-annual-full.zip'
+    with pytest.raises(requests.RequestException, match='without a Location'):
+        provider._download_file(_spec_url(), {'Authorization': 'api-key K'}, dest)
+    assert not dest.exists() and not dest.with_suffix('.tmp').exists()
