@@ -107,7 +107,8 @@ def fundamentals_evidence(row: dict, dark: bool) -> list:
     ticker, table = row['Ticker'], row['SrcTable']
     parsed = actions.parse_key(row.get('Key'))
     with storage.connect(read_only=True) as con:
-        statement = con.execute(f'SELECT * FROM {table} WHERE Ticker = ? ORDER BY "Report Date"', [ticker]).df()
+        statement = con.execute(f'SELECT * FROM {table} WHERE Ticker = ? ORDER BY "Report Date", "Fiscal Period", IsRestated',
+                                [ticker]).df()
         cik_row = con.execute('SELECT CIK FROM companies WHERE Ticker = ?', [ticker]).fetchone()
     cik = int(cik_row[0]) if cik_row and cik_row[0] is not None else None
 
