@@ -19,10 +19,13 @@ from dash import Input, Output, State, callback, clientside_callback, ctx, dcc, 
 from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 
+from investalyze.analysis.factors_pit import Rebalance
 from investalyze.apps import components, theming, universes
 from investalyze.apps.backtest import data, logic
 from investalyze.apps.control_panel.jobs import MANAGER
 from investalyze.backtest import config as backtest_config
+from investalyze.research.backtest import REBALANCE_CHOICES, FactorPortfolio
+from investalyze.research.timing import DEFAULT_MAX_POSITIONS, TimingRule
 
 BUSY = 'Database busy: a job is running. Try again once it finishes.'
 EMPTY_RUNS = 'No stored runs yet. Set one up above and press Run backtest.'
@@ -105,9 +108,8 @@ def _factor_panel() -> dmc.Paper:
         html.Div(id='bt-selected-factors', style={'margin': '6px 0'}),
         dmc.Group([
             *_date_fields('bt-fp', '2016-01-31', '2024-12-31'),
-            dmc.Select(id='bt-fp-rebalance', label='Rebalance', value='M', size='xs', w=120,
-                       data=[{'value': key, 'label': label.title()} for key, label in
-                             (('M', 'monthly'), ('Q', 'quarterly'))]),
+            dmc.Select(id='bt-fp-rebalance', label='Rebalance', value=Rebalance.MONTHLY, size='xs', w=120,
+                       data=[{'value': choice, 'label': choice.label.title()} for choice in REBALANCE_CHOICES]),
             dmc.Select(id='bt-fp-quantiles', label='Quantiles', value='5', size='xs', w=100,
                        data=[{'value': str(n), 'label': str(n)} for n in logic.QUANTILE_CHOICES]),
             dmc.Select(id='bt-fp-size', label='Universe size', value='1000', size='xs', w=120,
@@ -331,47 +333,55 @@ def show_job_status(_n: int | None) -> components.Children:
                      color=colour, variant='light')
 
 
-@callback(Output('bt-launch-note', 'children'),
-          Input('bt-btn-factor-run', 'n_clicks'), Input('bt-btn-timing-run', 'n_clicks'),
-          State('bt-factor-library', 'selectedRows'), State('bt-fp-start', 'value'), State('bt-fp-end', 'value'),
-          State('bt-fp-rebalance', 'value'), State('bt-fp-quantiles', 'value'), State('bt-fp-size', 'value'),
-          State('bt-fp-holdout', 'value'),
-          State('bt-tr-entry', 'value'), State('bt-tr-exit', 'value'), State('bt-tr-stop', 'value'),
-          State('bt-tr-exit-on-false', 'checked'), State('bt-tr-max-positions', 'value'), State('bt-tr-priority', 'value'),
-          State('bt-tr-universe', 'value'), State('bt-tr-size', 'value'), State('bt-tr-start', 'value'),
-          State('bt-tr-end', 'value'), State('bt-tr-holdout', 'value'),
-          prevent_initial_call=True)
-def launch(_factor_run: int | None, _timing_run: int | None, selected_factors: list[dict] | dict | None, fp_start: str | None,
-           fp_end: str | None, rebalance: str | None, quantiles: str | None, size: str | None, fp_holdout: str | None,
-           entry: str | None, exit_factor: str | None, stop: float | str | None, exit_on_false: bool,
-           max_positions: float | str | None,
-           priority: str | None, universe: str | None, tr_size: str | None, tr_start: str | None, tr_end: str | None,
-           tr_holdout: str | None) -> components.Children:
-    """Start the pressed card's backtest as a job, or say why it cannot start."""
-    if MANAGER.current is not None:
-        return components.note(JOB_RUNNING, 'yellow')
-    if ctx.triggered_id == 'bt-btn-factor-run':
-        factor_names = _ticked_names(selected_factors)
-        if not factor_names:
-            return components.note('Tick at least one factor in the factor library table.', 'orange')
-        title, argv = logic.factor_portfolio_argv(factor_names, fp_start, fp_end, rebalance or 'M',
-                                                  int(quantiles or 5), int(size or 1000), fp_holdout)
-    else:
-        if not entry:
-            return components.note('Pick an entry factor.', 'orange')
-        stop_percent = float(stop) if stop not in (None, '') else None
-        problem = logic.timing_rule_problem(exit_factor=exit_factor, exit_on_entry_false=bool(exit_on_false),
-                                            trailing_stop_percent=stop_percent)
-        if problem:
-            return components.note(problem, 'orange')
-        title, argv = logic.timing_rule_argv(entry, exit_factor=exit_factor, exit_on_entry_false=bool(exit_on_false),
-                                             trailing_stop_percent=stop_percent, max_positions=int(max_positions or 20),
-                                             priority_factor=priority, universe=universe,
-                                             universe_size=int(tr_size or 500), start=tr_start, end=tr_end,
-                                             holdout=tr_holdout)
+def _start_job(title: str, argv: list[str]) -> components.Children:
+    """Start a backtest job, or say that another job holds the runner."""
     if not MANAGER.start(title, argv):
         return components.note(JOB_RUNNING, 'yellow')
     return None
+
+
+@callback(output=Output('bt-launch-note', 'children'),
+          inputs=dict(_clicks=Input('bt-btn-factor-run', 'n_clicks')),
+          state=dict(selected=State('bt-factor-library', 'selectedRows'),
+                     card=dict(start=State('bt-fp-start', 'value'), end=State('bt-fp-end', 'value'),
+                               rebalance=State('bt-fp-rebalance', 'value'), quantiles=State('bt-fp-quantiles', 'value'),
+                               size=State('bt-fp-size', 'value'), holdout=State('bt-fp-holdout', 'value'))),
+          prevent_initial_call=True)
+def launch_factor_portfolio(_clicks: int | None, selected: list[dict] | dict | None, card: dict) -> components.Children:
+    """Start the factor portfolio backtest the card describes, or say why it cannot start."""
+    if MANAGER.current is not None:
+        return components.note(JOB_RUNNING, 'yellow')
+    try:
+        portfolio = FactorPortfolio(names=tuple(_ticked_names(selected)), n_quantiles=int(card['quantiles'] or 5),
+                                    rebalance=card['rebalance'] or Rebalance.MONTHLY)
+    except ValueError as error:
+        return components.note(str(error), 'orange')
+    return _start_job(*logic.factor_portfolio_argv(portfolio, start=card['start'], end=card['end'],
+                                                   universe_size=int(card['size'] or 1000), holdout=card['holdout']))
+
+
+@callback(output=Output('bt-launch-note', 'children', allow_duplicate=True),
+          inputs=dict(_clicks=Input('bt-btn-timing-run', 'n_clicks')),
+          state=dict(card=dict(entry=State('bt-tr-entry', 'value'), exit=State('bt-tr-exit', 'value'),
+                               stop=State('bt-tr-stop', 'value'), exit_on_false=State('bt-tr-exit-on-false', 'checked'),
+                               max_positions=State('bt-tr-max-positions', 'value'),
+                               priority=State('bt-tr-priority', 'value'), universe=State('bt-tr-universe', 'value'),
+                               size=State('bt-tr-size', 'value'), start=State('bt-tr-start', 'value'),
+                               end=State('bt-tr-end', 'value'), holdout=State('bt-tr-holdout', 'value'))),
+          prevent_initial_call=True)
+def launch_timing_rule(_clicks: int | None, card: dict) -> components.Children:
+    """Start the timing rule backtest the card describes, or say why it cannot start."""
+    if MANAGER.current is not None:
+        return components.note(JOB_RUNNING, 'yellow')
+    try:
+        rule = TimingRule(entry_factor=card['entry'] or '', exit_factor=card['exit'],
+                          exit_on_entry_false=bool(card['exit_on_false']),
+                          trailing_stop=logic.trailing_stop_fraction(card['stop']),
+                          max_positions=int(card['max_positions'] or DEFAULT_MAX_POSITIONS), priority_factor=card['priority'])
+    except ValueError as error:
+        return components.note(str(error), 'orange')
+    return _start_job(*logic.timing_rule_argv(rule, universe=card['universe'], universe_size=int(card['size'] or 500),
+                                              start=card['start'], end=card['end'], holdout=card['holdout']))
 
 
 @callback(Output('bt-cancel-tick', 'data'), Input('bt-btn-cancel', 'n_clicks'), prevent_initial_call=True)

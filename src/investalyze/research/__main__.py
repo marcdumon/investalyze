@@ -10,6 +10,7 @@ recomputed when a factor definition changes.
 
 import argparse
 import sys
+from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -27,7 +28,7 @@ COMMANDS = ('list', 'fields', 'diagnostics', 'tearsheet', 'backtest', 'timing')
 
 def _grid(con: duckdb.DuckDBPyConnection, args: argparse.Namespace) -> pd.DatetimeIndex:
     """The last trading session of each month in the range."""
-    return factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq='M')
+    return factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=factors_pit.Rebalance.MONTHLY)
 
 
 def _panel(con: duckdb.DuckDBPyConnection, name: str, library: dict, args: argparse.Namespace) -> pd.DataFrame:
@@ -100,106 +101,112 @@ def _tearsheet(con: duckdb.DuckDBPyConnection, name: str, library: dict, args: a
         raise SystemExit(f'{name!r} has no values over this range')
     result = tearsheet.tearsheet(con, name, library, frame, horizon=args.horizon, store=cache.Cache(paths.CACHE_DIR),
                                  holdout_start=_holdout(args))
-    summary = result['summary']
+    summary = result.summary
 
-    print(f'=== {name} ===  horizon {result["horizon"]} trading days')
+    print(f'=== {name} ===  horizon {result.horizon} trading days')
     print(f'  IC {summary["oriented_ic"]:+.4f}   t-stat {summary["oriented_t"]:+.2f}   '
           f'hit rate {summary["hit_rate"]:.0%}   {summary["n_periods"]} dates')
     print(f'  cross-section: median {summary["names_median"]:,.0f} names, minimum {summary["names_min"]:,.0f}')
-    print(f'  monotonic quantile returns: {result["monotonic"]}')
-    print(f'  multiple testing: {result["tested"]} factors, '
-          f'~{result["expected_false_positives"]:.1f} expected false positives at p<0.05')
+    print(f'  monotonic quantile returns: {result.monotonic}')
+    print(f'  multiple testing: {result.tested} factors, '
+          f'~{result.expected_false_positives:.1f} expected false positives at p<0.05')
     print('\nIC decay:')
-    print(result['decay'].to_string(index=False))
+    print(result.decay.to_string(index=False))
     print('\nquantile returns:')
-    print(result['quantiles'].to_string(index=False))
-    if not result['split'].empty:
+    print(result.quantiles.to_string(index=False))
+    if not result.split.empty:
         print('\nin-sample and out-of-sample:')
-        print(result['split'].to_string(index=False))
+        print(result.split.to_string(index=False))
     print('\nIC by year:')
-    print(result['by_year'].to_string(index=False))
+    print(result.by_year.to_string(index=False))
 
 
-def _backtest(name_arg: str, library: dict, args: argparse.Namespace) -> None:
-    """Simulate a factor portfolio and store it as a backtest run, with its report."""
-    names = [name.strip() for name in name_arg.split(',') if name.strip()]
+def _check_known(names: list[str], library: dict) -> None:
+    """Stop with a message when any of the names is missing from the factor library."""
     unknown = [name for name in names if name not in library]
     if unknown:
         raise SystemExit(f'no factor named {", ".join(unknown)}; `list` shows the library')
+
+
+def _store(con: duckdb.DuckDBPyConnection, finished: report.BacktestReport) -> Path:
+    """Store a finished run in the run tables and write its report, returning where the report went."""
+    writer.ensure_tables(con)
+    writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(), finished.trade_rows())
+    return report.write_report(finished, paths.DATA_ROOT)
+
+
+def _print_run(finished: report.BacktestReport, periods: pd.DataFrame, simulation: backtest.Simulation, path: Path) -> None:
+    """Print a stored run's report, its periods and where the report was written."""
+    print(finished.render())
+    print('periods:')
+    print(periods.to_string(index=False))
+    print(f'run {finished.run_id} stored; report written to {path}; median {simulation.names_median:,.0f} names held')
+
+
+def _backtest(library: dict, args: argparse.Namespace) -> None:
+    """Simulate a factor portfolio and store it as a backtest run, with its report."""
+    try:
+        portfolio = backtest.FactorPortfolio.from_arguments(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    names = list(portfolio.names)
+    _check_known(names, library)
     cfg = backtest_config.read()
     with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
-        grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=args.rebalance)
+        grid = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=portfolio.rebalance)
         members = universe.liquid_universe(con, grid, size=args.size)
         frame = compute.compute(con, names, library, as_of=grid, members=members)
         missing = [name for name in names if name not in frame.columns]
         if frame.empty or missing:
             raise SystemExit(f'no values over this range for {", ".join(missing or names)}')
 
-        result = backtest.simulate(con, frame, names, library, n_quantiles=args.quantiles, cfg=cfg)
-        params = backtest.run_params(names, library, n_quantiles=args.quantiles, rebalance=args.rebalance,
-                                     universe_size=args.size, start=args.start, end=args.end,
+        simulation = backtest.simulate(con, frame, portfolio, library, cfg=cfg)
+        params = backtest.run_params(portfolio, library, universe_size=args.size, start=args.start, end=args.end,
                                      holdout=args.holdout or None)
-        finished = backtest.build_report(result, params, cfg)
-        writer.ensure_tables(con)
-        writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(), finished.trade_rows())
-        path = report.write_report(finished, paths.DATA_ROOT)
+        finished = backtest.build_report(simulation, portfolio, params, cfg)
+        path = _store(con, finished)
 
-        periods = backtest.period_stats(result['equity'], result['benchmark_equity'], holdout_start=_holdout(args))
-        if len(names) == 1:
-            split = periods.set_index('period')
-            cache.Cache(paths.CACHE_DIR).put_summary(names[0], factors.fingerprint(names[0], library), {
-                'sharpe': result['stats']['sharpe'], 'cagr': result['stats']['cagr'],
-                'oos_sharpe': float(split.loc['Out-of-sample', 'sharpe']) if 'Out-of-sample' in split.index else None,
-            })
-
-    print(finished.render())
-    print('periods:')
-    print(periods.to_string(index=False))
-    print(f'run {finished.run_id} stored; report written to {path}; median {result["names_median"]:,.0f} names held')
+    periods = backtest.period_stats(simulation.equity, simulation.benchmark_equity, holdout_start=_holdout(args))
+    if len(names) == 1:
+        split = periods.set_index('period')
+        cache.Cache(paths.CACHE_DIR).put_summary(names[0], factors.fingerprint(names[0], library), {
+            'sharpe': simulation.stats['sharpe'], 'cagr': simulation.stats['cagr'],
+            'oos_sharpe': float(split.loc['Out-of-sample', 'sharpe']) if 'Out-of-sample' in split.index else None,
+        })
+    _print_run(finished, periods, simulation, path)
 
 
-def _timing(entry_factor: str, library: dict, args: argparse.Namespace) -> None:
+def _timing(library: dict, args: argparse.Namespace) -> None:
     """Simulate a timing rule on the daily grid and store it as a backtest run, with its report."""
-    used = [name for name in (entry_factor, args.exit_factor, args.priority_factor) if name]
-    unknown = [name for name in used if name not in library]
-    if unknown:
-        raise SystemExit(f'no factor named {", ".join(unknown)}; `list` shows the library')
-    trailing_stop = args.trailing_stop or None
+    try:
+        rule = timing.TimingRule.from_arguments(args)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    _check_known(rule.factors, library)
     cfg = backtest_config.read()
     with storage.connect() as con:
         factors.validate_library(library, set(fields.catalog(con)) | set(fields.IDENTITY))
-        sessions = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq='D')
+        sessions = factors_pit.rebalance_dates(con, start=args.start, end=args.end, freq=factors_pit.Rebalance.DAILY)
         if args.universe:
             tickers = saved_universes.load_universe(args.universe)
             members = pd.DataFrame({'Date': sessions[0], 'Ticker': tickers})
         else:
             first = (pd.Timestamp(args.start) - pd.Timedelta(days=40)).date().isoformat()
-            members = universe.liquid_universe(con, factors_pit.rebalance_dates(con, start=first, end=args.end, freq='M'),
-                                               size=args.size)
-        frame = compute.compute(con, used, library, as_of=sessions, members=members)
-        if frame.empty or entry_factor not in frame.columns:
-            raise SystemExit(f'no values over this range for {entry_factor}')
+            month_ends = factors_pit.rebalance_dates(con, start=first, end=args.end, freq=factors_pit.Rebalance.MONTHLY)
+            members = universe.liquid_universe(con, month_ends, size=args.size)
+        frame = compute.compute(con, rule.factors, library, as_of=sessions, members=members)
+        if frame.empty or rule.entry_factor not in frame.columns:
+            raise SystemExit(f'no values over this range for {rule.entry_factor}')
 
-        result = timing.simulate(con, frame, library, entry_factor=entry_factor, exit_factor=args.exit_factor,
-                                 exit_on_entry_false=not args.keep_on_entry_false, trailing_stop=trailing_stop,
-                                 max_positions=args.max_positions, priority_factor=args.priority_factor,
-                                 start=args.start, end=args.end, cfg=cfg)
-        params = timing.run_params(library, entry_factor=entry_factor, exit_factor=args.exit_factor,
-                                   exit_on_entry_false=not args.keep_on_entry_false, trailing_stop=trailing_stop,
-                                   max_positions=args.max_positions, priority_factor=args.priority_factor,
-                                   universe=args.universe, universe_size=args.size, start=args.start, end=args.end,
-                                   holdout=args.holdout or None)
-        finished = timing.build_report(result, params, cfg)
-        writer.ensure_tables(con)
-        writer.replace_run(con, finished.run_id, finished.run_row(), finished.equity_rows(), finished.trade_rows())
-        path = report.write_report(finished, paths.DATA_ROOT)
-        periods = backtest.period_stats(result['equity'], result['benchmark_equity'], holdout_start=_holdout(args))
+        simulation = timing.simulate(con, frame, rule, start=args.start, end=args.end, cfg=cfg)
+        params = timing.run_params(rule, library, universe=args.universe, universe_size=args.size, start=args.start,
+                                   end=args.end, holdout=args.holdout or None)
+        finished = timing.build_report(simulation, rule, params, cfg)
+        path = _store(con, finished)
 
-    print(finished.render())
-    print('periods:')
-    print(periods.to_string(index=False))
-    print(f'run {finished.run_id} stored; report written to {path}; median {result["names_median"]:,.0f} names held')
+    periods = backtest.period_stats(simulation.equity, simulation.benchmark_equity, holdout_start=_holdout(args))
+    _print_run(finished, periods, simulation, path)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -216,7 +223,7 @@ def _parser() -> argparse.ArgumentParser:
                         help='names in the universe on each date, by trailing dollar volume (default: 1000)')
     parser.add_argument('--quantiles', type=int, default=backtest.DEFAULT_QUANTILES,
                         help=f'quantiles the universe is split into; the top one is held (default: {backtest.DEFAULT_QUANTILES})')
-    parser.add_argument('--rebalance', choices=sorted(backtest.REBALANCE), default='M',
+    parser.add_argument('--rebalance', choices=backtest.REBALANCE_CHOICES, default=factors_pit.Rebalance.MONTHLY,
                         help='rebalance at each month-end (M) or quarter-end (Q) session (default: M)')
     parser.add_argument('--exit-factor', help='timing: exit a position on a session where this factor is true')
     parser.add_argument('--keep-on-entry-false', action='store_true',
@@ -243,12 +250,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == 'backtest':
         if not args.name:
             raise SystemExit('backtest needs a factor name, or several separated by commas')
-        _backtest(args.name, library, args)
+        _backtest(library, args)
         return
     if args.command == 'timing':
         if not args.name:
             raise SystemExit('timing needs the entry factor name')
-        _timing(args.name, library, args)
+        _timing(library, args)
         return
 
     with storage.connect(read_only=True) as con:

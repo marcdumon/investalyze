@@ -11,19 +11,86 @@ Decisions are made at each close on the daily grid and filled at the next open b
 costs and limits from `backtest.toml`. Target weights are sent only on sessions where holdings change.
 """
 
+import argparse
+from dataclasses import dataclass
+from typing import Self
+
 import duckdb
 import numpy as np
 import pandas as pd
 
+from investalyze.analysis import factors_pit
 from investalyze.backtest import config as backtest_config
-from investalyze.backtest import engine, performance, report, writer
+from investalyze.backtest import engine, report
 from investalyze.backtest import market as market_data
-from investalyze.backtest.book import Book
 from investalyze.research import backtest as factor_backtest
 from investalyze.research import factors
 
 SIGNAL_KIND = engine.TIMING
 DEFAULT_MAX_POSITIONS = 20
+
+
+@dataclass(frozen=True)
+class TimingRule:
+    """A timing rule: the factors that enter and exit each name, the trailing stop and the position cap."""
+
+    entry_factor: str
+    exit_factor: str | None = None
+    exit_on_entry_false: bool = True
+    trailing_stop: float | None = None
+    max_positions: int = DEFAULT_MAX_POSITIONS
+    priority_factor: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.entry_factor:
+            raise ValueError('Pick an entry factor.')
+        if not (self.exit_on_entry_false or self.exit_factor or self.trailing_stop):
+            raise ValueError('A timing rule needs at least one exit: the entry factor turning false, an exit factor, '
+                             'or a trailing stop.')
+        if self.trailing_stop is not None and not 0 < self.trailing_stop < 1:
+            raise ValueError('The trailing stop is a fraction between 0 and 1.')
+        if self.max_positions < 1:
+            raise ValueError('A timing rule holds at least one position.')
+
+    @property
+    def factors(self) -> list[str]:
+        """The library factors the rule reads: entry, exit and priority."""
+        return [name for name in (self.entry_factor, self.exit_factor, self.priority_factor) if name]
+
+    @property
+    def label(self) -> str:
+        """How a timing run is named in the stored runs table: its entry factor and exits."""
+        exits = []
+        if self.exit_on_entry_false:
+            exits.append('entry false')
+        if self.exit_factor:
+            exits.append(self.exit_factor)
+        parts = [self.entry_factor]
+        if exits:
+            parts.append('exit on ' + ' or '.join(exits))
+        if self.trailing_stop:
+            parts.append(f'trailing stop {self.trailing_stop:.0%}')
+        return ', '.join(parts)
+
+    def arguments(self) -> list[str]:
+        """The `python -m investalyze.research timing` arguments that describe this rule."""
+        arguments = [self.entry_factor, '--max-positions', str(self.max_positions)]
+        if self.exit_factor:
+            arguments += ['--exit-factor', self.exit_factor]
+        if not self.exit_on_entry_false:
+            arguments.append('--keep-on-entry-false')
+        if self.trailing_stop:
+            arguments += ['--trailing-stop', f'{self.trailing_stop:g}']
+        if self.priority_factor:
+            arguments += ['--priority-factor', self.priority_factor]
+        return arguments
+
+    @classmethod
+    def from_arguments(cls, args: argparse.Namespace) -> Self:
+        """The rule a parsed `timing` command describes."""
+        return cls(entry_factor=args.name, exit_factor=args.exit_factor, exit_on_entry_false=not args.keep_on_entry_false,
+                   trailing_stop=args.trailing_stop or None, max_positions=args.max_positions,
+                   priority_factor=args.priority_factor)
 
 
 def holdings(entry: np.ndarray, close: np.ndarray, *, exit_signal: np.ndarray | None, exit_on_entry_false: bool,
@@ -63,22 +130,6 @@ def holdings(entry: np.ndarray, close: np.ndarray, *, exit_signal: np.ndarray | 
     return held_by_session, weights
 
 
-def signal_label(entry_factor: str, *, exit_factor: str | None, exit_on_entry_false: bool,
-                 trailing_stop: float | None) -> str:
-    """How a timing run is named in the stored runs table: its entry factor and exits."""
-    exits = []
-    if exit_on_entry_false:
-        exits.append('entry false')
-    if exit_factor:
-        exits.append(exit_factor)
-    parts = [entry_factor]
-    if exits:
-        parts.append('exit on ' + ' or '.join(exits))
-    if trailing_stop:
-        parts.append(f'trailing stop {trailing_stop:.0%}')
-    return ', '.join(parts)
-
-
 def _wide(frame: pd.DataFrame, name: str, market: market_data.MarketData) -> pd.DataFrame:
     """One factor as a (sessions, tickers) matrix aligned to the run's market data."""
     wide = frame.pivot_table(index='Date', columns='Ticker', values=name, aggfunc='first')
@@ -86,71 +137,45 @@ def _wide(frame: pd.DataFrame, name: str, market: market_data.MarketData) -> pd.
     return wide.reindex(index=market.dates, columns=list(market.tickers))
 
 
-def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, library: dict, *, entry_factor: str, exit_factor: str | None,
-             exit_on_entry_false: bool, trailing_stop: float | None, max_positions: int, priority_factor: str | None,
-             start: str, end: str, cfg: backtest_config.Config | None = None) -> dict:
-    """Run a timing rule through the engine over `start` to `end` and return the book's curves, fills and stats."""
+def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, rule: TimingRule, *, start: str, end: str,
+             cfg: backtest_config.Config | None = None) -> factor_backtest.Simulation:
+    """Run a timing rule through the engine over `start` to `end`."""
     cfg = cfg or backtest_config.read()
-    if not (exit_on_entry_false or exit_factor or trailing_stop):
-        raise ValueError('a timing rule needs at least one exit: entry false, an exit factor, or a trailing stop')
-    tickers = sorted(frame.loc[frame[entry_factor].notna(), 'Ticker'].unique())
+    tickers = sorted(frame.loc[frame[rule.entry_factor].notna(), 'Ticker'].unique())
     if not tickers:
-        raise ValueError(f'{entry_factor!r} has no values over this range, so there is nothing to trade')
+        raise ValueError(f'{rule.entry_factor!r} has no values over this range, so there is nothing to trade')
     market = market_data.build_market(con, tickers, start=start, end=end, exclude_checks=cfg.exclude_checks)
-    entry = (_wide(frame, entry_factor, market).fillna(0) > 0).to_numpy()
-    exit_signal = (_wide(frame, exit_factor, market).fillna(0) > 0).to_numpy() if exit_factor else None
-    priority = _wide(frame, priority_factor, market).to_numpy() if priority_factor else market.adv.astype(float)
+    entry = (_wide(frame, rule.entry_factor, market).fillna(0) > 0).to_numpy()
+    exit_signal = (_wide(frame, rule.exit_factor, market).fillna(0) > 0).to_numpy() if rule.exit_factor else None
+    if rule.priority_factor:
+        priority = _wide(frame, rule.priority_factor, market).to_numpy()
+    else:
+        priority = market.adv.astype(float)
     close = np.where(market.tradable, market.close, np.nan)
-    held, weights = holdings(entry, close, exit_signal=exit_signal, exit_on_entry_false=exit_on_entry_false,
-                             trailing_stop=trailing_stop, max_positions=max_positions, priority=priority)
-    scheduled = {session for session in range(len(market.dates)) if not np.isnan(weights[session]).all()}
-
-    def step(session: int, book: Book) -> engine.Decision:
-        """Send the target weights on the sessions where holdings change, and hold otherwise."""
-        if session not in scheduled:
-            return engine.HOLD
-        return engine.Decision(targets=weights[session], orders=None)
-
-    book = engine.run_backtest(market, step, starting_cash=cfg.starting_cash, costs=cfg.costs, limits=cfg.limits)
-    equity = pd.Series(book.equity, index=market.dates)
-    gross = pd.Series(book.gross, index=market.dates)
-    net = pd.Series(book.net, index=market.dates)
-    fills = book.blotter()
-    bench = factor_backtest.benchmark_curve(con, cfg.benchmark, market.dates, cfg.starting_cash)
-    stats = performance.summary(equity, fills, bench.pct_change() if bench is not None else None)
-    return {'equity': equity, 'gross': gross, 'net': net, 'fills': fills, 'benchmark_equity': bench, 'stats': stats,
-            'tickers': list(market.tickers), 'names_median': float(np.median(held.sum(axis=1)))}
+    held, weights = holdings(entry, close, exit_signal=exit_signal, exit_on_entry_false=rule.exit_on_entry_false,
+                             trailing_stop=rule.trailing_stop, max_positions=rule.max_positions, priority=priority)
+    return factor_backtest.trade_weights(con, market, weights, cfg, names_median=float(np.median(held.sum(axis=1))))
 
 
-def run_params(library: dict, *, entry_factor: str, exit_factor: str | None, exit_on_entry_false: bool,
-               trailing_stop: float | None, max_positions: int, priority_factor: str | None, universe: str | None,
-               universe_size: int, start: str, end: str, holdout: str | None) -> dict:
+def run_params(rule: TimingRule, library: dict, *, universe: str | None, universe_size: int, start: str, end: str,
+               holdout: str | None) -> dict:
     """The settings of a timing run, including each factor's expression and fingerprint."""
-    used = [name for name in (entry_factor, exit_factor, priority_factor) if name]
-    return {'entry_factor': entry_factor, 'exit_factor': exit_factor, 'exit_on_entry_false': exit_on_entry_false,
-            'trailing_stop': trailing_stop, 'max_positions': max_positions, 'priority_factor': priority_factor,
+    return {'entry_factor': rule.entry_factor, 'exit_factor': rule.exit_factor,
+            'exit_on_entry_false': rule.exit_on_entry_false, 'trailing_stop': rule.trailing_stop,
+            'max_positions': rule.max_positions, 'priority_factor': rule.priority_factor,
             'universe': universe, 'universe_size': None if universe else universe_size,
-            'start': start, 'end': end, 'holdout': holdout, 'rebalance': 'D',
-            'expressions': {name: library[name].expression for name in used},
-            'fingerprints': {name: factors.fingerprint(name, library) for name in used}}
+            'start': start, 'end': end, 'holdout': holdout, 'rebalance': factors_pit.Rebalance.DAILY,
+            'expressions': {name: library[name].expression for name in rule.factors},
+            'fingerprints': {name: factors.fingerprint(name, library) for name in rule.factors}}
 
 
 def run_id(params: dict, cfg: backtest_config.Config) -> str:
     """Stable run id over the factor fingerprints and every setting that changes the result."""
-    return writer.run_id({'signal': 'timing_rule', 'params': {k: v for k, v in params.items() if k != 'expressions'},
-                          'costs': vars(cfg.costs), 'limits': vars(cfg.limits), 'starting_cash': cfg.starting_cash,
-                          'benchmark': cfg.benchmark, 'exclude_checks': cfg.exclude_checks})
+    return factor_backtest.run_id(params, cfg, signal='timing_rule')
 
 
-def build_report(result: dict, params: dict, cfg: backtest_config.Config) -> report.BacktestReport:
+def build_report(simulation: factor_backtest.Simulation, rule: TimingRule, params: dict,
+                 cfg: backtest_config.Config) -> report.BacktestReport:
     """The stored-run report for a simulated timing rule."""
-    equity = result['equity']
-    label = signal_label(params['entry_factor'], exit_factor=params['exit_factor'],
-                         exit_on_entry_false=params['exit_on_entry_false'], trailing_stop=params['trailing_stop'])
-    return report.BacktestReport(
-        run_id=run_id(params, cfg), signal=label, kind=SIGNAL_KIND, config=cfg, params=params,
-        start=equity.index[0], end=equity.index[-1], tickers=result['tickers'], benchmark=cfg.benchmark, caveats=[],
-        stats=result['stats'], equity=equity, gross=result['gross'], net=result['net'], cash=equity - result['net'],
-        fills=result['fills'], benchmark_equity=result['benchmark_equity'],
-        exposure=performance.exposures(result['gross'], result['net'], equity),
-    )
+    return factor_backtest.stored_report(simulation, params, cfg, run_id=run_id(params, cfg), label=rule.label,
+                                         kind=SIGNAL_KIND)

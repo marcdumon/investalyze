@@ -6,6 +6,7 @@ one function in a check module plus a `CHECKS` line.
 """
 
 from collections.abc import Callable
+from enum import StrEnum
 
 import duckdb
 import pandas as pd
@@ -21,25 +22,33 @@ from investalyze.quality import (
 
 CheckFn = Callable[[duckdb.DuckDBPyConnection], pd.DataFrame]
 
-# name -> (severity, check function); 'error' = hard invariant broken, 'warn' = tunable threshold exceeded
-CHECKS: dict[str, tuple[str, CheckFn]] = {
-    'nonpositive_price': ('error', prices_ohlc.nonpositive_price),
-    'ohlc_inconsistent': ('error', prices_ohlc.ohlc_inconsistent),
-    'negative_volume': ('error', prices_ohlc.negative_volume),
-    'bond_yield_bound': ('warn', prices_ohlc.bond_yield_bound),
-    'extreme_return': ('warn', prices_series.extreme_return),
-    'stale_run': ('warn', prices_series.stale_run),
-    'date_gap': ('warn', prices_series.date_gap),
-    'nonpositive_dividend': ('error', corporate_actions.nonpositive_dividend),
-    'oversized_dividend': ('warn', corporate_actions.oversized_dividend),
-    'invalid_split_ratio': ('error', corporate_actions.invalid_split_ratio),
-    'balance_identity': ('warn', fundamentals_identities.balance_identity),
-    'balance_subtotals': ('warn', fundamentals_identities.balance_subtotals),
-    'income_chain': ('warn', fundamentals_identities.income_chain),
-    'cashflow_identity': ('warn', fundamentals_identities.cashflow_identity),
-    'hard_invariants': ('error', fundamentals_sanity.hard_invariants),
-    'negative_revenue': ('warn', fundamentals_sanity.negative_revenue),
-    'quarters_vs_fy': ('warn', fundamentals_qsum.quarters_vs_fy),
+
+class Severity(StrEnum):
+    """How serious a finding is: a broken hard invariant, or a tunable threshold exceeded."""
+
+    ERROR = 'error'
+    WARN = 'warn'
+
+
+# name -> (severity, check function)
+CHECKS: dict[str, tuple[Severity, CheckFn]] = {
+    'nonpositive_price': (Severity.ERROR, prices_ohlc.nonpositive_price),
+    'ohlc_inconsistent': (Severity.ERROR, prices_ohlc.ohlc_inconsistent),
+    'negative_volume': (Severity.ERROR, prices_ohlc.negative_volume),
+    'bond_yield_bound': (Severity.WARN, prices_ohlc.bond_yield_bound),
+    'extreme_return': (Severity.WARN, prices_series.extreme_return),
+    'stale_run': (Severity.WARN, prices_series.stale_run),
+    'date_gap': (Severity.WARN, prices_series.date_gap),
+    'nonpositive_dividend': (Severity.ERROR, corporate_actions.nonpositive_dividend),
+    'oversized_dividend': (Severity.WARN, corporate_actions.oversized_dividend),
+    'invalid_split_ratio': (Severity.ERROR, corporate_actions.invalid_split_ratio),
+    'balance_identity': (Severity.WARN, fundamentals_identities.balance_identity),
+    'balance_subtotals': (Severity.WARN, fundamentals_identities.balance_subtotals),
+    'income_chain': (Severity.WARN, fundamentals_identities.income_chain),
+    'cashflow_identity': (Severity.WARN, fundamentals_identities.cashflow_identity),
+    'hard_invariants': (Severity.ERROR, fundamentals_sanity.hard_invariants),
+    'negative_revenue': (Severity.WARN, fundamentals_sanity.negative_revenue),
+    'quarters_vs_fy': (Severity.WARN, fundamentals_qsum.quarters_vs_fy),
 }
 
 # name -> one-line description, shown in `--help`; keys must match CHECKS exactly

@@ -6,6 +6,8 @@ by trailing dollar volume known on that date. Diagnostics use a smaller universe
 which keeps a diagnostics run to a few seconds.
 """
 
+from dataclasses import dataclass
+
 import duckdb
 import pandas as pd
 
@@ -18,6 +20,24 @@ SAMPLE_START, SAMPLE_END = '2016-01-31', '2024-12-31'
 HOLDOUT_START = pd.Timestamp('2022-01-01')
 DIAGNOSTICS_SIZE = 400
 RESEARCH_SIZE = 1000
+
+
+class NoValuesError(ValueError):
+    """Raised when a factor has no values over the sample, so there is nothing to analyse."""
+
+
+@dataclass(frozen=True)
+class Diagnostics:
+    """A factor's diagnostics over the sample: coverage, distribution, extremes, overlap and turnover."""
+
+    coverage: pd.DataFrame
+    distribution: dict
+    top: pd.DataFrame
+    bottom: pd.DataFrame
+    correlations: pd.Series
+    autocorrelation: float
+    universe_size: int
+    dates: int
 
 
 def _store() -> cache.Cache:
@@ -63,7 +83,7 @@ def summaries() -> dict:
 
 def _panel(con: duckdb.DuckDBPyConnection, names: list[str], working: dict, size: int) -> pd.DataFrame:
     """The factor panel over the research period for a point-in-time universe of `size` names."""
-    grid = factors_pit.rebalance_dates(con, start=SAMPLE_START, end=SAMPLE_END, freq='M')
+    grid = factors_pit.rebalance_dates(con, start=SAMPLE_START, end=SAMPLE_END, freq=factors_pit.Rebalance.MONTHLY)
     members = universe.liquid_universe(con, grid, size=size)
     return compute.compute(con, names, working, as_of=grid, members=members)
 
@@ -73,7 +93,7 @@ def _is_saved(name: str, expression: str, working: dict) -> bool:
     return name in working and working[name].expression == expression
 
 
-def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True) -> dict:
+def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True) -> Diagnostics:
     """Compute a factor over the diagnostics universe and return its diagnostics.
 
     The factor does not have to be saved: it is added to a copy of the library for this run only, so
@@ -89,35 +109,32 @@ def run_diagnostics(name: str, expression: str, *, higher_is_better: bool = True
         # every library factor is computed alongside, so correlation covers the whole library
         frame = _panel(con, sorted(working), working, DIAGNOSTICS_SIZE)
         if frame.empty or name not in frame.columns:
-            return {'error': 'No factor values over the sample.'}
+            raise NoValuesError('No factor values over the sample.')
 
         others = [other for other in working if other != name and other in frame.columns]
         coverage = diagnostics.coverage(frame, name)
-        result = {
-            'coverage': coverage,
-            'distribution': diagnostics.distribution(frame[name]),
-            'top_bottom': diagnostics.top_bottom(frame, name, n=8, inputs=sorted(candidate.dependencies)),
-            'correlations': diagnostics.correlations(frame, name, others),
-            'autocorrelation': diagnostics.rank_autocorrelation(frame, name),
-            'sample': {'size': DIAGNOSTICS_SIZE, 'dates': int(frame['Date'].nunique())},
-        }
+        extremes = diagnostics.top_bottom(frame, name, n=8, inputs=sorted(candidate.dependencies))
+        result = Diagnostics(coverage=coverage, distribution=diagnostics.distribution(frame[name]), top=extremes['top'],
+                             bottom=extremes['bottom'], correlations=diagnostics.correlations(frame, name, others),
+                             autocorrelation=diagnostics.rank_autocorrelation(frame, name),
+                             universe_size=DIAGNOSTICS_SIZE, dates=int(frame['Date'].nunique()))
         if _is_saved(name, expression, saved) and not coverage.empty:
             _store().put_summary(name, factors.fingerprint(name, saved), {'coverage': float(coverage.iloc[-1]['share'])})
         return result
 
 
-def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON) -> dict:
+def run_tearsheet(name: str, *, horizon: int = tearsheet.DEFAULT_HORIZON) -> tearsheet.TearSheet:
     """IC analysis for one saved factor over the research universe, using the cache."""
     with storage.connect(read_only=True) as con:
         working = library()
         frame = _panel(con, [name], working, RESEARCH_SIZE)
         if frame.empty or name not in frame.columns:
-            return {'error': 'No factor values, so there is nothing to analyse.'}
+            raise NoValuesError('No factor values, so there is nothing to analyse.')
         store = _store()
         result = tearsheet.tearsheet(con, name, working, frame, horizon=horizon, store=store, holdout_start=HOLDOUT_START)
-        split = result['split'].set_index('period') if not result['split'].empty else pd.DataFrame()
+        split = result.split.set_index('period') if not result.split.empty else pd.DataFrame()
         store.put_summary(name, factors.fingerprint(name, working), {
-            'ic': result['summary']['oriented_ic'], 't_stat': result['summary']['oriented_t'],
+            'ic': result.summary['oriented_ic'], 't_stat': result.summary['oriented_t'],
             'oos_t_stat': float(split.loc['Out-of-sample', 't_stat']) if 'Out-of-sample' in split.index else None,
         })
         return result

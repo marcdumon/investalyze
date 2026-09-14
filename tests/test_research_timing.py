@@ -67,9 +67,43 @@ def test_a_name_that_exits_is_not_re_entered_on_the_same_session():
     assert held[:, 0].tolist() == [True, False]
 
 
-def test_the_signal_label_names_the_entry_and_exits():
-    label = timing.signal_label('new_252d_high', exit_factor=None, exit_on_entry_false=False, trailing_stop=0.15)
-    assert label == 'new_252d_high, trailing stop 15%'
-    label = timing.signal_label('sma_50_above_sma_200', exit_factor='close_above_prior_high', exit_on_entry_false=True,
-                                trailing_stop=None)
-    assert label == 'sma_50_above_sma_200, exit on entry false or close_above_prior_high'
+def test_the_label_names_the_entry_and_exits():
+    rule = timing.TimingRule('new_252d_high', exit_on_entry_false=False, trailing_stop=0.15)
+    assert rule.label == 'new_252d_high, trailing stop 15%'
+    rule = timing.TimingRule('sma_50_above_sma_200', exit_factor='close_above_prior_high')
+    assert rule.label == 'sma_50_above_sma_200, exit on entry false or close_above_prior_high'
+
+
+def test_a_rule_without_any_exit_is_refused():
+    with pytest.raises(ValueError, match='at least one exit'):
+        timing.TimingRule('new_252d_high', exit_on_entry_false=False)
+
+
+def test_a_trailing_stop_must_be_a_fraction_below_one():
+    with pytest.raises(ValueError, match='between 0 and 1'):
+        timing.TimingRule('new_252d_high', trailing_stop=15)
+
+
+def test_a_rule_reads_back_from_the_command_it_writes():
+    from investalyze.research import __main__ as cli
+    rule = timing.TimingRule('new_252d_high', exit_factor='close_above_prior_high', exit_on_entry_false=False,
+                             trailing_stop=0.15, max_positions=12, priority_factor='momentum_12_1')
+    assert timing.TimingRule.from_arguments(cli._parser().parse_args(['timing', *rule.arguments()])) == rule
+
+
+def test_stored_timing_run_ids_are_unchanged():
+    """A re-run of a stored configuration must replace its run, so the id stays what earlier versions made."""
+    from investalyze.backtest import config as backtest_config
+    from investalyze.research import factors
+    library = {'value': factors.Factor(name='value', expression='income_net_income / market_cap'),
+               'new_high': factors.Factor(name='new_high', expression='adj_close >= max(adj_close, 252)'),
+               'breakout': factors.Factor(name='breakout', expression='close > lag(high, 1)')}
+    cfg = backtest_config.read()
+    rule = timing.TimingRule('new_high', exit_factor='breakout', exit_on_entry_false=False, trailing_stop=0.15)
+    params = timing.run_params(rule, library, universe=None, universe_size=500, start='2016-01-01', end='2024-12-31',
+                               holdout=None)
+    assert timing.run_id(params, cfg) == '92d33d31d233'
+    rule = timing.TimingRule('new_high', max_positions=10, priority_factor='value')
+    params = timing.run_params(rule, library, universe='solar', universe_size=500, start='2016-01-01', end='2024-12-31',
+                               holdout='2022-01-01')
+    assert timing.run_id(params, cfg) == 'e078e11b609c'

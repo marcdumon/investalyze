@@ -10,6 +10,8 @@ cross-section each IC was computed on. `expected_false_positives` gives how many
 of this size would pass p<0.05 by chance (multiple testing).
 """
 
+from dataclasses import dataclass
+
 import duckdb
 import numpy as np
 import pandas as pd
@@ -21,6 +23,23 @@ from investalyze.research import cache, factors
 HORIZONS = (5, 21, 63, 126)
 DEFAULT_HORIZON = 21
 DEFAULT_QUANTILES = 5
+
+
+@dataclass(frozen=True)
+class TearSheet:
+    """IC analysis of one factor: IC summary, decay, quantile returns, IC by year, the holdout split, multiple testing."""
+
+    factor: str
+    horizon: int
+    higher_is_better: bool
+    summary: dict
+    decay: pd.DataFrame
+    quantiles: pd.DataFrame
+    by_year: pd.DataFrame
+    split: pd.DataFrame
+    monotonic: bool
+    tested: int
+    expected_false_positives: float
 
 
 def _closes(con: duckdb.DuckDBPyConnection, tickers: list[str], first: pd.Timestamp, last: pd.Timestamp,
@@ -152,22 +171,22 @@ def cached_ic(con: duckdb.DuckDBPyConnection, name: str, frame: pd.DataFrame, *,
 
 
 def tearsheet(con: duckdb.DuckDBPyConnection, name: str, library: dict, frame: pd.DataFrame, *, horizon: int = DEFAULT_HORIZON,
-              store: cache.Cache | None = None, holdout_start: pd.Timestamp | None = None) -> dict:
+              store: cache.Cache | None = None, holdout_start: pd.Timestamp | None = None) -> TearSheet:
     """The full tear sheet for one factor: IC summary, IC decay, quantile returns, multiple testing."""
     fingerprint = factors.fingerprint(name, library) if name in library else ''
     higher = library[name].higher_is_better if name in library else True
     series = cached_ic(con, name, frame, horizon=horizon, store=store, fingerprint=fingerprint)
     quantiles = quantile_returns(con, name, frame, horizon=horizon)
-    return {
-        'factor': name,
-        'horizon': horizon,
-        'higher_is_better': higher,
-        'summary': ic_summary(series, higher_is_better=higher),
-        'decay': ic_decay(con, name, frame, store=store, fingerprint=fingerprint),
-        'quantiles': quantiles,
-        'by_year': ic_by_year(series, higher_is_better=higher),
-        'split': ic_split(series, holdout_start, higher_is_better=higher) if holdout_start is not None else pd.DataFrame(),
-        'monotonic': is_monotonic(quantiles, higher_is_better=higher),
-        'tested': len(library),
-        'expected_false_positives': expected_false_positives(len(library)),
-    }
+    return TearSheet(
+        factor=name,
+        horizon=horizon,
+        higher_is_better=higher,
+        summary=ic_summary(series, higher_is_better=higher),
+        decay=ic_decay(con, name, frame, store=store, fingerprint=fingerprint),
+        quantiles=quantiles,
+        by_year=ic_by_year(series, higher_is_better=higher),
+        split=ic_split(series, holdout_start, higher_is_better=higher) if holdout_start is not None else pd.DataFrame(),
+        monotonic=is_monotonic(quantiles, higher_is_better=higher),
+        tested=len(library),
+        expected_false_positives=expected_false_positives(len(library)),
+    )

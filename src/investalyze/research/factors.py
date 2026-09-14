@@ -15,12 +15,18 @@ It ignores rationale, status and notes, since none of them change a value.
 import hashlib
 import tomllib
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 from investalyze.research import formula
 
-CANDIDATE, ACCEPTED, REJECTED = 'candidate', 'accepted', 'rejected'
-STATUSES = (CANDIDATE, ACCEPTED, REJECTED)
+
+class Status(StrEnum):
+    """Where a factor stands in research, in the order the library lists them."""
+
+    ACCEPTED = 'accepted'
+    CANDIDATE = 'candidate'
+    REJECTED = 'rejected'
 
 
 @dataclass(frozen=True)
@@ -31,14 +37,15 @@ class Factor:
     expression: str
     description: str = ''
     higher_is_better: bool = True
-    status: str = CANDIDATE
+    status: Status = Status.CANDIDATE
     notes: str = ''
 
     def __post_init__(self) -> None:
         if not self.name.isidentifier():
             raise ValueError(f'factor name {self.name!r} must be usable as a column name')
-        if self.status not in STATUSES:
-            raise ValueError(f'factor {self.name!r} has status {self.status!r}; expected one of {", ".join(STATUSES)}')
+        if self.status not in list(Status):
+            raise ValueError(f'factor {self.name!r} has status {self.status!r}; expected one of {", ".join(Status)}')
+        object.__setattr__(self, 'status', Status(self.status))
         if not self.expression.strip():
             raise ValueError(f'factor {self.name!r} has no expression')
 
@@ -61,7 +68,7 @@ def save(factor: Factor, directory: Path) -> Path:
         f'expression = {factor.expression!r}',
         f'description = {factor.description!r}',
         f'higher_is_better = {str(factor.higher_is_better).lower()}',
-        f'status = {factor.status!r}',
+        f'status = {str(factor.status)!r}',
         f'notes = {factor.notes!r}',
     ]
     path = _path_for(factor.name, directory)

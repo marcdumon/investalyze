@@ -14,10 +14,15 @@ Its run id hashes the factor fingerprints with every setting that changes the re
 factor produces a new run rather than overwriting the old one.
 """
 
+import argparse
+from dataclasses import dataclass
+from typing import Self
+
 import duckdb
 import numpy as np
 import pandas as pd
 
+from investalyze.analysis import factors_pit
 from investalyze.backtest import config as backtest_config
 from investalyze.backtest import engine, evaluation, performance, report, writer
 from investalyze.backtest import market as market_data
@@ -26,7 +31,53 @@ from investalyze.research import factors
 
 SIGNAL_KIND = engine.CROSS_SECTIONAL
 DEFAULT_QUANTILES = 5
-REBALANCE = {'M': 'monthly', 'Q': 'quarterly'}
+REBALANCE_CHOICES = (factors_pit.Rebalance.MONTHLY, factors_pit.Rebalance.QUARTERLY)
+
+
+@dataclass(frozen=True)
+class FactorPortfolio:
+    """A factor portfolio: the top quantile of one factor, or of the average rank of several."""
+
+    names: tuple[str, ...]
+    n_quantiles: int = DEFAULT_QUANTILES
+    rebalance: factors_pit.Rebalance = factors_pit.Rebalance.MONTHLY
+
+    def __post_init__(self) -> None:
+        if not self.names:
+            raise ValueError('Tick at least one factor in the factor library table.')
+        if self.n_quantiles < 2:
+            raise ValueError('A factor portfolio needs at least 2 quantiles.')
+        object.__setattr__(self, 'names', tuple(self.names))
+        object.__setattr__(self, 'rebalance', factors_pit.Rebalance(self.rebalance))
+
+    @property
+    def label(self) -> str:
+        """How a run is named in the stored runs table: its factors."""
+        return ' + '.join(self.names)
+
+    def arguments(self) -> list[str]:
+        """The `python -m investalyze.research backtest` arguments that describe this portfolio."""
+        return [','.join(self.names), '--rebalance', str(self.rebalance), '--quantiles', str(self.n_quantiles)]
+
+    @classmethod
+    def from_arguments(cls, args: argparse.Namespace) -> Self:
+        """The portfolio a parsed `backtest` command describes."""
+        names = tuple(name.strip() for name in (args.name or '').split(',') if name.strip())
+        return cls(names=names, n_quantiles=args.quantiles, rebalance=args.rebalance)
+
+
+@dataclass(frozen=True)
+class Simulation:
+    """What a simulated run produced: its curves, fills, headline statistics and the names it traded."""
+
+    equity: pd.Series
+    gross: pd.Series
+    net: pd.Series
+    fills: pd.DataFrame
+    benchmark_equity: pd.Series | None
+    stats: dict
+    tickers: list[str]
+    names_median: float
 
 
 def composite_scores(frame: pd.DataFrame, names: list[str], library: dict) -> pd.DataFrame:
@@ -97,18 +148,9 @@ def period_stats(equity: pd.Series, benchmark: pd.Series | None, *, holdout_star
     return pd.DataFrame(rows)
 
 
-def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, names: list[str], library: dict, *,
-             n_quantiles: int = DEFAULT_QUANTILES, cfg: backtest_config.Config | None = None) -> dict:
-    """Run the top-quantile portfolio through the engine and return the book's curves, fills and stats."""
-    cfg = cfg or backtest_config.read()
-    scores = composite_scores(frame, names, library)
-    tickers = sorted(scores.columns[scores.notna().any()])
-    if not tickers:
-        raise ValueError('no factor values over this range, so there is nothing to trade')
-    start, end = scores.index.min().date().isoformat(), scores.index.max().date().isoformat()
-    market = market_data.build_market(con, tickers, start=start, end=end, exclude_checks=cfg.exclude_checks)
-    weights = target_weights(scores[list(market.tickers)], market.dates, market.tickers, n_quantiles=n_quantiles,
-                             max_weight=cfg.limits.max_weight)
+def trade_weights(con: duckdb.DuckDBPyConnection, market: market_data.MarketData, weights: np.ndarray,
+                  cfg: backtest_config.Config, *, names_median: float) -> Simulation:
+    """Trade target weights through the engine: weights on a session's row are sent, all-NaN rows hold."""
     scheduled = {session for session in range(len(market.dates)) if not np.isnan(weights[session]).all()}
 
     def step(session: int, book: Book) -> engine.Decision:
@@ -119,46 +161,62 @@ def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, names: list[st
 
     book = engine.run_backtest(market, step, starting_cash=cfg.starting_cash, costs=cfg.costs, limits=cfg.limits)
     equity = pd.Series(book.equity, index=market.dates)
-    gross = pd.Series(book.gross, index=market.dates)
-    net = pd.Series(book.net, index=market.dates)
     fills = book.blotter()
     bench = benchmark_curve(con, cfg.benchmark, market.dates, cfg.starting_cash)
-    stats = performance.summary(equity, fills, bench.pct_change() if bench is not None else None)
-    held = (weights > 0).sum(axis=1)
-    return {'market': market, 'equity': equity, 'gross': gross, 'net': net, 'fills': fills,
-            'benchmark_equity': bench, 'stats': stats, 'tickers': list(market.tickers),
-            'names_median': float(np.median(held[sorted(scheduled)])) if scheduled else 0.0}
+    return Simulation(equity=equity, gross=pd.Series(book.gross, index=market.dates),
+                      net=pd.Series(book.net, index=market.dates), fills=fills, benchmark_equity=bench,
+                      stats=performance.summary(equity, fills, bench.pct_change() if bench is not None else None),
+                      tickers=list(market.tickers), names_median=names_median)
 
 
-def run_params(names: list[str], library: dict, *, n_quantiles: int, rebalance: str, universe_size: int,
-               start: str, end: str, holdout: str | None) -> dict:
+def simulate(con: duckdb.DuckDBPyConnection, frame: pd.DataFrame, portfolio: FactorPortfolio, library: dict,
+             cfg: backtest_config.Config | None = None) -> Simulation:
+    """Run the top-quantile portfolio through the engine."""
+    cfg = cfg or backtest_config.read()
+    scores = composite_scores(frame, list(portfolio.names), library)
+    tickers = sorted(scores.columns[scores.notna().any()])
+    if not tickers:
+        raise ValueError('no factor values over this range, so there is nothing to trade')
+    start, end = scores.index.min().date().isoformat(), scores.index.max().date().isoformat()
+    market = market_data.build_market(con, tickers, start=start, end=end, exclude_checks=cfg.exclude_checks)
+    weights = target_weights(scores[list(market.tickers)], market.dates, market.tickers,
+                             n_quantiles=portfolio.n_quantiles, max_weight=cfg.limits.max_weight)
+    rebalances = ~np.isnan(weights).all(axis=1)
+    held = (weights[rebalances] > 0).sum(axis=1)
+    return trade_weights(con, market, weights, cfg, names_median=float(np.median(held)) if held.size else 0.0)
+
+
+def run_params(portfolio: FactorPortfolio, library: dict, *, universe_size: int, start: str, end: str,
+               holdout: str | None) -> dict:
     """The settings of a factor portfolio run, including each factor's expression and fingerprint."""
-    return {'factors': list(names), 'n_quantiles': n_quantiles, 'rebalance': rebalance,
+    names = list(portfolio.names)
+    return {'factors': names, 'n_quantiles': portfolio.n_quantiles, 'rebalance': portfolio.rebalance,
             'universe_size': universe_size, 'start': start, 'end': end, 'holdout': holdout,
             'expressions': {name: library[name].expression for name in names},
             'fingerprints': {name: factors.fingerprint(name, library) for name in names}}
 
 
-def run_id(params: dict, cfg: backtest_config.Config) -> str:
+def run_id(params: dict, cfg: backtest_config.Config, *, signal: str = 'factor_portfolio') -> str:
     """Stable run id over the factor fingerprints and every setting that changes the result."""
-    return writer.run_id({'signal': 'factor_portfolio', 'params': {k: v for k, v in params.items() if k != 'expressions'},
+    return writer.run_id({'signal': signal, 'params': {k: v for k, v in params.items() if k != 'expressions'},
                           'costs': vars(cfg.costs), 'limits': vars(cfg.limits), 'starting_cash': cfg.starting_cash,
                           'benchmark': cfg.benchmark, 'exclude_checks': cfg.exclude_checks})
 
 
-def signal_label(names: list[str]) -> str:
-    """How a run is named in the stored runs table: its factors."""
-    return ' + '.join(names)
-
-
-def build_report(result: dict, params: dict, cfg: backtest_config.Config) -> report.BacktestReport:
-    """The stored-run report for a simulated factor portfolio."""
-    equity = result['equity']
+def stored_report(simulation: Simulation, params: dict, cfg: backtest_config.Config, *, run_id: str, label: str,
+                  kind: str) -> report.BacktestReport:
+    """The stored-run report for a simulated run."""
+    equity = simulation.equity
     return report.BacktestReport(
-        run_id=run_id(params, cfg), signal=signal_label(params['factors']), kind=SIGNAL_KIND, config=cfg,
-        params=params, start=equity.index[0], end=equity.index[-1], tickers=result['tickers'],
-        benchmark=cfg.benchmark, caveats=[], stats=result['stats'], equity=equity,
-        gross=result['gross'], net=result['net'], cash=equity - result['net'], fills=result['fills'],
-        benchmark_equity=result['benchmark_equity'],
-        exposure=performance.exposures(result['gross'], result['net'], equity),
+        run_id=run_id, signal=label, kind=kind, config=cfg, params=params, start=equity.index[0], end=equity.index[-1],
+        tickers=simulation.tickers, benchmark=cfg.benchmark, caveats=[], stats=simulation.stats, equity=equity,
+        gross=simulation.gross, net=simulation.net, cash=equity - simulation.net, fills=simulation.fills,
+        benchmark_equity=simulation.benchmark_equity,
+        exposure=performance.exposures(simulation.gross, simulation.net, equity),
     )
+
+
+def build_report(simulation: Simulation, portfolio: FactorPortfolio, params: dict,
+                 cfg: backtest_config.Config) -> report.BacktestReport:
+    """The stored-run report for a simulated factor portfolio."""
+    return stored_report(simulation, params, cfg, run_id=run_id(params, cfg), label=portfolio.label, kind=SIGNAL_KIND)

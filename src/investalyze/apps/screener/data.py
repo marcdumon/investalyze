@@ -5,12 +5,12 @@ factor library under `factors/`, computed at the latest trading session. A libra
 matches a built-in one is not given a column, since the pool is shared with the Stock page, which reads
 the built-in values under those names; `shadowed_factors` says which ones are left out.
 
-Built once through a short-lived read-only connection and cached at module level, alongside the
-per-factor display scales derived from it; the page's Refresh control calls clear_cache() so the next
-access rebuilds both.
+Built once through a short-lived read-only connection and cached, alongside the per-factor display
+scales derived from it; the page's Refresh control calls clear_cache() so the next access rebuilds both.
 """
 
 import logging
+from functools import cache
 
 import duckdb
 import pandas as pd
@@ -28,18 +28,12 @@ log = logging.getLogger(__name__)
 
 LIBRARY_FAMILY = 'factor library'
 
-_POOL: pd.DataFrame | None = None
-_SCALES: dict[str, FactorScale] | None = None
-_LIBRARY: dict | None = None
 
-
+@cache
 def library() -> dict:
     """The factor library factors the Screener shows: every stored factor not named like a built-in one."""
-    global _LIBRARY
-    if _LIBRARY is None:
-        stored = factor_library.load(paths.FACTORS_DIR)
-        _LIBRARY = {name: factor for name, factor in stored.items() if name not in builtin.FACTORS}
-    return _LIBRARY
+    stored = factor_library.load(paths.FACTORS_DIR)
+    return {name: factor for name, factor in stored.items() if name not in builtin.FACTORS}
 
 
 def shadowed_factors() -> list[str]:
@@ -100,31 +94,26 @@ def _merge_pool(metrics_df: pd.DataFrame, factors_df: pd.DataFrame, library_df: 
     return pool
 
 
+@cache
 def get_pool() -> pd.DataFrame:
-    """Return the cached pool frame, building it once via a short-lived read-only connection."""
-    global _POOL
-    if _POOL is None:
-        with storage.connect(read_only=True) as con:
-            _POOL = _merge_pool(metrics.build_metrics(con), builtin.build_factors(con), _library_values(con, library()))
-    return _POOL
+    """The pool frame, built once through a short-lived read-only connection."""
+    with storage.connect(read_only=True) as con:
+        return _merge_pool(metrics.build_metrics(con), builtin.build_factors(con), _library_values(con, library()))
 
 
+@cache
 def get_scales() -> dict[str, FactorScale]:
     """Return the cached per-factor spinner step and display precision, derived once from the pool.
 
     Every quantile pair behind them scans the whole pool, which is wasted work on each page visit
     and each grid rebuild when the pool itself has not changed.
     """
-    global _SCALES
-    if _SCALES is None:
-        pool = get_pool()
-        _SCALES = {factor: factor_scale(pool[factor]) for factor in factor_names()}
-    return _SCALES
+    pool = get_pool()
+    return {factor: factor_scale(pool[factor]) for factor in factor_names()}
 
 
 def clear_cache() -> None:
     """Drop the cached pool, factor scales and factor library so the next access rebuilds them."""
-    global _POOL, _SCALES, _LIBRARY
-    _POOL = None
-    _SCALES = None
-    _LIBRARY = None
+    library.cache_clear()
+    get_pool.cache_clear()
+    get_scales.cache_clear()

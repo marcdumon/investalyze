@@ -90,8 +90,8 @@ def _definition_panel() -> dmc.Paper:
         dmc.Title('Factor definition', order=5),
         dmc.Group(grow=True, children=[
             dmc.TextInput(id='rs-name', label='Name', placeholder='op_margin_sector_neutral_rd'),
-            dmc.Select(id='rs-status', label='Status', value=factors.CANDIDATE,
-                       data=[{'value': status, 'label': status.title()} for status in factors.STATUSES]),
+            dmc.Select(id='rs-status', label='Status', value=factors.Status.CANDIDATE,
+                       data=[{'value': status, 'label': status.title()} for status in factors.Status]),
             dmc.Select(id='rs-direction', label='Direction', value='higher',
                        data=[{'value': 'higher', 'label': 'Higher is better'},
                              {'value': 'lower', 'label': 'Lower is better'}]),
@@ -211,7 +211,7 @@ def load_fields(search: str | None) -> tuple:
 def fill_definition(selected: list[dict] | dict | None, _new: int | None) -> tuple:
     """Load the selected factor into the definition form, or clear it for a new factor."""
     if ctx.triggered_id == 'rs-btn-new':
-        return '', '', '', 'higher', factors.CANDIDATE, NO_SELECTION
+        return '', '', '', 'higher', factors.Status.CANDIDATE, NO_SELECTION
     if not selected:
         raise PreventUpdate
     row = selected[0]
@@ -248,31 +248,30 @@ def show_diagnostics(_clicks: int | None, name: str | None, expression: str | No
         raise PreventUpdate
     try:
         result = data.run_diagnostics(name, expression, higher_is_better=direction == 'higher')
+    except data.NoValuesError as error:
+        return _empty_outputs(components.note(str(error), 'orange'), dark)
     except (ValueError, duckdb.Error) as error:
         return _empty_outputs(components.note(str(error), 'red'), dark)
-    if 'error' in result:
-        return _empty_outputs(components.note(result['error'], 'orange'), dark)
 
-    top, bottom = result['top_bottom']['top'], result['top_bottom']['bottom']
     columns = []
-    for column in top.columns:
+    for column in result.top.columns:
         definition = {'field': column, 'flex': 1}
         if column not in TEXT_COLUMNS:
             definition['valueFormatter'] = {'function': 'd3.format(",.3f")(params.value)'}
         columns.append(definition)
-    return (_diagnostics_notes(result), _coverage_figure(result['coverage'], dark),
-            logic.distribution_rows(result['distribution']),
-            top.to_dict('records'), columns, bottom.to_dict('records'), columns)
+    return (_diagnostics_notes(result), _coverage_figure(result.coverage, dark),
+            logic.distribution_rows(result.distribution),
+            result.top.to_dict('records'), columns, result.bottom.to_dict('records'), columns)
 
 
-def _diagnostics_notes(result: dict) -> dmc.Stack:
-    text, colour = logic.coverage_note(result['coverage'])
-    sample = result['sample']
+def _diagnostics_notes(result: data.Diagnostics) -> dmc.Stack:
+    """The notes above the diagnostics tables: coverage, overlap, universe and turnover."""
+    text, colour = logic.coverage_note(result.coverage)
     notes = [components.note(text, colour),
-             components.note(f'Universe: top {sample["size"]:,} names by trailing dollar volume on each of '
-                             f'{sample["dates"]} month-ends.'),
-             components.note(logic.turnover_note(result['autocorrelation']))]
-    found = logic.correlation_note(result['correlations'])
+             components.note(f'Universe: top {result.universe_size:,} names by trailing dollar volume on each of '
+                             f'{result.dates} month-ends.'),
+             components.note(logic.turnover_note(result.autocorrelation))]
+    found = logic.correlation_note(result.correlations)
     if found is not None:
         notes.insert(1, components.note(found[0], found[1]))
     return dmc.Stack(gap=4, children=notes)
@@ -300,21 +299,21 @@ def show_ic_analysis(_clicks: int | None, name: str | None) -> tuple:
         return components.note('Save the factor before running IC analysis.', 'orange'), [], [], []
     try:
         result = data.run_tearsheet(name)
+    except data.NoValuesError as error:
+        return components.note(str(error), 'orange'), [], [], []
     except (ValueError, duckdb.Error) as error:
         return components.note(str(error), 'red'), [], [], []
-    if 'error' in result:
-        return components.note(result['error'], 'orange'), [], [], []
 
     text, colour = logic.ic_note(result)
     notes = [components.note(text, colour)]
-    holdout = logic.holdout_note(result['split'])
+    holdout = logic.holdout_note(result.split)
     if holdout is not None:
         notes.append(components.note(holdout[0], holdout[1]))
-    notes += [components.note(logic.ic_decay_note(result['decay'], higher_is_better=result['higher_is_better'])),
+    notes += [components.note(logic.ic_decay_note(result.decay, higher_is_better=result.higher_is_better)),
               components.note(f'Universe: top {data.RESEARCH_SIZE:,} names by trailing dollar volume on each month-end.'),
               components.note(logic.multiple_testing_note(result))]
-    return (dmc.Stack(gap=4, children=notes), result['decay'].to_dict('records'),
-            result['quantiles'].to_dict('records'), result['by_year'].to_dict('records'))
+    return (dmc.Stack(gap=4, children=notes), result.decay.to_dict('records'),
+            result.quantiles.to_dict('records'), result.by_year.to_dict('records'))
 
 
 @callback(Output('rs-backtest-link', 'href'), Input('rs-name', 'value'))

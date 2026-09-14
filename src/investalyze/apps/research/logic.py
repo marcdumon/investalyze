@@ -6,7 +6,8 @@ Pure functions, no database and no Dash, so every threshold and message is testa
 import numpy as np
 import pandas as pd
 
-from investalyze.research import formula
+from investalyze.research import factors, formula
+from investalyze.research.tearsheet import TearSheet
 
 # at or above this absolute correlation a new factor is redundant with an existing one
 REDUNDANT_CORRELATION = 0.9
@@ -37,7 +38,7 @@ def validate_expression(expression: str, known: set) -> tuple[bool, str]:
 
 def library_rows(library: dict, summaries: dict | None = None) -> list[dict]:
     """One row per factor with its recorded results: accepted first, then candidates, then rejected."""
-    order = {'accepted': 0, 'candidate': 1, 'rejected': 2}
+    order = {status: position for position, status in enumerate(factors.Status)}
     summaries = summaries or {}
     rows = []
     for name in sorted(library):
@@ -48,7 +49,7 @@ def library_rows(library: dict, summaries: dict | None = None) -> list[dict]:
                      'expression': factor.expression, 'coverage': recorded.get('coverage'),
                      't_stat': recorded.get('t_stat'), 'oos_t_stat': recorded.get('oos_t_stat'),
                      'sharpe': recorded.get('sharpe'), 'oos_sharpe': recorded.get('oos_sharpe'),
-                     '_order': order.get(factor.status, 3)})
+                     '_order': order[factor.status]})
     rows.sort(key=lambda row: (row['_order'], row['name']))
     for row in rows:
         row.pop('_order')
@@ -114,9 +115,9 @@ def distribution_rows(summary: dict) -> list[dict]:
     return rows
 
 
-def ic_note(result: dict) -> tuple[str, str]:
+def ic_note(result: TearSheet) -> tuple[str, str]:
     """The IC summary line, and the alert colour."""
-    summary = result['summary']
+    summary = result.summary
     t_stat = summary.get('oriented_t', np.nan)
     names = summary.get('names_median', np.nan)
     if t_stat != t_stat:
@@ -127,15 +128,15 @@ def ic_note(result: dict) -> tuple[str, str]:
         text += f', median {names:,.0f} names'
     if abs(t_stat) < SIGNIFICANT_T:
         return text + '. Not significant (|t| < 2).', 'gray'
-    if not result.get('monotonic'):
+    if not result.monotonic:
         return text + '. Significant, but quantile returns are not monotonic.', 'orange'
     return text + '. Significant, with monotonic quantile returns.', 'green'
 
 
-def multiple_testing_note(result: dict) -> str:
+def multiple_testing_note(result: TearSheet) -> str:
     """Expected false positives for the size of the factor library."""
-    return (f'Multiple testing: {result["tested"]} factors tested, about '
-            f'{result["expected_false_positives"]:.1f} expected false positives at p<0.05.')
+    return (f'Multiple testing: {result.tested} factors tested, about '
+            f'{result.expected_false_positives:.1f} expected false positives at p<0.05.')
 
 
 def ic_decay_note(decay: pd.DataFrame, *, higher_is_better: bool = True) -> str:

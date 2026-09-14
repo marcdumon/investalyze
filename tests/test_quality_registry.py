@@ -71,7 +71,7 @@ def test_registry_lists_exactly_the_planned_checks():
 
 def test_registry_severities_are_valid():
     for name, (severity, _) in registry.CHECKS.items():
-        assert severity in ('error', 'warn'), name
+        assert severity in list(registry.Severity), name
 
 
 def test_every_check_has_a_description():

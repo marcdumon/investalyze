@@ -7,6 +7,7 @@ import json
 
 import pandas as pd
 
+from investalyze.analysis import factors_pit
 from investalyze.research import backtest as factor_backtest
 from investalyze.research import timing
 
@@ -52,46 +53,36 @@ def drawdown_from_equity(equity: pd.Series) -> pd.Series:
     return equity / equity.cummax() - 1
 
 
-def factor_portfolio_argv(factor_names: list[str], start: str, end: str, rebalance: str, quantiles: int,
-                          universe_size: int, holdout: str | None) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.research backtest` on one or more factors."""
-    argv = ['-m', 'investalyze.research', 'backtest', ','.join(factor_names), '--start', start, '--end', end,
-            '--rebalance', rebalance, '--quantiles', str(int(quantiles)), '--size', str(int(universe_size)),
-            '--holdout', holdout or '']
-    return f'backtest {factor_backtest.signal_label(factor_names)} ({start} to {end})', argv
+def _scope_arguments(start: str, end: str, universe_size: int, holdout: str | None) -> list[str]:
+    """The date range, universe size and out-of-sample arguments every research run takes."""
+    return ['--start', start, '--end', end, '--size', str(int(universe_size)), '--holdout', holdout or '']
 
 
-def timing_rule_argv(entry_factor: str, *, exit_factor: str | None, exit_on_entry_false: bool,
-                     trailing_stop_percent: float | None, max_positions: int, priority_factor: str | None,
-                     universe: str | None, universe_size: int, start: str, end: str,
+def factor_portfolio_argv(portfolio: factor_backtest.FactorPortfolio, *, start: str, end: str, universe_size: int,
+                          holdout: str | None) -> tuple[str, list[str]]:
+    """Job title and argv for `python -m investalyze.research backtest` on one factor portfolio."""
+    argv = ['-m', 'investalyze.research', 'backtest', *portfolio.arguments(),
+            *_scope_arguments(start, end, universe_size, holdout)]
+    return f'backtest {portfolio.label} ({start} to {end})', argv
+
+
+def timing_rule_argv(rule: timing.TimingRule, *, universe: str | None, universe_size: int, start: str, end: str,
                      holdout: str | None) -> tuple[str, list[str]]:
-    """Argv for `python -m investalyze.research timing` on one timing rule."""
-    argv = ['-m', 'investalyze.research', 'timing', entry_factor, '--start', start, '--end', end,
-            '--max-positions', str(int(max_positions)), '--size', str(int(universe_size)), '--holdout', holdout or '']
-    if exit_factor:
-        argv += ['--exit-factor', exit_factor]
-    if not exit_on_entry_false:
-        argv += ['--keep-on-entry-false']
-    trailing_stop = trailing_stop_percent / 100 if trailing_stop_percent else None
-    if trailing_stop:
-        argv += ['--trailing-stop', f'{trailing_stop:g}']
-    if priority_factor:
-        argv += ['--priority-factor', priority_factor]
+    """Job title and argv for `python -m investalyze.research timing` on one timing rule."""
+    argv = ['-m', 'investalyze.research', 'timing', *rule.arguments(), *_scope_arguments(start, end, universe_size, holdout)]
     if universe:
         argv += ['--universe', universe]
-    label = timing.signal_label(entry_factor, exit_factor=exit_factor, exit_on_entry_false=exit_on_entry_false,
-                                trailing_stop=trailing_stop)
-    return f'backtest {label} ({start} to {end})', argv
+    return f'backtest {rule.label} ({start} to {end})', argv
 
 
-def timing_rule_problem(*, exit_factor: str | None, exit_on_entry_false: bool,
-                        trailing_stop_percent: float | None) -> str | None:
-    """Why a timing rule cannot run, or None when it can."""
-    if not (exit_factor or exit_on_entry_false or trailing_stop_percent):
-        return 'A timing rule needs at least one exit: the entry factor turning false, an exit factor, or a trailing stop.'
-    if trailing_stop_percent is not None and not 0 <= trailing_stop_percent < 100:
-        return 'The trailing stop is a percentage between 0 and 100.'
-    return None
+def trailing_stop_fraction(percent: float | str | None) -> float | None:
+    """The trailing stop typed on the page, in percent, as a fraction; None when it is left blank or zero."""
+    if percent in (None, ''):
+        return None
+    value = float(percent)
+    if not 0 <= value < 100:
+        raise ValueError('The trailing stop is a percentage between 0 and 100.')
+    return value / 100 or None
 
 
 def delete_argv(run_ids: list[str]) -> tuple[str, list[str]]:
@@ -135,7 +126,7 @@ def run_settings_rows(config_json: str | None) -> list[dict]:
         if params.get(key) not in (None, ''):
             value = params[key]
             if key == 'rebalance':
-                value = {'D': 'daily'}.get(value, factor_backtest.REBALANCE.get(value, value))
+                value = factors_pit.Rebalance(value).label
             elif key == 'trailing_stop':
                 value = f'{value:.0%}'
             elif key == 'exit_on_entry_false':

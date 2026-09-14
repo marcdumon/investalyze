@@ -9,6 +9,8 @@ once and stamped with the span over which it was the current one, then a range j
 every as-of date inside that span.
 """
 
+from enum import StrEnum
+
 import duckdb
 import numpy as np
 import pandas as pd
@@ -183,14 +185,28 @@ def identity_panel(con: duckdb.DuckDBPyConnection, *, as_of: pd.DatetimeIndex,
     return _to_float(df, ['last_close'])
 
 
-def rebalance_dates(con: duckdb.DuckDBPyConnection, *, start: str, end: str, freq: str = 'M') -> pd.DatetimeIndex:
+class Rebalance(StrEnum):
+    """How often a run rebalances, as the pandas period code of the sessions it keeps."""
+
+    DAILY = 'D'
+    MONTHLY = 'M'
+    QUARTERLY = 'Q'
+
+    @property
+    def label(self) -> str:
+        """The frequency in words."""
+        return self.name.lower()
+
+
+def rebalance_dates(con: duckdb.DuckDBPyConnection, *, start: str, end: str,
+                    freq: Rebalance = Rebalance.MONTHLY) -> pd.DatetimeIndex:
     """Trading sessions on which a run rebalances: the last session of each period in the range.
 
     Taken from `panels.trading_calendar`, so every returned date is a session the whole universe
     traded on rather than a calendar month end that may fall on a weekend.
     """
     calendar = panels.trading_calendar(con, start=start, end=end)
-    if freq == 'D':
+    if freq == Rebalance.DAILY:
         return calendar
     period = pd.Series(calendar, index=calendar).groupby(calendar.to_period(freq)).max()
     return pd.DatetimeIndex(period.to_numpy(), name='Date')

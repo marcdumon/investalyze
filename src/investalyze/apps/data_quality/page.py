@@ -25,6 +25,7 @@ from investalyze.apps import components
 from investalyze.apps.data_quality import actions, evidence, quality_log, toml_io
 from investalyze.apps.screener.data import get_pool
 from investalyze.cleaning import registry
+from investalyze.quality import registry as quality_registry
 from investalyze.ingest import storage
 
 LOG_PATH = paths.REPO_ROOT / 'quality_log.toml'
@@ -61,7 +62,7 @@ def read_open_anomalies(con: duckdb.DuckDBPyConnection, log_entries: list, check
     if checks:
         clauses.append(f"CheckName IN ({', '.join('?' for _ in checks)})")
         params += checks
-    if severity in ('error', 'warn'):
+    if severity in list(quality_registry.Severity):
         clauses.append('Severity = ?')
         params.append(severity)
     if ticker:
@@ -172,8 +173,8 @@ def layout() -> html.Div:
         dmc.MultiSelect(id='dq-filter-table', data=[], placeholder='tables', clearable=True, size='xs',
                         style={'width': '160px'}),
         dmc.SegmentedControl(id='dq-filter-severity', value='all', size='xs',
-                             data=[{'label': 'All', 'value': 'all'}, {'label': 'Error', 'value': 'error'},
-                                   {'label': 'Warn', 'value': 'warn'}]),
+                             data=[{'label': 'All', 'value': 'all'}]
+                                  + [{'label': level.title(), 'value': level} for level in quality_registry.Severity]),
         dmc.TextInput(id='dq-filter-ticker', placeholder='ticker', size='xs', style={'width': '130px'}),
     ], mb=8, gap=10, wrap='nowrap')
 

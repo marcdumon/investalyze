@@ -5,6 +5,7 @@ import pandas as pd
 
 from investalyze.apps.research import logic
 from investalyze.research import factors
+from investalyze.research.tearsheet import TearSheet
 
 KNOWN = {'revenue', 'income', 'sector'}
 
@@ -29,14 +30,14 @@ def test_an_unknown_name_is_reported_by_name():
 # --- factor library order ---
 
 def test_accepted_factors_come_before_candidates():
-    library = {'b': factors.Factor(name='b', expression='revenue', status=factors.CANDIDATE),
-               'a': factors.Factor(name='a', expression='revenue', status=factors.ACCEPTED)}
+    library = {'b': factors.Factor(name='b', expression='revenue', status=factors.Status.CANDIDATE),
+               'a': factors.Factor(name='a', expression='revenue', status=factors.Status.ACCEPTED)}
     assert [row['name'] for row in logic.library_rows(library)] == ['a', 'b']
 
 
 def test_rejected_factors_come_last():
-    library = {'a': factors.Factor(name='a', expression='revenue', status=factors.REJECTED),
-               'b': factors.Factor(name='b', expression='revenue', status=factors.CANDIDATE)}
+    library = {'a': factors.Factor(name='a', expression='revenue', status=factors.Status.REJECTED),
+               'b': factors.Factor(name='b', expression='revenue', status=factors.Status.CANDIDATE)}
     assert [row['name'] for row in logic.library_rows(library)] == ['b', 'a']
 
 
@@ -109,9 +110,12 @@ def test_low_rank_autocorrelation_warns_about_costs():
 
 # --- IC summary line ---
 
-def _result(t_stat: float, monotonic: bool = True, names: float = 900.0) -> dict:
-    return {'summary': {'oriented_ic': 0.02, 'oriented_t': t_stat, 'n_periods': 84, 'names_median': names},
-            'monotonic': monotonic, 'tested': 12, 'expected_false_positives': 0.6}
+def _result(t_stat: float, monotonic: bool = True, names: float = 900.0) -> TearSheet:
+    empty = pd.DataFrame()
+    return TearSheet(factor='value', horizon=21, higher_is_better=True,
+                     summary={'oriented_ic': 0.02, 'oriented_t': t_stat, 'n_periods': 84, 'names_median': names},
+                     decay=empty, quantiles=empty, by_year=empty, split=empty, monotonic=monotonic, tested=12,
+                     expected_false_positives=0.6)
 
 
 def test_a_low_t_stat_is_not_significant():

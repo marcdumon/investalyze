@@ -10,6 +10,8 @@ import pytest
 from dash.exceptions import PreventUpdate
 
 from investalyze.apps.backtest import logic
+from investalyze.research.backtest import FactorPortfolio
+from investalyze.research.timing import TimingRule
 
 
 def _page():
@@ -38,54 +40,51 @@ def test_drawdown_is_measured_from_the_running_peak():
 # --- job commands ---
 
 def test_a_factor_portfolio_runs_the_research_backtest_command():
-    title, argv = logic.factor_portfolio_argv(['momentum_12_1', 'earnings_yield'], '2016-01-31', '2024-12-31',
-                                              'Q', 5, 1000, '2022-01-01')
-    assert argv == ['-m', 'investalyze.research', 'backtest', 'momentum_12_1,earnings_yield',
-                    '--start', '2016-01-31', '--end', '2024-12-31', '--rebalance', 'Q', '--quantiles', '5',
-                    '--size', '1000', '--holdout', '2022-01-01']
+    portfolio = FactorPortfolio(names=('momentum_12_1', 'earnings_yield'), n_quantiles=5, rebalance='Q')
+    title, argv = logic.factor_portfolio_argv(portfolio, start='2016-01-31', end='2024-12-31', universe_size=1000,
+                                              holdout='2022-01-01')
+    assert argv == ['-m', 'investalyze.research', 'backtest', 'momentum_12_1,earnings_yield', '--rebalance', 'Q',
+                    '--quantiles', '5', '--start', '2016-01-31', '--end', '2024-12-31', '--size', '1000',
+                    '--holdout', '2022-01-01']
     assert 'momentum_12_1 + earnings_yield' in title
 
 
 def test_a_blank_holdout_means_no_out_of_sample_split():
-    _title, argv = logic.factor_portfolio_argv(['value'], '2016-01-31', '2024-12-31', 'M', 5, 1000, None)
+    _title, argv = logic.factor_portfolio_argv(FactorPortfolio(names=('value',)), start='2016-01-31', end='2024-12-31',
+                                               universe_size=1000, holdout=None)
     assert argv[-2:] == ['--holdout', '']
 
 
-def _timing_rule(**overrides) -> tuple[str, list[str]]:
-    settings = dict(exit_factor=None, exit_on_entry_false=True, trailing_stop_percent=15.0, max_positions=20,
-                    priority_factor=None, universe=None, universe_size=500, start='2016-01-01', end='2024-12-31',
-                    holdout='2022-01-01')
-    return logic.timing_rule_argv('new_252d_high', **(settings | overrides))
+def _timing_rule(universe: str | None = None, **overrides) -> tuple[str, list[str]]:
+    rule = TimingRule(**(dict(entry_factor='new_252d_high', trailing_stop=0.15) | overrides))
+    return logic.timing_rule_argv(rule, universe=universe, universe_size=500, start='2016-01-01', end='2024-12-31',
+                                  holdout='2022-01-01')
 
 
 def test_a_timing_rule_runs_the_research_timing_command():
     title, argv = _timing_rule()
-    assert argv == ['-m', 'investalyze.research', 'timing', 'new_252d_high', '--start', '2016-01-01',
-                    '--end', '2024-12-31', '--max-positions', '20', '--size', '500', '--holdout', '2022-01-01',
-                    '--trailing-stop', '0.15']
+    assert argv == ['-m', 'investalyze.research', 'timing', 'new_252d_high', '--max-positions', '20',
+                    '--trailing-stop', '0.15', '--start', '2016-01-01', '--end', '2024-12-31', '--size', '500',
+                    '--holdout', '2022-01-01']
     assert 'new_252d_high, exit on entry false, trailing stop 15%' in title
 
 
 def test_a_timing_rule_passes_its_exit_priority_and_universe():
-    _title, argv = _timing_rule(exit_factor='close_above_prior_high', exit_on_entry_false=False,
-                                trailing_stop_percent=None, priority_factor='momentum_12_1', universe='solar')
-    assert argv[-7:] == ['--exit-factor', 'close_above_prior_high', '--keep-on-entry-false',
-                         '--priority-factor', 'momentum_12_1', '--universe', 'solar']
+    _title, argv = _timing_rule(exit_factor='close_above_prior_high', exit_on_entry_false=False, trailing_stop=None,
+                                priority_factor='momentum_12_1', universe='solar')
+    assert argv[4:10] == ['--max-positions', '20', '--exit-factor', 'close_above_prior_high', '--keep-on-entry-false',
+                          '--priority-factor']
+    assert argv[-2:] == ['--universe', 'solar']
 
 
-def test_a_timing_rule_without_any_exit_is_refused():
-    problem = logic.timing_rule_problem(exit_factor=None, exit_on_entry_false=False, trailing_stop_percent=None)
-    assert 'at least one exit' in problem
+def test_the_trailing_stop_typed_in_percent_becomes_a_fraction():
+    assert logic.trailing_stop_fraction('15') == 0.15
+    assert logic.trailing_stop_fraction(None) is None and logic.trailing_stop_fraction(0) is None
 
 
 def test_a_trailing_stop_of_100_percent_or_more_is_refused():
-    problem = logic.timing_rule_problem(exit_factor=None, exit_on_entry_false=True, trailing_stop_percent=100.0)
-    assert 'between 0 and 100' in problem
-
-
-def test_a_timing_rule_with_an_exit_can_run():
-    assert logic.timing_rule_problem(exit_factor='close_above_prior_high', exit_on_entry_false=False,
-                                     trailing_stop_percent=None) is None
+    with pytest.raises(ValueError, match='between 0 and 100'):
+        logic.trailing_stop_fraction(100)
 
 
 def test_deleting_several_runs_is_one_command():
@@ -225,72 +224,54 @@ def test_the_factors_page_links_to_the_backtest_with_the_factor_selected():
 
 # --- launching ---
 
-def _launch_args(**overrides) -> dict:
-    args = dict(_factor_run=1, _timing_run=None, selected_factors=[{'name': 'value'}], fp_start='2016-01-31',
-                fp_end='2024-12-31', rebalance='M', quantiles='5', size='1000', fp_holdout='2022-01-01',
-                entry='new_252d_high', exit_factor=None, stop=15, exit_on_false=True, max_positions=20, priority=None,
-                universe=None, tr_size=500, tr_start='2016-01-01', tr_end='2024-12-31', tr_holdout='2022-01-01')
-    return args | overrides
+FACTOR_CARD = dict(start='2016-01-31', end='2024-12-31', rebalance='M', quantiles='5', size='1000', holdout='2022-01-01')
+TIMING_CARD = dict(entry='new_252d_high', exit=None, stop=15, exit_on_false=True, max_positions=20, priority=None,
+                   universe=None, size=500, start='2016-01-01', end='2024-12-31', holdout='2022-01-01')
 
 
-def _call_launch(page, **overrides):
-    values = _launch_args(**overrides)
-    return page.launch(*values.values())
+def _runner(monkeypatch, *, busy: bool = False) -> tuple[object, list]:
+    """The page with a job runner that records the argv lists it is asked to start."""
+    page = _page()
+    started = []
+    monkeypatch.setattr(page.MANAGER, 'current', object() if busy else None)
+    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
+    return page, started
 
 
 def test_a_factor_backtest_needs_at_least_one_factor(monkeypatch):
-    page = _page()
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
-    note = _call_launch(page, selected_factors=[])
+    page, started = _runner(monkeypatch)
+    note = page.launch_factor_portfolio(1, [], FACTOR_CARD)
     assert started == [] and 'Tick at least one factor' in str(note)
 
 
 def test_pressing_run_starts_the_factor_backtest(monkeypatch):
-    page = _page()
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
-    assert _call_launch(page) is None
+    page, started = _runner(monkeypatch)
+    assert page.launch_factor_portfolio(1, [{'name': 'value'}], FACTOR_CARD) is None
     assert started[0][:4] == ['-m', 'investalyze.research', 'backtest', 'value']
 
 
-def _started_timing_rule(monkeypatch, **overrides) -> tuple[list, object]:
-    """Press Run on the timing rule card and return the started argv list and the note shown."""
-    page = _page()
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-timing-run'))
-    monkeypatch.setattr(page.MANAGER, 'current', None)
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
-    note = _call_launch(page, _factor_run=None, _timing_run=1, **overrides)
-    return started, note
-
-
 def test_pressing_run_on_the_timing_card_starts_that_rule(monkeypatch):
-    started, _note = _started_timing_rule(monkeypatch)
+    page, started = _runner(monkeypatch)
+    page.launch_timing_rule(1, TIMING_CARD)
     assert started[0][:4] == ['-m', 'investalyze.research', 'timing', 'new_252d_high']
 
 
 def test_a_timing_rule_needs_an_entry_factor(monkeypatch):
-    started, note = _started_timing_rule(monkeypatch, entry=None)
+    page, started = _runner(monkeypatch)
+    note = page.launch_timing_rule(1, TIMING_CARD | {'entry': None})
     assert started == [] and 'Pick an entry factor' in str(note)
 
 
 def test_a_timing_rule_without_an_exit_does_not_start(monkeypatch):
-    started, note = _started_timing_rule(monkeypatch, stop=None, exit_on_false=False)
+    page, started = _runner(monkeypatch)
+    note = page.launch_timing_rule(1, TIMING_CARD | {'stop': None, 'exit_on_false': False})
     assert started == [] and 'at least one exit' in str(note)
 
 
 def test_pressing_run_while_a_job_runs_says_so_instead_of_doing_nothing(monkeypatch):
-    page = _page()
-    started = []
-    monkeypatch.setattr(page, 'ctx', SimpleNamespace(triggered_id='bt-btn-factor-run'))
-    monkeypatch.setattr(page.MANAGER, 'current', object())
-    monkeypatch.setattr(page.MANAGER, 'start', lambda title, argv: started.append(argv) or True)
-    assert 'already running' in str(_call_launch(page))
+    page, started = _runner(monkeypatch, busy=True)
+    assert 'already running' in str(page.launch_factor_portfolio(1, [{'name': 'value'}], FACTOR_CARD))
+    assert 'already running' in str(page.launch_timing_rule(1, TIMING_CARD))
     assert started == []
 
 

@@ -24,7 +24,7 @@ from investalyze.ingest import housekeeping, listings, orchestrator, storage
 from investalyze.quality import registry as quality_registry
 
 
-SEVERITY_COLOR = {'error': 'red', 'warn': 'yellow'}
+SEVERITY_COLOR = {quality_registry.Severity.ERROR: 'red', quality_registry.Severity.WARN: 'yellow'}
 
 
 # ---------- pure helpers (argv building; exercised standalone, no Dash needed) ----------
@@ -176,8 +176,8 @@ def housekeeping_card() -> dmc.Card:
 
 def quality_card() -> dmc.Card:
     """Check chips grouped by severity + Run button."""
-    errors = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == 'error']
-    warns = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == 'warn']
+    errors = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == quality_registry.Severity.ERROR]
+    warns = [n for n, (sev, _) in quality_registry.CHECKS.items() if sev == quality_registry.Severity.WARN]
     return dmc.Card([
         dmc.Group([dmc.Text('Quality checks', fw=700, size='sm'), writes_badge('anomalies table only')], gap=8, mb=4),
         dmc.Text('scans the data and records findings in the anomalies table; correcting data happens in Cleaning',
@@ -358,68 +358,82 @@ def refresh_status(_n: int | None) -> tuple:
 
 # ---------- job callbacks ----------
 
-@callback(
-    Output('cp-pending-action', 'data'), Output('cp-confirm-modal', 'opened'), Output('cp-confirm-text', 'children'),
-    Input('cp-btn-ingest', 'n_clicks'), Input('cp-btn-housekeeping', 'n_clicks'), Input('cp-btn-quality', 'n_clicks'),
-    Input('cp-btn-cleaning-check', 'n_clicks'), Input('cp-btn-cleaning-apply', 'n_clicks'),
-    Input('cp-btn-listings-scan', 'n_clicks'), Input('cp-btn-blacklist', 'n_clicks'), Input('cp-btn-listings-add', 'n_clicks'),
-    State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'),
-    State('cp-housekeeping-tasks', 'value'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
-    State('cp-blacklist-ticker', 'value'), State('cp-blacklist-universe', 'value'), State('cp-blacklist-reason', 'value'),
-    State('cp-listings-grid', 'selectedRows'),
-    prevent_initial_call=True,
-)
-def request_run(ingest_n: int | None, housekeeping_n: int | None, quality_n: int | None, cleaning_check_n: int | None,
-                cleaning_apply_n: int | None, listings_scan_n: int | None, blacklist_n: int | None, listings_add_n: int | None,
-                providers: list[str] | None, mode: str | None, tasks: list[str] | None, quality_errors: list[str] | None,
-                quality_warns: list[str] | None, blacklist_ticker: str | None, blacklist_universe: str | None,
-                blacklist_reason: str | None, listings_selected: list[dict] | dict | None) -> tuple:
-    """Build the argv for the clicked Run button. Full ingest loads and cleaning applies go through a confirm modal."""
-    trigger = ctx.triggered_id
-    if trigger == 'cp-btn-cleaning-check':
-        title, argv = build_cleaning_argv('check')
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-cleaning-apply':
-        title, argv = build_cleaning_argv('apply')
-        return {'title': title, 'argv': argv}, True, 'Apply the fixes in cleaning.toml? This writes to the database.'
-    if trigger == 'cp-btn-ingest':
-        title, argv = build_ingest_argv(providers, update=mode == 'update')
-        if mode == 'full':
-            scope = ', '.join(providers) if providers else 'all providers'
-            return {'title': title, 'argv': argv}, True, f'Run a full ingest load? This re-downloads history for {scope}.'
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-housekeeping':
-        title, argv = build_housekeeping_argv(tasks)
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-quality':
-        title, argv = build_quality_argv((quality_errors or []) + (quality_warns or []))
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-listings-scan':
-        title, argv = build_listings_scan_argv()
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    if trigger == 'cp-btn-blacklist':
-        ticker = (blacklist_ticker or '').strip().upper()
-        universe = (blacklist_universe or '').strip()
-        reason = (blacklist_reason or '').strip()
-        if not reason or bool(ticker) == bool(universe):
-            raise PreventUpdate   # need a reason, and exactly one of ticker/universe
-        title, argv = build_blacklist_argv([ticker] if ticker else None, universe or None, reason)
-        target = f'universe "{universe}" ({len(universes.load_universe(universe))} ticker(s))' if universe else ticker
-        prompt = f'Permanently delete all stored data for {target} and block them from future scans?'
-        return {'title': title, 'argv': argv}, True, prompt
-    if trigger == 'cp-btn-listings-add':
-        rows = listings_selected or []
-        if not rows:
-            raise PreventUpdate
-        title, argv = build_add_listings_argv(rows)
-        MANAGER.start(title, argv)
-        return dash.no_update, False, dash.no_update
-    raise PreventUpdate
+# the jobs that write to the database or delete data ask first, through the shared confirm modal
+CONFIRM_OUTPUTS = [Output('cp-pending-action', 'data', allow_duplicate=True),
+                   Output('cp-confirm-modal', 'opened', allow_duplicate=True),
+                   Output('cp-confirm-text', 'children', allow_duplicate=True)]
+
+
+def _ask_first(title: str, argv: list[str], prompt: str) -> tuple[dict, bool, str]:
+    """The confirm modal outputs holding a job until Confirm is pressed."""
+    return {'title': title, 'argv': argv}, True, prompt
+
+
+@callback(Input('cp-btn-cleaning-check', 'n_clicks'), prevent_initial_call=True)
+def run_cleaning_check(_clicks: int | None) -> None:
+    """Check the fixes in cleaning.toml against the database."""
+    MANAGER.start(*build_cleaning_argv('check'))
+
+
+@callback(*CONFIRM_OUTPUTS, Input('cp-btn-cleaning-apply', 'n_clicks'), prevent_initial_call=True)
+def confirm_cleaning_apply(_clicks: int | None) -> tuple[dict, bool, str]:
+    """Ask before applying the fixes in cleaning.toml."""
+    return _ask_first(*build_cleaning_argv('apply'), 'Apply the fixes in cleaning.toml? This writes to the database.')
+
+
+@callback(*CONFIRM_OUTPUTS, Input('cp-btn-ingest', 'n_clicks'),
+          State('cp-ingest-providers', 'value'), State('cp-ingest-mode', 'value'), prevent_initial_call=True)
+def run_ingest(_clicks: int | None, providers: list[str] | None, mode: str | None) -> tuple:
+    """Start the daily update, or ask before a full load re-downloads history."""
+    title, argv = build_ingest_argv(providers, update=mode == 'update')
+    if mode == 'full':
+        scope = ', '.join(providers) if providers else 'all providers'
+        return _ask_first(title, argv, f'Run a full ingest load? This re-downloads history for {scope}.')
+    MANAGER.start(title, argv)
+    return dash.no_update, False, dash.no_update
+
+
+@callback(Input('cp-btn-housekeeping', 'n_clicks'), State('cp-housekeeping-tasks', 'value'), prevent_initial_call=True)
+def run_housekeeping(_clicks: int | None, tasks: list[str] | None) -> None:
+    """Run the chosen housekeeping tasks, or all of them."""
+    MANAGER.start(*build_housekeeping_argv(tasks))
+
+
+@callback(Input('cp-btn-quality', 'n_clicks'), State('cp-quality-errors', 'value'), State('cp-quality-warns', 'value'),
+          prevent_initial_call=True)
+def run_quality(_clicks: int | None, errors: list[str] | None, warns: list[str] | None) -> None:
+    """Run the ticked quality checks, or all of them."""
+    MANAGER.start(*build_quality_argv((errors or []) + (warns or [])))
+
+
+@callback(Input('cp-btn-listings-scan', 'n_clicks'), prevent_initial_call=True)
+def run_listings_scan(_clicks: int | None) -> None:
+    """Scan the exchange listings for new and reactivated tickers."""
+    MANAGER.start(*build_listings_scan_argv())
+
+
+@callback(*CONFIRM_OUTPUTS, Input('cp-btn-blacklist', 'n_clicks'),
+          State('cp-blacklist-ticker', 'value'), State('cp-blacklist-universe', 'value'),
+          State('cp-blacklist-reason', 'value'), prevent_initial_call=True)
+def confirm_blacklist(_clicks: int | None, ticker: str | None, universe: str | None,
+                      reason: str | None) -> tuple[dict, bool, str]:
+    """Ask before blacklisting one ticker or every ticker in a saved universe."""
+    ticker = (ticker or '').strip().upper()
+    universe = (universe or '').strip()
+    reason = (reason or '').strip()
+    if not reason or bool(ticker) == bool(universe):
+        raise PreventUpdate   # needs a reason, and exactly one of ticker or universe
+    title, argv = build_blacklist_argv([ticker] if ticker else None, universe or None, reason)
+    target = f'universe "{universe}" ({len(universes.load_universe(universe))} ticker(s))' if universe else ticker
+    return _ask_first(title, argv, f'Permanently delete all stored data for {target} and block them from future scans?')
+
+
+@callback(Input('cp-btn-listings-add', 'n_clicks'), State('cp-listings-grid', 'selectedRows'), prevent_initial_call=True)
+def add_listings(_clicks: int | None, selected: list[dict] | None) -> None:
+    """Add the reviewed listing candidates to ticker.csv."""
+    if not selected:
+        raise PreventUpdate
+    MANAGER.start(*build_add_listings_argv(selected))
 
 
 @callback(

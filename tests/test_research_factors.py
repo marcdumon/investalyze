@@ -28,7 +28,7 @@ def test_saving_writes_one_file_per_factor(tmp_path):
 
 
 def test_a_factor_starts_as_a_candidate():
-    assert _factor('margin', 'income / revenue').status == factors.CANDIDATE
+    assert _factor('margin', 'income / revenue').status == factors.Status.CANDIDATE
 
 
 def test_an_unusable_name_is_refused():
@@ -89,8 +89,8 @@ def test_the_fingerprint_holds_when_only_the_description_changes():
 
 
 def test_the_fingerprint_holds_when_only_the_status_changes():
-    before = {'margin': _factor('margin', 'income / revenue', status=factors.CANDIDATE)}
-    after = {'margin': _factor('margin', 'income / revenue', status=factors.ACCEPTED)}
+    before = {'margin': _factor('margin', 'income / revenue', status=factors.Status.CANDIDATE)}
+    after = {'margin': _factor('margin', 'income / revenue', status=factors.Status.ACCEPTED)}
     assert factors.fingerprint('margin', before) == factors.fingerprint('margin', after)
 
 

@@ -77,8 +77,8 @@ def collect_bounds(inputs_list: list) -> dict[str, tuple[float | None, float | N
     an Input above the factor filters leaves their binding intact. A blank input reads as no bound.
 
     Args:
-        inputs_list: Dash's `ctx.inputs_list`, whose pattern-matching entries are lists of
-            `{'id': {'type': 'fmin'|'fmax', 'factor': ...}, 'value': ...}` specs.
+        inputs_list: groups of pattern-matching input specs, as the callback context reports them: lists of
+            `{'id': {'type': 'fmin'|'fmax', 'factor': ...}, 'value': ...}`.
     """
     bounds: dict[str, list[float | None]] = {}
     for group in inputs_list:

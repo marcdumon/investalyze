@@ -116,9 +116,10 @@ def test_the_run_id_changes_when_a_factor_is_redefined():
     cfg = backtest_config.read()
     before = {'value': factors.Factor(name='value', expression='revenue')}
     after = {'value': factors.Factor(name='value', expression='revenue * 2')}
-    settings = dict(n_quantiles=5, rebalance='M', universe_size=1000, start='2016-01-31', end='2024-12-31', holdout=None)
-    assert backtest.run_id(backtest.run_params(['value'], before, **settings), cfg) != \
-        backtest.run_id(backtest.run_params(['value'], after, **settings), cfg)
+    portfolio = backtest.FactorPortfolio(names=('value',))
+    settings = dict(universe_size=1000, start='2016-01-31', end='2024-12-31', holdout=None)
+    assert backtest.run_id(backtest.run_params(portfolio, before, **settings), cfg) != \
+        backtest.run_id(backtest.run_params(portfolio, after, **settings), cfg)
 
 
 def test_the_run_id_is_stable_for_identical_settings():
@@ -126,10 +127,66 @@ def test_the_run_id_is_stable_for_identical_settings():
     from investalyze.research import factors
     cfg = backtest_config.read()
     library = {'value': factors.Factor(name='value', expression='revenue')}
-    settings = dict(n_quantiles=5, rebalance='M', universe_size=1000, start='2016-01-31', end='2024-12-31', holdout=None)
-    assert backtest.run_id(backtest.run_params(['value'], library, **settings), cfg) == \
-        backtest.run_id(backtest.run_params(['value'], library, **settings), cfg)
+    portfolio = backtest.FactorPortfolio(names=('value',))
+    settings = dict(universe_size=1000, start='2016-01-31', end='2024-12-31', holdout=None)
+    assert backtest.run_id(backtest.run_params(portfolio, library, **settings), cfg) == \
+        backtest.run_id(backtest.run_params(portfolio, library, **settings), cfg)
 
 
-def test_the_signal_label_names_the_factors():
-    assert backtest.signal_label(['value', 'momentum']) == 'value + momentum'
+def test_the_label_names_the_factors():
+    assert backtest.FactorPortfolio(names=('value', 'momentum')).label == 'value + momentum'
+
+
+def test_a_portfolio_reads_back_from_the_command_it_writes():
+    from investalyze.research import __main__ as cli
+    portfolio = backtest.FactorPortfolio(names=('value', 'momentum'), n_quantiles=10, rebalance='Q')
+    assert backtest.FactorPortfolio.from_arguments(cli._parser().parse_args(['backtest', *portfolio.arguments()])) == portfolio
+
+
+def test_stored_portfolio_run_ids_are_unchanged():
+    """A re-run of a stored configuration must replace its run, so the id stays what earlier versions made."""
+    from investalyze.backtest import config as backtest_config
+    from investalyze.research import factors
+    library = {'value': factors.Factor(name='value', expression='income_net_income / market_cap')}
+    params = backtest.run_params(backtest.FactorPortfolio(names=('value',)), library, universe_size=1000,
+                                 start='2016-01-31', end='2024-12-31', holdout='2022-01-01')
+    assert backtest.run_id(params, backtest_config.read()) == 'e973cac93811'
+
+
+def _simulation() -> backtest.Simulation:
+    """A two-session simulation with one fill, enough to build a stored-run report."""
+    dates = pd.DatetimeIndex(['2024-01-02', '2024-01-03'])
+    fills = pd.DataFrame({'Date': [dates[1]], 'Ticker': ['AAA'], 'Side': ['buy'], 'Shares': [10.0], 'Price': [100.0],
+                          'Notional': [1000.0], 'Cost': [1.0], 'Kind': ['market']})
+    return backtest.Simulation(equity=pd.Series([1_000_000.0, 1_000_100.0], index=dates),
+                               gross=pd.Series([0.0, 0.001], index=dates), net=pd.Series([0.0, 0.001], index=dates),
+                               fills=fills, benchmark_equity=None, stats={'cagr': 0.1, 'sharpe': 1.0},
+                               tickers=['AAA'], names_median=1.0)
+
+
+def test_a_simulated_portfolio_becomes_rows_for_every_run_table():
+    from investalyze.backtest import config as backtest_config
+    from investalyze.backtest import writer
+    from investalyze.research import factors
+    library = {'value': factors.Factor(name='value', expression='revenue')}
+    portfolio = backtest.FactorPortfolio(names=('value',))
+    params = backtest.run_params(portfolio, library, universe_size=1000, start='2024-01-02', end='2024-01-03', holdout=None)
+    finished = backtest.build_report(_simulation(), portfolio, params, backtest_config.read())
+    assert list(finished.run_row().columns) == writer.RUN_COLS
+    assert list(finished.equity_rows().columns) == writer.EQUITY_COLS
+    assert list(finished.trade_rows().columns) == writer.TRADE_COLS
+    assert finished.signal == 'value'
+
+
+def test_a_simulated_timing_rule_becomes_rows_for_every_run_table():
+    from investalyze.backtest import config as backtest_config
+    from investalyze.backtest import writer
+    from investalyze.research import factors, timing
+    library = {'new_high': factors.Factor(name='new_high', expression='close')}
+    rule = timing.TimingRule('new_high', trailing_stop=0.1)
+    params = timing.run_params(rule, library, universe=None, universe_size=500, start='2024-01-02', end='2024-01-03',
+                               holdout=None)
+    finished = timing.build_report(_simulation(), rule, params, backtest_config.read())
+    assert list(finished.run_row().columns) == writer.RUN_COLS
+    assert list(finished.trade_rows().columns) == writer.TRADE_COLS
+    assert finished.signal == 'new_high, exit on entry false, trailing stop 10%'

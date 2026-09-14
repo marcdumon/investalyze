@@ -301,27 +301,27 @@ def industry_options(sectors: list[str] | None) -> list[str]:
 
 
 @callback(
-    Output('grid', 'rowData'), Output('grid', 'columnDefs'), Output('sel-grid', 'rowData'),
-    Output('filter-count', 'children'), Output('sel-count', 'children'), Output('notice', 'children'),
-    Input('f-search', 'value'), Input('f-sector', 'value'), Input('f-industry', 'value'), Input('f-bucket', 'value'),
-    Input('f-mindvol', 'value'), Input('f-minyears', 'value'), Input('f-active', 'value'), Input('f-maxanom', 'value'),
-    Input({'type': 'fmin', 'factor': ALL}, 'value'), Input({'type': 'fmax', 'factor': ALL}, 'value'),
-    Input('score-factors', 'value'), Input('mode', 'value'), Input('btn-refresh', 'n_clicks'),
-    Input('selection', 'data'),
+    output=[Output('grid', 'rowData'), Output('grid', 'columnDefs'), Output('sel-grid', 'rowData'),
+            Output('filter-count', 'children'), Output('sel-count', 'children'), Output('notice', 'children')],
+    inputs=dict(
+        filters=dict(search=Input('f-search', 'value'), sectors=Input('f-sector', 'value'),
+                     industries=Input('f-industry', 'value'), buckets=Input('f-bucket', 'value'),
+                     min_dvol=Input('f-mindvol', 'value'), min_years=Input('f-minyears', 'value'),
+                     active=Input('f-active', 'value'), max_anom=Input('f-maxanom', 'value')),
+        bounds=dict(low=Input({'type': 'fmin', 'factor': ALL}, 'value'), high=Input({'type': 'fmax', 'factor': ALL}, 'value')),
+        score_factors=Input('score-factors', 'value'), mode=Input('mode', 'value'),
+        _refresh=Input('btn-refresh', 'n_clicks'), selection=Input('selection', 'data'),
+    ),
 )
-def update_grid(search: str | None, sectors: list[str] | None, industries: list[str] | None, buckets: list[str] | None,
-                min_dvol: float | str | None, min_years: float | str | None, active: str | None, max_anom: float | str | None,
-                _fmin_values: list[float | None], _fmax_values: list[float | None], score_factors: list[str] | None,
-                mode: str | None, refresh_clicks: int | None, selection: list[str] | None) -> tuple:
+def update_grid(filters: dict, bounds: dict, score_factors: list[str] | None, mode: str | None, _refresh: int | None,
+                selection: list[str] | None) -> tuple:
     """Rebuild both grids for the current filters, score selection, display mode and curation state.
 
-    The factor bounds are read back off ctx.inputs_list by id, so the two pattern-matching arguments
-    serve only to trigger this callback.
+    The factor bounds are paired by the id of each bound input, read from the callback context, so
+    `bounds` serves only to trigger this callback.
     """
-    # dmc.NumberInput reports '' when cleared; the filters expect None for "no bound"
-    min_dvol = min_dvol if min_dvol not in (None, '') else None
-    min_years = min_years if min_years not in (None, '') else None
-    max_anom = max_anom if max_anom not in (None, '') else None
+    # dmc.NumberInput reports '' when cleared; the filters expect None for no bound
+    numbers = {key: None if filters[key] in (None, '') else filters[key] for key in ('min_dvol', 'min_years', 'max_anom')}
     if ctx.triggered_id == 'btn-refresh':
         clear_cache()
     try:
@@ -331,11 +331,14 @@ def update_grid(search: str | None, sectors: list[str] | None, industries: list[
         notice = html.Div(BUSY, style={'color': 'var(--mantine-color-yellow-9)', 'fontSize': '13px', 'padding': '8px 12px'})
         return [], [], [], '', '', notice
 
+    selection = selection or []
     undecided = pool[~pool['Ticker'].isin(selection)]
-    candidates = apply_metadata_filters(undecided, search, sectors, industries, buckets,
-                                        min_dvol, min_years, active, max_anom)
+    candidates = apply_metadata_filters(undecided, filters['search'], filters['sectors'], filters['industries'],
+                                        filters['buckets'], numbers['min_dvol'], numbers['min_years'], filters['active'],
+                                        numbers['max_anom'])
     ranked = compute_ranks(candidates, pool_data.factor_names(), pool_data.higher_is_better())
-    passed = apply_filters(ranked, collect_bounds(ctx.inputs_list))
+    grouping = ctx.args_grouping['bounds']
+    passed = apply_filters(ranked, collect_bounds([grouping['low'], grouping['high']]))
 
     chosen = score_factors or []
     if chosen:
