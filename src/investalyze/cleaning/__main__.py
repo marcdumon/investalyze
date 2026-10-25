@@ -11,6 +11,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from investalyze import paths
 from investalyze.cleaning import registry
 from investalyze.ingest import config, storage
 from investalyze.ingest.logging import configure_logging
@@ -26,10 +27,10 @@ def main() -> None:
     )
     parser.add_argument('command', choices=('check', 'apply'),
                         help="'check' reports what each fix would touch, 'apply' executes the fixes")
-    parser.add_argument('--config', type=Path, default=Path('cleaning.toml'),
-                        help='fixes TOML (default: ./cleaning.toml)')
-    parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
-                        help='ingest TOML giving the DB location (default: ./ingest.toml)')
+    parser.add_argument('--config', type=Path, default=paths.CLEANING_CONFIG,
+                        help='fixes TOML (default: cleaning.toml in the app folder)')
+    parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
+                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
     args = parser.parse_args()
 
     cfg = config.read(args.ingest_config)

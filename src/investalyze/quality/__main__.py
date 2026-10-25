@@ -9,6 +9,7 @@ import argparse
 import logging
 from pathlib import Path
 
+from investalyze import paths
 from investalyze.ingest import config, storage
 from investalyze.ingest.logging import configure_logging
 from investalyze.quality import registry, writer
@@ -36,8 +37,8 @@ def main() -> None:
     )
     parser.add_argument('checks', nargs='*', choices=sorted(registry.CHECKS), metavar='check',
                         help='check to run (default: all); see the list below')
-    parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
-                        help='ingest TOML giving the DB location (default: ./ingest.toml)')
+    parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
+                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
     args = parser.parse_args()
 
     cfg = config.read(args.ingest_config)

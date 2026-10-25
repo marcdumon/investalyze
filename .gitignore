@@ -25,3 +25,6 @@ experiments/**/runs/
 # Isolated git worktrees for subagent-driven development
 .worktrees/
 
+
+# Own settings (investalyze.example.toml shows them)
+investalyze.toml

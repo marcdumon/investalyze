@@ -9,7 +9,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-_DEFAULT_DATA_ROOT = 'data'
+from investalyze import paths
+
 _DEFAULT_DB = 'investalyze.duckdb'
 _DEFAULT_LOG_LEVEL = 'INFO'
 
@@ -38,7 +39,7 @@ def read(path: Path | None = None) -> Config:
     raw = tomllib.loads(path.read_text()) if path is not None and path.exists() else {}
     providers = {name: section for name, section in raw.items() if isinstance(section, dict)}
     return Config(
-        data_root=Path(raw.get('data_root', _DEFAULT_DATA_ROOT)),
+        data_root=Path(raw['data_root']) if 'data_root' in raw else paths.DATA_ROOT,
         db=raw.get('db', _DEFAULT_DB),
         log_level=raw.get('log_level', _DEFAULT_LOG_LEVEL),
         providers=providers,

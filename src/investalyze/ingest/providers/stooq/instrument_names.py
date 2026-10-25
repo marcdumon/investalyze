@@ -13,7 +13,7 @@ from functools import lru_cache
 
 from investalyze import paths
 
-_REFERENCE_FILE = paths.REPO_ROOT / 'stooq_tickers.toml'
+_REFERENCE_FILE = paths.APP_DIR / 'stooq_tickers.toml'
 
 _BOND_PATTERN = re.compile(r'^(\d+)([MY])([A-Z]{2})([YP])$')
 _PAIR_PATTERN = re.compile(r'^([A-Z]{3})([A-Z]{3})$')

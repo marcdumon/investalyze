@@ -1,0 +1,12 @@
+# Copy this file to investalyze.toml (not in git) and set your own values.
+
+# the folder of the database, the provider downloads, the backtests, the factor library and the quality log (put it where
+# your backups are made); empty: the folder data in the app folder
+# for example data_dir = '/path/to/backed_up/investalyze'
+data_dir = ''
+
+[server]
+# the app answers on http://127.0.0.1:<port> only
+port = 8050
+# debug mode: the Dash dev tools and a restart on every code change; only for development
+debug = false

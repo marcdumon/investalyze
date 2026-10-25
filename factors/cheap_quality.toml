@@ -1,6 +1,0 @@
-name = 'cheap_quality'
-expression = '(rank((net_cash_from_operating_activities + change_in_fixed_assets_intangibles) / market_cap) + rank(net_income_common / total_equity) + rank(op_margin)) / 3'
-description = 'A name has to be cheap on free cash flow and profitable, not just one of the two.'
-higher_is_better = true
-status = 'candidate'
-notes = ''

@@ -1,6 +1,0 @@
-name = 'ibs_band_entry'
-expression = '(close < max(high, 25) - 2.25 * mean(high - low, 25)) and (safe_div(close - low, high - low) < 0.6)'
-description = 'Close below a band 2.25 average daily ranges under the 25-day high, with internal bar strength below 0.6.'
-higher_is_better = true
-status = 'candidate'
-notes = ''

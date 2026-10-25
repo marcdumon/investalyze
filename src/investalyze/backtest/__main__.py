@@ -11,6 +11,7 @@ from pathlib import Path
 
 import duckdb
 
+from investalyze import paths
 from investalyze.backtest import report, writer
 from investalyze.ingest import config, storage
 from investalyze.ingest.logging import configure_logging
@@ -27,8 +28,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('command', choices=COMMANDS, metavar='command', help=f'one of: {", ".join(COMMANDS)}')
     parser.add_argument('--run-id', nargs='+', metavar='run_id',
                         help='runs to delete, or the one run to print, for the delete and report commands')
-    parser.add_argument('--ingest-config', type=Path, default=Path('ingest.toml'),
-                        help='ingest TOML giving the DB location (default: ./ingest.toml)')
+    parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
+                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
     return parser
 
 

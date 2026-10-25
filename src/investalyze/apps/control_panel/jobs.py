@@ -61,7 +61,7 @@ class JobManager:
             job = Job(title=title, argv=argv, started=datetime.now())
             process = subprocess.Popen(
                 [sys.executable, *argv],
-                cwd=paths.REPO_ROOT,
+                cwd=paths.APP_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

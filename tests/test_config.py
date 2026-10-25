@@ -1,19 +1,20 @@
 """Tests for config.read: TOML settings with built-in defaults."""
 from pathlib import Path
 
+from investalyze import paths
 from investalyze.ingest import config
 
 
 def test_read_uses_defaults_when_file_missing(tmp_path: Path):
     cfg = config.read(tmp_path / 'absent.toml')
-    assert cfg.data_root == Path('data')
+    assert cfg.data_root == paths.DATA_ROOT
     assert cfg.db == 'investalyze.duckdb'
     assert cfg.provider('stooq') == {}
 
 
 def test_read_none_uses_defaults():
     cfg = config.read(None)
-    assert cfg.data_root == Path('data')
+    assert cfg.data_root == paths.DATA_ROOT
     assert cfg.db == 'investalyze.duckdb'
 
 

@@ -1,6 +1,0 @@
-name = 'momentum_12_1'
-expression = 'ret_12_1'
-description = '12-1 month price momentum: winners keep winning over the next months.'
-higher_is_better = true
-status = 'candidate'
-notes = ''

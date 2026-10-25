@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from investalyze import paths
 from investalyze.apps import universes
 from investalyze.ingest import config, housekeeping, listings, orchestrator, storage
 from investalyze.ingest.logging import configure_logging
@@ -52,8 +53,8 @@ def _parser() -> argparse.ArgumentParser:
               "re-adding it, 'add-listings' adds reviewed candidates to ticker.csv, renaming a "
               'collision first (all exit without ingesting); omit to run the ingest'),
     )
-    parser.add_argument('--config', type=Path, default=Path('ingest.toml'),
-                        help='TOML config file (default: ./ingest.toml; missing is fine)')
+    parser.add_argument('--config', type=Path, default=paths.INGEST_CONFIG,
+                        help='TOML config file (default: ingest.toml in the app folder; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None, help='override the data dir from config')
     parser.add_argument('--ticker', action='append', dest='tickers',
                         help='ticker to blacklist (repeatable), alternative to --universe')
@@ -152,7 +153,7 @@ _COMMANDS: dict[str | None, Callable[[config.Config, argparse.Namespace], None]]
 
 def main() -> None:
     """Parse CLI args and run the selected command, or the ingest when none is given."""
-    load_dotenv()
+    load_dotenv(paths.APP_DIR / '.env')
     parser = _parser()
     args = parser.parse_args()
     problem = _argument_problem(args)

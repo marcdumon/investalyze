@@ -20,6 +20,7 @@ import pandas as pd
 import requests
 from pandas.errors import EmptyDataError
 
+from investalyze import paths
 from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import storage
 from investalyze.ingest.providers.yahoo import blacklist
@@ -394,7 +395,7 @@ def _add_new_tickers(candidates: list[Candidate], raw_dir: Path) -> None:
 
 
 def scan(con: duckdb.DuckDBPyConnection, data_root: Path,
-        cleaning_config: Path = Path('cleaning.toml')) -> UniverseScanResult:
+        cleaning_config: Path = paths.CLEANING_CONFIG) -> UniverseScanResult:
     """Fetch live US common-stock listings, classify every untracked one, add the new ones to
     ticker.csv automatically, and save the ones still needing review to CSV.
 

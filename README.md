@@ -7,9 +7,27 @@ Everything is local. One DuckDB file (`data/investalyze.duckdb`, currently aroun
 and 437k rows per financial statement) is the single source of truth, and every tool reads or
 writes that file directly. There is no service to deploy and no API to call.
 
-## Getting started
+## Install
 
-Requires Python 3.13. The environment lives in `.venv`.
+The app runs from its own folder, apart from this repo. `install.sh` installs one version (a git tag) from GitHub in a
+Python environment in `~/.local/share/md_apps/investalyze/` (or `$INVESTALYZE_HOME`). It needs uv and curl.
+
+```bash
+./install.sh v0.5.0                                      # also to update: an update replaces only env/
+~/.local/share/md_apps/investalyze/env/bin/investalyze   # the UI, at http://127.0.0.1:8050
+```
+
+The app folder holds the settings: `investalyze.toml` (`data_dir`, the port, the debug mode), `ingest.toml`,
+`backtest.toml`, `cleaning.toml`, `stooq_tickers.toml` (the first install makes them from this repo) and `.env` (the
+SimFin key). `data_dir` sets the data folder: the database, the provider downloads, the backtests, the factor library
+(`factors/`) and the quality log (`quality_log.toml`). Put it where your backups are made; empty, it is `data/` in the
+app folder. The control panel runs its commands with the app's own Python, in the app folder.
+
+## Development
+
+Requires Python 3.13. The environment lives in `.venv`. This repo is the app folder of the development copy: copy
+`investalyze.example.toml` to `investalyze.toml` (not in git) and give it its own port, for example 18050 with
+`debug = true`, so it can run next to the installed app.
 
 ```bash
 uv sync                                # install into .venv
@@ -25,7 +43,7 @@ compute capability this machine's GPUs need. Leave that pin alone.
 ```bash
 python -m investalyze.ingest           # load the full history
 python -m investalyze.ingest --update  # daily incremental
-python -m investalyze.apps             # the UI, at http://127.0.0.1:8050
+python -m investalyze.apps             # the UI, at the port of investalyze.toml
 ```
 
 Start with the UI. Every CLI below is also a button in its Control Panel.
@@ -44,14 +62,15 @@ Start with the UI. Every CLI below is also a button in its Control Panel.
 | `notebooks/` | Exploration, plus `9999_data_quirks.ipynb`, the running findings-and-decisions log. |
 | `experiments/` | Model work over saved universes (classification, ranking, forecasting). |
 | `tests/` | `pytest`, 922 tests. |
-| `factors/` | The factor library: one TOML file per factor. |
+| `data/factors/` | The factor library: one TOML file per factor (in the data folder, not in git). |
 | `docs/manual.md` | The user guide: how to actually run all of the above. |
 | `docs/ingest_data.md` | Data reference: every table, column and provider decision. |
 | `docs/backtest_metrics.md` | Every backtest formula (IC, Sharpe, fill price, ...), traced to its function. |
 | `docs/backlog.md` | Running list of what is worth coming back to, most valuable first. |
 
-Config lives at the repo root: `ingest.toml` (paths, providers, blacklist policy), `cleaning.toml`
-(the manual fix list), `quality_log.toml` (triaged anomaly findings).
+Config lives in the app folder (the repo root in development): `ingest.toml` (providers, blacklist policy),
+`cleaning.toml` (the manual fix list), `backtest.toml`, `stooq_tickers.toml`. The triaged anomaly findings are in
+`quality_log.toml` in the data folder.
 
 ## How the pieces fit
 

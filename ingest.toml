@@ -2,8 +2,8 @@
 # MD> Every key is optional: built-in defaults apply when omitted or when this file
 # is absent. Secrets (e.g. the SimFin API key) come from the environment, NOT here.
 
-data_root = "data"                 # dir holding provider trees + the DuckDB
-db        = "investalyze.duckdb"    # DB filename under data_root
+# the data folder (provider trees + the DuckDB) is data_dir of investalyze.toml; a data_root key here overrides it
+db        = "investalyze.duckdb"    # DB filename in the data folder
 log_level = "INFO"                  # DEBUG | INFO | WARNING | ERROR | CRITICAL
 
 # MD> Downloads are captcha-protected: fetch manually in a browser, drop into raw/.

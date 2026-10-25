@@ -1,6 +1,0 @@
-name = 'earnings_yield'
-expression = 'income_net_income / market_cap'
-description = 'TTM net income per unit of market capitalisation.'
-higher_is_better = true
-status = 'candidate'
-notes = ''

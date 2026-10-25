@@ -1,6 +1,0 @@
-name = 'risk_adjusted_momentum'
-expression = 'ret_12_1 / vol_252'
-description = 'Twelve-month momentum per unit of realized volatility.'
-higher_is_better = true
-status = 'candidate'
-notes = ''

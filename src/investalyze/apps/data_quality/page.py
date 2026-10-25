@@ -28,8 +28,8 @@ from investalyze.cleaning import registry
 from investalyze.quality import registry as quality_registry
 from investalyze.ingest import storage
 
-LOG_PATH = paths.REPO_ROOT / 'quality_log.toml'
-CLEANING_PATH = paths.REPO_ROOT / 'cleaning.toml'
+LOG_PATH = paths.DATA_ROOT / 'quality_log.toml'
+CLEANING_PATH = paths.CLEANING_CONFIG
 ROW_LIMIT = 1000
 
 BUSY = 'database busy, a job is currently running, try again once it finishes'

@@ -1,6 +1,0 @@
-name = 'quality_blend'
-expression = '0.5 * rank(net_income_common / total_equity) + 0.5 * rank(net_income_common / total_assets)'
-description = 'Equal blend of the return-on-equity and return-on-assets ranks.'
-higher_is_better = true
-status = 'candidate'
-notes = ''
