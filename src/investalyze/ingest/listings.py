@@ -20,7 +20,7 @@ import pandas as pd
 import requests
 from pandas.errors import EmptyDataError
 
-from investalyze import paths
+from investalyze import paths, sec_contact
 from investalyze.cleaning import registry as cleaning_registry
 from investalyze.ingest import storage
 from investalyze.ingest.providers.yahoo import blacklist
@@ -30,7 +30,6 @@ log = logging.getLogger('investalyze.ingest.listings')
 NASDAQ_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt'
 OTHER_LISTED_URL = 'https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt'
 SEC_TICKERS_URL = 'https://www.sec.gov/files/company_tickers.json'
-HEADERS = {'User-Agent': 'investalyze ingest (7793950+marcdumon@users.noreply.github.com)'}
 
 # security-name pattern that signals a warrant/right/preferred/unit rather than common stock
 _DROP_PATTERN = re.compile(r'\b(warrants?|rights?|preferred|units?)\b')
@@ -88,9 +87,9 @@ def _parse_otherlisted(text: str) -> pd.DataFrame:
 
 def fetch_nasdaq_listings() -> pd.DataFrame:
     """Live NASDAQ/NYSE/NYSE American common-stock listings: columns ticker, market, company_name."""
-    nasdaq_response = requests.get(NASDAQ_LISTED_URL, headers=HEADERS, timeout=15)
+    nasdaq_response = requests.get(NASDAQ_LISTED_URL, headers={'User-Agent': sec_contact.user_agent('ingest')}, timeout=15)
     nasdaq_response.raise_for_status()
-    other_response = requests.get(OTHER_LISTED_URL, headers=HEADERS, timeout=15)
+    other_response = requests.get(OTHER_LISTED_URL, headers={'User-Agent': sec_contact.user_agent('ingest')}, timeout=15)
     other_response.raise_for_status()
     return pd.concat([_parse_nasdaqlisted(nasdaq_response.text), _parse_otherlisted(other_response.text)], ignore_index=True)
 
@@ -102,7 +101,7 @@ def _parse_sec_cik_map(payload: dict) -> dict[str, int]:
 
 def fetch_sec_cik_map() -> dict[str, int]:
     """Live SEC ticker -> CIK mapping, from company_tickers.json."""
-    response = requests.get(SEC_TICKERS_URL, headers=HEADERS, timeout=15)
+    response = requests.get(SEC_TICKERS_URL, headers={'User-Agent': sec_contact.user_agent('ingest')}, timeout=15)
     response.raise_for_status()
     return _parse_sec_cik_map(response.json())
 

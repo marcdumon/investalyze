@@ -1,6 +1,6 @@
 [project]
 name = "investalyze"
-version = "0.5.0"
+version = "0.5.1"
 description = "Stock research: data ingest, quality checks, factor research and backtests."
 readme = "README.md"
 requires-python = ">=3.13"

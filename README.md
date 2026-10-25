@@ -19,7 +19,7 @@ Python environment in `~/.local/share/md_apps/investalyze/` (or `$INVESTALYZE_HO
 
 The app folder holds the settings: `investalyze.toml` (`data_dir`, the port, the debug mode), `ingest.toml`,
 `backtest.toml`, `cleaning.toml`, `stooq_tickers.toml` (the first install makes them from this repo) and `.env` (the
-SimFin key). `data_dir` sets the data folder: the database, the provider downloads, the backtests, the factor library
+SimFin key and the SEC contact address). `data_dir` sets the data folder: the database, the provider downloads, the backtests, the factor library
 (`factors/`) and the quality log (`quality_log.toml`). Put it where your backups are made; empty, it is `data/` in the
 app folder. The control panel runs its commands with the app's own Python, in the app folder.
 
@@ -35,7 +35,8 @@ python -m investalyze.ingest setup     # scaffold the data dirs, once
 ```
 
 Some sources need a manual download (Stooq is captcha-protected); `ingest.toml` carries the URLs
-and the steps. SimFin needs an API key in the environment.
+and the steps. SimFin needs an API key and SEC a contact address, both in `.env`: `SIMFIN_API_KEY=...` and
+`SEC_CONTACT_EMAIL=...` (SEC refuses requests without a real contact address).
 
 `torch` is pinned to 2.5.1+cu121 on a dedicated index: newer CUDA builds dropped the Pascal
 compute capability this machine's GPUs need. Leave that pin alone.

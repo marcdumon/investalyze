@@ -15,14 +15,18 @@ from functools import lru_cache
 
 import requests
 
-from investalyze import paths
+from investalyze import paths, sec_contact
 
 log = logging.getLogger('investalyze.apps.data_quality.edgar')
 
 SUBMISSIONS_DIR = paths.DATA_ROOT / 'sec' / 'submissions'
-HEADERS = {'User-Agent': 'investalyze data-quality (7793950+marcdumon@users.noreply.github.com)'}
 EDGAR_DOC_URL = 'https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_dashes}/{primary_doc}'
 CACHE_TTL_SECONDS = 86400 * 7
+
+
+def _headers() -> dict[str, str]:
+    """The request headers: SEC asks for a contact address in the User-Agent."""
+    return {'User-Agent': sec_contact.user_agent('data-quality')}
 
 
 def _fetch_chunk(filename: str) -> dict:
@@ -37,7 +41,7 @@ def _fetch_chunk(filename: str) -> dict:
         return json.loads(cache.read_text())
     SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
     log.info(f'GET https://data.sec.gov/submissions/{filename}')
-    response = requests.get(f'https://data.sec.gov/submissions/{filename}', headers=HEADERS, timeout=10)
+    response = requests.get(f'https://data.sec.gov/submissions/{filename}', headers=_headers(), timeout=10)
     response.raise_for_status()
     cache.write_text(response.text)
     time.sleep(0.11)
@@ -58,7 +62,7 @@ def _fetch_submissions(cik: int) -> dict:
     else:
         SUBMISSIONS_DIR.mkdir(parents=True, exist_ok=True)
         log.info(f'GET https://data.sec.gov/submissions/CIK{cik_str}.json')
-        response = requests.get(f'https://data.sec.gov/submissions/CIK{cik_str}.json', headers=HEADERS, timeout=10)
+        response = requests.get(f'https://data.sec.gov/submissions/CIK{cik_str}.json', headers=_headers(), timeout=10)
         response.raise_for_status()
         cache.write_text(response.text)
         time.sleep(0.11)
