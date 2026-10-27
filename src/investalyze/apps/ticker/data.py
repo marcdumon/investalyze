@@ -77,9 +77,13 @@ def price_history(ticker: str, benchmarks: tuple[str, ...] = ()) -> pd.DataFrame
     return prices
 
 
-def rebased(history: pd.DataFrame, sessions: int | None) -> pd.DataFrame:
-    """The last `sessions` rows (all when None) with every price column rebased to 100 at the window start."""
-    window = history.tail(sessions) if sessions else history
+def price_window(history: pd.DataFrame, sessions: int | None) -> pd.DataFrame:
+    """The last `sessions` rows of `history`, or every row when `sessions` is None."""
+    return history.tail(sessions) if sessions else history
+
+
+def rebased(window: pd.DataFrame) -> pd.DataFrame:
+    """Every price column of `window` divided by its first row and scaled to 100, so series share a start."""
     if window.empty:
         return window
     out = window.copy()

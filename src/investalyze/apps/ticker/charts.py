@@ -76,9 +76,14 @@ def _benchmark_color(theme: dict, benchmark: str) -> str:
 
 
 def performance_figure(window: pd.DataFrame, ticker: str, dark: bool, benchmarks: list[str] = ()) -> go.Figure:
-    """Indexed total return of the ticker, optionally vs one or more benchmarks (log y), with the
-    drawdown band beneath. No benchmarks selected draws just the ticker's own line."""
+    """The ticker's price line over `window` (log y), with the drawdown band beneath.
+
+    `window` holds adjusted closes in dollars when no benchmark is selected, and every series
+    rebased to 100 at the window start when one or more are, which is the only way lines with
+    different price levels share a scale. The axis title and hover format follow that split.
+    """
     theme = _theme(dark)
+    indexed = bool(benchmarks)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.72, 0.28], vertical_spacing=0.05)
     for benchmark in benchmarks:
         if benchmark not in window.columns:
@@ -87,14 +92,17 @@ def performance_figure(window: pd.DataFrame, ticker: str, dark: bool, benchmarks
         fig.add_trace(go.Scatter(x=window['Date'], y=window[benchmark], name=label,
                                  line={'width': 1.5, 'color': _benchmark_color(theme, benchmark)},
                                  hovertemplate='%{y:.0f}<extra>' + label + '</extra>'), row=1, col=1)
+    price_format = '%{y:.0f}' if indexed else '%{y:$,.2f}'
     fig.add_trace(go.Scatter(x=window['Date'], y=window['AC'], name=ticker,
                              line={'width': 2, 'color': theme['accent']},
-                             hovertemplate='%{y:.0f}<extra>' + ticker + '</extra>'), row=1, col=1)
+                             hovertemplate=price_format + '<extra>' + ticker + '</extra>'), row=1, col=1)
     dd = drawdown(window['AC'].reset_index(drop=True))
     fig.add_trace(go.Scatter(x=window['Date'], y=dd, name='drawdown', fill='tozeroy',
                              line={'width': 1.5, 'color': theme['neg']}, showlegend=False,
                              hovertemplate='%{y:.0%}<extra>drawdown</extra>'), row=2, col=1)
-    fig.update_yaxes(type='log', row=1, col=1, title={'text': 'indexed = 100', 'font': {'size': 11}})
+    axis_title = 'indexed = 100' if indexed else 'adjusted close'
+    fig.update_yaxes(type='log', row=1, col=1, title={'text': axis_title, 'font': {'size': 11}},
+                     tickprefix='' if indexed else '$')
     fig.update_yaxes(tickformat='.0%', row=2, col=1)
     fig.update_layout(hovermode='x unified',
                       legend={'orientation': 'h', 'x': 0, 'y': 1.08, 'font': {'size': 11}})

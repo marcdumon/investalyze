@@ -5,8 +5,8 @@ import pytest
 
 from investalyze.analysis.factors import FACTORS
 from investalyze.apps.ticker.data import (
-    MAX_UNIVERSE_PEERS, drawdown, peer_percentiles, rebased, scope_peer_group, trailing_returns, ttm_history,
-    universe_peer_group,
+    MAX_UNIVERSE_PEERS, drawdown, peer_percentiles, price_window, rebased, scope_peer_group, trailing_returns,
+    ttm_history, universe_peer_group,
 )
 
 POOL = pd.DataFrame({
@@ -91,11 +91,18 @@ def test_drawdown():
 def test_rebased_window_starts_at_100():
     history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=6),
                             'AC': [10, 20, 40, 80, 160, 320], 'market': [1, 2, 4, 8, 16, 32]})
-    out = rebased(history, 3)
+    out = rebased(price_window(history, 3))
     assert len(out) == 3
     assert out.iloc[0]['AC'] == pytest.approx(100.0)
     assert out.iloc[-1]['AC'] == pytest.approx(400.0)
-    assert len(rebased(history, None)) == 6
+    assert len(price_window(history, None)) == 6
+
+
+def test_price_window_keeps_raw_prices():
+    history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=6),
+                            'AC': [10, 20, 40, 80, 160, 320]})
+    out = price_window(history, 3)
+    assert out['AC'].tolist() == [80, 160, 320]   # the no-benchmark chart plots dollars, not an index
 
 
 def test_trailing_returns():
@@ -129,7 +136,7 @@ def test_trailing_returns_with_multiple_benchmarks():
 def test_rebased_rebases_every_benchmark_column_present():
     history = pd.DataFrame({'Date': pd.date_range('2020-01-01', periods=3), 'AC': [10, 20, 40],
                             '^SPX': [1, 2, 4], '^NDQ': [5, 10, 15]})
-    out = rebased(history, None)
+    out = rebased(price_window(history, None))
     assert out.iloc[0][['AC', '^SPX', '^NDQ']].tolist() == pytest.approx([100.0, 100.0, 100.0])
     assert out.iloc[-1]['^NDQ'] == pytest.approx(300.0)
 

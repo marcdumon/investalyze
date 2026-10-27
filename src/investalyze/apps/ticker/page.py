@@ -123,11 +123,12 @@ def _hero(ticker: str, row: pd.Series, ttm: pd.DataFrame, returns: pd.DataFrame 
 
 
 def _performance_section(history: pd.DataFrame, returns: pd.DataFrame | None, ticker: str, dark: bool) -> dmc.Card:
-    """Indexed line with a range control, plus the trailing-returns bars. No benchmark is compared
-    against by default; the benchmark selector opts into one or more indices."""
+    """Price line with a range control, plus the trailing-returns bars. No benchmark is compared
+    against by default, so the line shows the adjusted close; the benchmark selector opts into one
+    or more indices and rebases every line to a shared start."""
     if history.empty:
         return _section('Performance', [_no_data(f'no price history for {ticker}')], anchor='sec-performance')
-    window = data.rebased(history, data.RANGE_SESSIONS[DEFAULT_RANGE])
+    window = data.price_window(history, data.RANGE_SESSIONS[DEFAULT_RANGE])
     controls = dmc.Group([
         dmc.SegmentedControl(id='tk-range', value=DEFAULT_RANGE, size='xs', data=list(data.RANGE_SESSIONS)),
         dmc.MultiSelect(id='tk-benchmarks', value=[], size='xs', placeholder='compare vs...', clearable=True,
@@ -141,8 +142,8 @@ def _performance_section(history: pd.DataFrame, returns: pd.DataFrame | None, ti
                     span={'base': 12, 'lg': 4}),
     ], gutter=8)
     return _section('Performance', [controls, charts_row],
-                    caption='total return, rebased to 100 at the window start; drawdown beneath; '
-                            'pick one or more indices above to compare against',
+                    caption='Adjusted close, drawdown beneath; pick one or more indices above to compare '
+                            'against, which rebases every line to 100 at the window start',
                     anchor='sec-performance')
 
 
@@ -472,7 +473,9 @@ def update_performance(range_key: str | None, benchmarks: list[str] | None, tick
         history = data.price_history(ticker, tuple(benchmarks))
     except duckdb.Error:
         raise PreventUpdate
-    window = data.rebased(history, data.RANGE_SESSIONS.get(range_key))
+    window = data.price_window(history, data.RANGE_SESSIONS.get(range_key))
+    if benchmarks:
+        window = data.rebased(window)
     returns = data.trailing_returns(history)
     return (charts.performance_figure(window, ticker, bool(dark), benchmarks),
             charts.trailing_returns_figure(returns, ticker, bool(dark), benchmarks))
