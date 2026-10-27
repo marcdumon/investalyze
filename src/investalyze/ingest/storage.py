@@ -37,17 +37,22 @@ def connect(data_root: Path = paths.DATA_ROOT, db: str = _DB, *, read_only: bool
 
 
 def scalar(con: duckdb.DuckDBPyConnection, sql: str, params: list | None = None) -> Any:
-    """The first column of the first row `sql` returns."""
-    row = con.execute(sql, params or []).fetchone()
-    if row is None:
+    """The first column of the first row `sql` returns.
+
+    Fetches every row rather than one: duckdb holds a result open until a fetch comes back empty,
+    and an open result makes the next register() on the same connection raise ResourceInUseException.
+    These queries return a single row, so the full fetch costs nothing.
+    """
+    rows = con.execute(sql, params or []).fetchall()
+    if not rows:
         raise ValueError(f'query returned no rows: {sql}')
-    return row[0]
+    return rows[0][0]
 
 
 # --- introspection ------------------------------------------------------------
 def table_exists(con: duckdb.DuckDBPyConnection, table: str) -> bool:
     """True if `table` exists in the connected DB."""
-    return con.execute('SELECT 1 FROM information_schema.tables WHERE table_name = ?', [table]).fetchone() is not None
+    return bool(con.execute('SELECT 1 FROM information_schema.tables WHERE table_name = ?', [table]).fetchall())
 
 
 def count_rows(con: duckdb.DuckDBPyConnection, table: str) -> int:

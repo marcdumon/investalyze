@@ -39,6 +39,17 @@ def test_store_inserts_distinct_keys():
     assert n == 2
 
 
+def test_read_helpers_leave_the_connection_ready_for_the_next_write():
+    """duckdb holds a result open until a fetch comes back empty, and an open result blocks register()."""
+    con = duckdb.connect()
+    storage.store(con, 'market_data', _row('EURUSD', 1.5), key=_KEY)
+    storage.scalar(con, 'SELECT count(*) FROM market_data')
+    storage.table_exists(con, 'market_data')
+    storage.count_rows(con, 'market_data')
+    con.register('_probe', _row('GBPUSD', 1.2))
+    con.unregister('_probe')
+
+
 def test_connect_opens_db_file_at_data_root(tmp_path):
     con = storage.connect(tmp_path)
     con.execute('CREATE TABLE t (x INTEGER)')
