@@ -6,6 +6,7 @@ to the stdlib (absolute import), same as the reference repo.
 """
 
 import logging
+import warnings
 
 LOG_FMT = '%(asctime)s|%(levelname)s|%(name)s: %(message)s'
 LOG_DATEFMT = '%Y-%m-%d %H:%M:%S'
@@ -41,3 +42,7 @@ def configure_logging(level: int | str = 'INFO') -> None:
     logging.getLogger('yfinance').setLevel(logging.CRITICAL)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('requests').setLevel(logging.WARNING)
+    # yfinance hands pandas the inplace= keyword, which pandas deprecates, so a fetch emits several
+    # warnings per ticker and buries the run's own lines. These travel through `warnings` rather
+    # than logging, so a logger level never reaches them. Scoped to yfinance: ours still surface.
+    warnings.filterwarnings('ignore', category=DeprecationWarning, module=r'yfinance(\..*)?$')
