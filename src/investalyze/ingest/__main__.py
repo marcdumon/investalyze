@@ -54,7 +54,7 @@ def _parser() -> argparse.ArgumentParser:
               'collision first (all exit without ingesting); omit to run the ingest'),
     )
     parser.add_argument('--config', type=Path, default=paths.INGEST_CONFIG,
-                        help='TOML config file (default: ingest.toml in the app folder; missing is fine)')
+                        help='TOML config file (default: ingest.toml in ~/.config/md_apps/investalyze; missing is fine)')
     parser.add_argument('--data-root', type=Path, default=None, help='override the data dir from config')
     parser.add_argument('--ticker', action='append', dest='tickers',
                         help='ticker to blacklist (repeatable), alternative to --universe')
@@ -153,7 +153,7 @@ _COMMANDS: dict[str | None, Callable[[config.Config, argparse.Namespace], None]]
 
 def main() -> None:
     """Parse CLI args and run the selected command, or the ingest when none is given."""
-    load_dotenv(paths.APP_DIR / '.env')
+    load_dotenv(paths.CONFIG_DIR / '.env')
     parser = _parser()
     args = parser.parse_args()
     problem = _argument_problem(args)

@@ -17,7 +17,7 @@ Python environment in `~/.local/share/md_apps/investalyze/` (or `$INVESTALYZE_HO
 ~/.local/share/md_apps/investalyze/env/bin/investalyze   # the UI, at http://127.0.0.1:8050
 ```
 
-The app folder holds the settings: `investalyze.toml` (`data_dir`, the port, the debug mode), `ingest.toml`,
+`~/.config/md_apps/investalyze/` holds the settings: `investalyze.toml` (`data_dir`, the port, the debug mode), `ingest.toml`,
 `backtest.toml`, `cleaning.toml`, `stooq_tickers.toml` (the first install makes them from this repo) and `.env` (the
 SimFin key and the SEC contact address). `data_dir` sets the data folder: the database, the provider downloads, the backtests, the factor library
 (`factors/`) and the quality log (`quality_log.toml`). Put it where your backups are made; empty, it is `data/` in the
@@ -69,7 +69,7 @@ Start with the UI. Every CLI below is also a button in its Control Panel.
 | `docs/backtest_metrics.md` | Every backtest formula (IC, Sharpe, fill price, ...), traced to its function. |
 | `docs/backlog.md` | Running list of what is worth coming back to, most valuable first. |
 
-Config lives in the app folder (the repo root in development): `ingest.toml` (providers, blacklist policy),
+Config lives in `~/.config/md_apps/investalyze/` (the repo root in development): `ingest.toml` (providers, blacklist policy),
 `cleaning.toml` (the manual fix list), `backtest.toml`, `stooq_tickers.toml`. The triaged anomaly findings are in
 `quality_log.toml` in the data folder.
 

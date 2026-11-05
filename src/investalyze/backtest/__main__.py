@@ -29,7 +29,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--run-id', nargs='+', metavar='run_id',
                         help='runs to delete, or the one run to print, for the delete and report commands')
     parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
-                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
+                        help='ingest TOML giving the DB location (default: ingest.toml in ~/.config/md_apps/investalyze)')
     return parser
 
 

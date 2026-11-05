@@ -7,6 +7,7 @@ set -euo pipefail
 
 VERSION=${1:?Give the version to install, for example: ./install.sh v0.5.0}
 APP=${INVESTALYZE_HOME:-$HOME/.local/share/md_apps/investalyze}
+CONFIG=$HOME/.config/md_apps/investalyze
 REPO=marcdumon/investalyze
 
 for tool in uv curl; do
@@ -14,13 +15,15 @@ for tool in uv curl; do
 done
 
 mkdir -p "$APP"
+mkdir -p "$CONFIG"
+chmod 700 "$CONFIG"
 [[ -d $APP/env ]] || uv venv --quiet --python 3.13 "$APP/env"
 echo "Installing investalyze $VERSION in $APP/env ..."
 # torch comes from the CUDA 12.1 index that pyproject.toml names (see the note there)
 uv pip install --quiet --python "$APP/env/bin/python" --reinstall-package investalyze "git+https://github.com/$REPO@$VERSION"
 
 for name in investalyze.example ingest backtest cleaning stooq_tickers; do
-    target=$APP/${name%.example}.toml
+    target=$CONFIG/${name%.example}.toml
     if [[ ! -f $target ]]; then
         curl -sfL "https://raw.githubusercontent.com/$REPO/$VERSION/$name.toml" -o "$target"
         echo "Made $target: set your own values in it."

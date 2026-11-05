@@ -28,9 +28,9 @@ def main() -> None:
     parser.add_argument('command', choices=('check', 'apply'),
                         help="'check' reports what each fix would touch, 'apply' executes the fixes")
     parser.add_argument('--config', type=Path, default=paths.CLEANING_CONFIG,
-                        help='fixes TOML (default: cleaning.toml in the app folder)')
+                        help='fixes TOML (default: cleaning.toml in ~/.config/md_apps/investalyze)')
     parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
-                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
+                        help='ingest TOML giving the DB location (default: ingest.toml in ~/.config/md_apps/investalyze)')
     args = parser.parse_args()
 
     cfg = config.read(args.ingest_config)

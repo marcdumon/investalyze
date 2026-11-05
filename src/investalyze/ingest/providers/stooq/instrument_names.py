@@ -1,7 +1,7 @@
 """Decode Stooq market_data tickers (indices, bonds, currencies) into (name, country).
 
 Indices are arbitrary vendor symbols with no decodable structure, looked up from the `[indices]`
-table in `stooq_tickers.toml` at the repo root (manually curated as each one gets identified, see
+table in `stooq_tickers.toml` in ~/.config/md_apps/investalyze (manually curated as each one gets identified, see
 notebooks/9999_data_quirks.ipynb). Bonds and currencies follow systematic patterns instead and are
 decoded here; `[bond_countries]`, `[bond_types]`, `[currency_codes]` in the same TOML file hold the
 lookup data the decoder needs, not the decoding logic itself.
@@ -13,7 +13,7 @@ from functools import lru_cache
 
 from investalyze import paths
 
-_REFERENCE_FILE = paths.APP_DIR / 'stooq_tickers.toml'
+_REFERENCE_FILE = paths.CONFIG_DIR / 'stooq_tickers.toml'
 
 _BOND_PATTERN = re.compile(r'^(\d+)([MY])([A-Z]{2})([YP])$')
 _PAIR_PATTERN = re.compile(r'^([A-Z]{3})([A-Z]{3})$')

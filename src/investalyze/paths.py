@@ -1,8 +1,7 @@
-"""Locations: the app folder with the hand-edited settings, and the data folder with the data, the factor library and the
+"""Locations: the config folder with the hand-edited settings, and the data folder with the data, the factor library and the
 quality log.
 
-The app folder is the folder of the Python environment: the repo in development, the install folder of an installed app.
-It holds `investalyze.toml` (not in git: the data folder, the port, the debug mode), `ingest.toml`, `backtest.toml`,
+The config folder ~/.config/md_apps/investalyze (the repo in development) holds `investalyze.toml` (not in git: the data folder, the port, the debug mode), `ingest.toml`, `backtest.toml`,
 `cleaning.toml`, `stooq_tickers.toml` and `.env`. The data folder is `data_dir` of `investalyze.toml`."""
 
 import sys
@@ -10,9 +9,11 @@ import tomllib
 from pathlib import Path
 
 APP_DIR = Path(sys.prefix).parent
-SETTINGS_FILE = APP_DIR / 'investalyze.toml'
-INGEST_CONFIG = APP_DIR / 'ingest.toml'
-CLEANING_CONFIG = APP_DIR / 'cleaning.toml'
+# an installed app keeps its settings in ~/.config; a development copy (a repo) keeps its own, next to the code
+CONFIG_DIR = APP_DIR if (APP_DIR / 'pyproject.toml').is_file() else Path.home() / '.config' / 'md_apps' / 'investalyze'
+SETTINGS_FILE = CONFIG_DIR / 'investalyze.toml'
+INGEST_CONFIG = CONFIG_DIR / 'ingest.toml'
+CLEANING_CONFIG = CONFIG_DIR / 'cleaning.toml'
 
 
 def settings() -> dict:

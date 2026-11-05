@@ -38,7 +38,7 @@ def main() -> None:
     parser.add_argument('checks', nargs='*', choices=sorted(registry.CHECKS), metavar='check',
                         help='check to run (default: all); see the list below')
     parser.add_argument('--ingest-config', type=Path, default=paths.INGEST_CONFIG,
-                        help='ingest TOML giving the DB location (default: ingest.toml in the app folder)')
+                        help='ingest TOML giving the DB location (default: ingest.toml in ~/.config/md_apps/investalyze)')
     args = parser.parse_args()
 
     cfg = config.read(args.ingest_config)
