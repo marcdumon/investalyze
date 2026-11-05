@@ -4,6 +4,10 @@ Run with:  .venv/bin/python -m investalyze.apps  then open http://127.0.0.1:8050
 """
 
 import logging
+import os
+import sys
+import threading
+import time
 
 import dash
 import dash_mantine_components as dmc
@@ -42,10 +46,15 @@ def nav_link(page: dict) -> dmc.NavLink:
     return dmc.NavLink(label=page['name'], href=page['path'], leftSection=DashIconify(icon=icon), variant='filled', px=8)
 
 
+restart_button = dmc.Button(
+    'Restart server', id='restart-server', variant='subtle', size='xs', mt='auto',
+    leftSection=DashIconify(icon='tabler:refresh', width=14),
+)
+
 theme_switch = dmc.Switch(
     id='theme-switch', checked=True, persistence=True, size='md',
     onLabel=DashIconify(icon='tabler:moon', width=14), offLabel=DashIconify(icon='tabler:sun', width=14),
-    style={'marginTop': 'auto'},
+    mt='xs',
 )
 
 app.layout = dmc.MantineProvider(
@@ -56,7 +65,7 @@ app.layout = dmc.MantineProvider(
         dmc.AppShell(
             [
                 dmc.AppShellNavbar(
-                    [nav_link(p) for p in dash.page_registry.values()] + [theme_switch],
+                    [nav_link(p) for p in dash.page_registry.values()] + [restart_button, theme_switch],
                     p='xs', style={'display': 'flex', 'flexDirection': 'column'},
                 ),
                 dmc.AppShellMain(dash.page_container),
@@ -70,10 +79,39 @@ app.layout = dmc.MantineProvider(
 )
 
 clientside_callback(
+    """async (clicks) => {
+        if (!clicks || !window.confirm('Restart the server? Work that runs inside the app stops.')) return false
+        await fetch('/api/restart', {method: 'POST'}).catch(() => null)
+        for (let tries = 0; tries < 60; tries++) {
+            await new Promise(done => setTimeout(done, 1000))
+            const reply = await fetch('/', {cache: 'no-store'}).catch(() => null)
+            if (reply && reply.ok) { window.location.reload(); return true }
+        }
+        return false
+    }""",
+    Output('restart-server', 'loading'),
+    Input('restart-server', 'n_clicks'),
+    prevent_initial_call=True,
+)
+
+clientside_callback(
     "(dark) => dark ? 'dark' : 'light'",
     Output('mantine-provider', 'forceColorScheme'),
     Input('theme-switch', 'checked'),
 )
+
+def _restart_soon() -> None:
+    """Replace this process by a fresh start of the same command, half a second after the answer went out."""
+    time.sleep(0.5)
+    os.execv(sys.executable, sys.orig_argv)
+
+
+@app.server.post('/api/restart')
+def restart_server() -> dict:
+    """Start the server again with the same command: this process is replaced once the answer has gone out."""
+    threading.Thread(target=_restart_soon, daemon=True).start()
+    return {'restarting': True}
+
 
 class _QuietSuccessfulRequests(logging.Filter):
     """Drop werkzeug's access log line for successful requests; errors and startup messages still show.
